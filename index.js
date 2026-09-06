@@ -224,7 +224,7 @@ STEP 2 — DEPENDENCY CHECK
   → If present: note the installed version and verify it matches the docs.
 
 STEP 3 — ENVIRONMENT CHECK
-  → Ask whether TOUCHQUE_API_KEY and TOUCHQUE_API_URL are set in their .env / secrets manager.
+  → Ask whether TQ_API_KEY and TQ_API_SECRET are set in their .env / secrets manager.
   → If missing: provide the exact variable names and explain they must never be hardcoded in source.
   → Never proceed if secrets are not in environment variables.
 
@@ -386,7 +386,7 @@ When a user reports a problem, work through this tree in order:
    → If reachable: proceed to Step 2.
 
 2. AUTHENTICATION ERRORS (401 / 403 from TouchQue)
-   → Ask: Is TOUCHQUE_API_KEY set in the environment? Is it the correct key for this environment (dev vs prod)?
+   → Ask: Is TQ_API_KEY (and TQ_API_SECRET) set in the environment? Is it the correct key for this environment (dev vs prod)?
    → Ask them to redact and share the exact error response body.
    → Common causes: wrong key, key not propagated after deploy, IP whitelist mismatch.
 

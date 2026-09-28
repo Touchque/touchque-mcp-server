@@ -56,16 +56,22 @@ test("server advertises MCP-native instructions on connect (works even without a
   });
 });
 
-test("lists the bundled docs as MCP resources and can read them", async () => {
+test("lists the bundled docs as MCP resources for all 4 languages and can read them", async () => {
   await withClient(async (client) => {
     const { resources } = await client.listResources();
     const uris = resources.map((r) => r.uri).sort();
     assert.deepEqual(uris, [
-      "touchque://docs/sdk-documentation.md",
-      "touchque://docs/types.ts",
+      "touchque://docs/go/sdk-documentation.md",
+      "touchque://docs/go/types.go",
+      "touchque://docs/node/sdk-documentation.md",
+      "touchque://docs/node/types.ts",
+      "touchque://docs/php/sdk-documentation.md",
+      "touchque://docs/php/types.php",
+      "touchque://docs/python/sdk-documentation.md",
+      "touchque://docs/python/types.py",
     ]);
 
-    const read = await client.readResource({ uri: "touchque://docs/sdk-documentation.md" });
+    const read = await client.readResource({ uri: "touchque://docs/node/sdk-documentation.md" });
     assert.match(read.contents[0].text, /requireTouchQue/);
   });
 });
@@ -115,6 +121,31 @@ test("get_sdk_types returns the bundled type definitions", async () => {
     const text = result.content[0].text;
     assert.match(text, /export interface Step/);
     assert.match(text, /export interface StartOptions/);
+  });
+});
+
+test("get_touchque_docs and get_sdk_types support all 4 languages via the language argument", async () => {
+  await withClient(async (client) => {
+    const expected = {
+      python: { docs: /touchque-authenticator/, types: /class TouchQue/ },
+      php: { docs: /touchque-authenticator\/php-sdk/, types: /class TouchQue/ },
+      go: { docs: /touchque-go/, types: /package touchque/ },
+    };
+    for (const [language, { docs, types }] of Object.entries(expected)) {
+      const docsResult = await client.callTool({ name: "get_touchque_docs", arguments: { language } });
+      assert.match(docsResult.content[0].text, docs, `get_touchque_docs(${language})`);
+
+      const typesResult = await client.callTool({ name: "get_sdk_types", arguments: { language } });
+      assert.match(typesResult.content[0].text, types, `get_sdk_types(${language})`);
+    }
+  });
+});
+
+test("get_touchque_docs rejects an unknown language instead of silently falling back to Node", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: "get_touchque_docs", arguments: { language: "ruby" } });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /Unknown language/);
   });
 });
 
@@ -183,6 +214,56 @@ test("validate_integration scores a current-API snippet as fully passing", async
     });
     const text = result.content[0].text;
     assert.match(text, /Score: 100%/);
+  });
+});
+
+test("validate_integration recognizes the correct guard per language (Python/PHP/Go), not just Node", async () => {
+  await withClient(async (client) => {
+    const cases = [
+      {
+        framework: "flask",
+        code: `
+          from touchque.contrib.flask import require_touchque
+          @app.post("/transfer")
+          @require_touchque("SEND_MONEY")
+          def transfer():
+              try:
+                  return jsonify(ok=True, key=os.environ["TQ_API_KEY"])
+              except Exception:
+                  return jsonify(ok=False), 500
+        `,
+      },
+      {
+        framework: "laravel",
+        code: `
+          Route::post('/transfer', [TransferController::class, 'store'])
+              ->middleware('touchque:SEND_MONEY');
+          // in the controller:
+          try {
+              $key = getenv('TQ_API_KEY');
+          } catch (\\Exception $e) {}
+        `,
+      },
+      {
+        framework: "net-http",
+        code: `
+          import "github.com/Touchque/touchque-go/touchque"
+          mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", transferHandler, touchque.RequireOptions{}))
+          func transferHandler(w http.ResponseWriter, r *http.Request) {
+              key := os.Getenv("TQ_API_KEY")
+              if err != nil {
+                  return
+              }
+          }
+        `,
+      },
+    ];
+
+    for (const { framework, code } of cases) {
+      const result = await client.callTool({ name: "validate_integration", arguments: { code, framework } });
+      const text = result.content[0].text;
+      assert.match(text, /Score: 100%/, `${framework} should score 100%:\n${text}`);
+    }
   });
 });
 

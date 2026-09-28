@@ -29,6 +29,22 @@ to make sure it edits it *correctly* (current API, correct prerequisites)
 once it does. The wizard prompts say this explicitly and instruct the
 assistant to ask for exact file paths rather than guess.
 
+## Language support
+
+All 4 official server SDKs — **Node, Python, PHP, Go** — share the exact
+same step-up model (`start`/`check`/`complete`, a one-line framework guard),
+just with per-language naming. Every relevant tool below takes an optional
+`language` argument (`"node"` | `"python"` | `"php"` | `"go"`, default
+`"node"`) — the AI assistant should ask which language your backend is in
+and pass it, rather than assuming Node.
+
+| Language | Package | Guard |
+|---|---|---|
+| Node | `@touchque/node` | `requireTouchQue('ACTION', opts)` |
+| Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` |
+| PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` |
+| Go | `github.com/Touchque/touchque-go` | `touchque.Require(tq, "ACTION", handler, opts)` |
+
 ## What it gives an assistant
 
 Not every MCP client renders every MCP primitive — some editors only ever
@@ -48,26 +64,27 @@ others:
 - `touchque_help` — **start here.** Explains what this server is for and
   which tool to call next. This is the fallback of last resort — call it if
   nothing else here is obvious.
-- `get_touchque_docs` — the current `@touchque/node` README (install, the
-  `requireTouchQue` step-up model, framework adapters, error handling,
-  security).
-- `get_sdk_types` — the SDK's TypeScript type definitions (`Config`,
-  `Step`/`StepState`, `StartOptions`, `CompleteExpectations`, resource
-  response types).
+- `get_touchque_docs({ language })` — that language's README (install, the
+  step-up model, framework adapters, error handling, security).
+- `get_sdk_types({ language })` — that language's type/class reference
+  (`Config`, `Step`/`StepState`, `StartOptions`, `CompleteExpectations`,
+  resource response types).
 - `ping_touchque_api` — checks that a TouchQue backend URL you give it is
   reachable, before the assistant blames the integration code for a network
   problem.
-- `validate_integration` — a static-analysis checklist on a pasted route
-  handler: is `@touchque/node` actually imported, is the route guarded with
-  the current `requireTouchQue`/`withTouchQue`/`touchqueRouter` API (as
-  opposed to the old, removed synchronous `tq.login.verify()` pattern), are
-  secrets kept out of source and read from the environment, is there error
-  handling.
+- `validate_integration({ code, framework, language })` — a static-analysis
+  checklist on a pasted route handler, for whichever language it's in: is
+  the SDK actually imported, is the route guarded with the current step-up
+  API (as opposed to the old, removed synchronous `.login.verify()`
+  pattern), are secrets kept out of source and read from the environment,
+  is there error handling.
 
 **Resources** (for clients that browse resources, e.g. as an alternative to
 tools):
-- `touchque://docs/sdk-documentation.md` — same content as `get_touchque_docs`.
-- `touchque://docs/types.ts` — same content as `get_sdk_types`.
+- `touchque://docs/<language>/sdk-documentation.md` — same content as `get_touchque_docs({ language })`.
+- `touchque://docs/<language>/types.{ts,py,php,go}` — same content as `get_sdk_types({ language })`.
+
+(8 resources total — one README + one types file per language.)
 
 **Prompts** (pre-built instruction sets an assistant can load — support for
 this varies by client; if your client doesn't show these, use the tools
@@ -151,8 +168,10 @@ it's meant to be launched by an MCP-aware client, not used interactively.
 
 ## Local development
 
-If you're editing this server (not consuming it), point it at a docs site
-you're actively editing instead of the bundled copies:
+If you're editing this server (not consuming it), point the **Node** docs
+at a docs site you're actively editing instead of the bundled copy
+(`DOCS_BASE_URL` only applies to Node — Python/PHP/Go always read their
+bundled copy, since there's no equivalent local dev server for them):
 
 ```bash
 DOCS_BASE_URL=http://localhost:5176/docs npx @touchque/mcp-server
@@ -160,11 +179,19 @@ DOCS_BASE_URL=http://localhost:5176/docs npx @touchque/mcp-server
 
 The server tries `DOCS_BASE_URL/sdk-documentation.md` and
 `DOCS_BASE_URL/types.ts` first when that variable is set, and falls back to
-the bundled copies under [`bundled/`](./bundled) if that fetch fails — so an
-unset or unreachable override never breaks the tool. Keep the bundled copies
-in sync with `sdks/touchque-node/README.md` and
-`sdks/touchque-node/src/{types.ts,steps.ts}` when the SDK's public API
-changes.
+the bundled copy under [`bundled/node/`](./bundled/node) if that fetch
+fails — so an unset or unreachable override never breaks the tool.
+
+Keep every language's bundled copy in sync with its SDK source whenever the
+step-up API changes — each is a straight concatenation, regenerated by
+copying the listed files verbatim:
+
+| `bundled/<lang>/` | Source |
+|---|---|
+| `node/` | `sdks/touchque-node/README.md` + `src/{types.ts,steps.ts}` |
+| `python/` | `sdks/touchque-python/README.md` + `touchque/{config.py,client.py,steps.py}` |
+| `php/` | `sdks/touchque-php/README.md` + `src/{Config.php,TouchQue.php,Steps.php}` |
+| `go/` | `sdks/touchque-go/README.md` + `touchque/{config.go,types.go,client.go,steps.go}` |
 
 ## Testing
 

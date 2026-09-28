@@ -47,33 +47,134 @@ const DOCS_DIR = path.join(__dirname, "bundled");
 // actively editing (e.g. DOCS_BASE_URL=http://localhost:5176/docs). Most
 // users should never need to set this — the bundled copies below are
 // current as of this package's version and need no network access at all.
+// Only applies to the Node docs (the docs site doesn't serve the other
+// three languages' bundles under separate paths).
 const DOCS_BASE_URL = process.env.DOCS_BASE_URL || null;
 
-const BUNDLED_DOCS = [
-  {
-    uri: "touchque://docs/sdk-documentation.md",
-    filename: "sdk-documentation.md",
-    name: "TouchQue Node.js SDK — README",
-    mimeType: "text/markdown",
-    description: "Install, the requireTouchQue step-up model, framework adapters, error handling, security.",
+// All 4 server SDKs share the same API (start/check/complete, the
+// requireTouchQue-equivalent framework adapter, guard tokens) — this map is
+// what makes every doc/type/validation tool "language-aware" instead of
+// hardcoded to Node. Add a language here (and its bundled/<lang>/ files)
+// when a 5th SDK ships.
+const LANGUAGES = {
+  node: {
+    label: "Node.js", package: "@touchque/node", typesFile: "types.ts", typesMime: "text/x-typescript",
+    frameworks: ["express", "fastify", "koa", "nextjs", "nestjs", "other"],
   },
-  {
-    uri: "touchque://docs/types.ts",
-    filename: "types.ts",
-    name: "TouchQue Node.js SDK — TypeScript types",
-    mimeType: "text/x-typescript",
-    description: "Config, Step/StepState, StartOptions, CompleteExpectations, resource response types.",
+  python: {
+    label: "Python", package: "touchque-authenticator", typesFile: "types.py", typesMime: "text/x-python",
+    frameworks: ["flask", "django", "fastapi", "other"],
   },
-];
+  php: {
+    label: "PHP", package: "touchque-authenticator/php-sdk", typesFile: "types.php", typesMime: "text/x-php",
+    frameworks: ["laravel", "other"],
+  },
+  go: {
+    label: "Go", package: "github.com/Touchque/touchque-go", typesFile: "types.go", typesMime: "text/x-go",
+    frameworks: ["net-http", "other"],
+  },
+};
+const DEFAULT_LANGUAGE = "node";
+const LANGUAGE_NAMES = Object.keys(LANGUAGES);
 
-async function readDocsFile(bundledFilename) {
-  if (DOCS_BASE_URL) {
-    const url = `${DOCS_BASE_URL}/${bundledFilename}`;
-    const response = await fetch(url).catch(() => null);
-    if (response && response.ok) return await response.text();
-    // Fall through to the bundled copy rather than failing outright — an
-    // explicit override that's temporarily unreachable shouldn't break the
-    // tool when a good-enough local answer already exists.
+function resolveLanguage(language) {
+  if (!language) return DEFAULT_LANGUAGE;
+  const normalized = String(language).toLowerCase().trim();
+  if (LANGUAGES[normalized]) return normalized;
+  throw new Error(`Unknown language "${language}" — expected one of: ${LANGUAGE_NAMES.join(", ")}`);
+}
+
+// Lets validate_integration infer the language from `framework` alone when
+// `language` isn't passed (e.g. framework: "flask" implies Python).
+const FRAMEWORK_LANGUAGE = {
+  express: "node", fastify: "node", koa: "node", nextjs: "node", nestjs: "node",
+  flask: "python", django: "python", fastapi: "python",
+  laravel: "php",
+  "net-http": "go",
+};
+
+// Per-language static-analysis patterns for validate_integration. Every
+// language keeps the same 6 checks (import / protection / no legacy
+// synchronous verify / no hardcoded secret / env vars / error handling) —
+// only the regex and the "guardName" shown in the report differ.
+const VALIDATION_PATTERNS = {
+  node: {
+    guardName: "requireTouchQue/withTouchQue/touchqueRouter",
+    import: /require\s*\(\s*['"]@touchque\/node['"]\s*\)|from\s+['"]@touchque\/node['"]/,
+    stepUpGuard: /requireTouchQue\s*\(|withTouchQue\s*\(|touchqueRouter\s*\(/,
+    legacyGuard: /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/,
+    syncVerify: /\.login\.verify\s*\(/,
+    hardcodedSecret: /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
+    envVar: /process\.env\.|env\[/,
+    errorHandling: /catch|try\s*{|\.catch\s*\(/,
+  },
+  python: {
+    guardName: "@require_touchque",
+    import: /from\s+touchque(\.\w+)*\s+import|import\s+touchque\b/,
+    stepUpGuard: /@require_touchque\s*\(|RequireTouchQue\s*\(/,
+    legacyGuard: null,
+    syncVerify: /\.login\.verify\s*\(/,
+    hardcodedSecret: /api_secret\s*=\s*['"][a-zA-Z0-9]{10,}['"]|api_key\s*=\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
+    envVar: /os\.environ|os\.getenv\s*\(/,
+    errorHandling: /try\s*:|except\b/,
+  },
+  php: {
+    guardName: "->middleware('touchque:...')",
+    // Laravel usage often references the middleware only by its string
+    // alias ('touchque:SEND_MONEY') in the route file — the actual `use
+    // TouchQue\...` import/registration lives in bootstrap/app.php or a
+    // service provider, not necessarily in the same file. Treat the alias
+    // itself as evidence of SDK usage too, not just a literal `use` line.
+    import: /use\s+TouchQue\\|TouchQue\\\\TouchQue|->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware/,
+    stepUpGuard: /->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware/,
+    legacyGuard: null,
+    syncVerify: /->login->verify\s*\(/,
+    hardcodedSecret: /new\s+Config\s*\(\s*['"]tq_[a-zA-Z0-9]{6,}['"]\s*,\s*['"][a-zA-Z0-9]{10,}['"]/,
+    envVar: /getenv\s*\(|\$_ENV\[/,
+    errorHandling: /try\s*{|catch\s*\(/,
+  },
+  go: {
+    guardName: "touchque.Require",
+    import: /["']github\.com\/Touchque\/touchque-go\/touchque["']/,
+    stepUpGuard: /touchque\.Require\s*\(/,
+    legacyGuard: null,
+    syncVerify: /\.Login\.Verify\s*\(/,
+    hardcodedSecret: /APIKey:\s*"tq_[a-zA-Z0-9]{6,}"|APISecret:\s*"[a-zA-Z0-9]{10,}"/,
+    envVar: /os\.Getenv\s*\(/,
+    errorHandling: /if\s+err\s*!=\s*nil/,
+  },
+};
+
+const BUNDLED_DOCS = LANGUAGE_NAMES.map((lang) => ({
+  uri: `touchque://docs/${lang}/sdk-documentation.md`,
+  language: lang,
+  filename: `${lang}/sdk-documentation.md`,
+  name: `TouchQue ${LANGUAGES[lang].label} SDK — README`,
+  mimeType: "text/markdown",
+  description: `Install, the step-up model, framework adapters, error handling, security, for ${LANGUAGES[lang].package}.`,
+})).concat(LANGUAGE_NAMES.map((lang) => ({
+  uri: `touchque://docs/${lang}/types.${LANGUAGES[lang].typesFile.split(".").pop()}`,
+  language: lang,
+  filename: `${lang}/${LANGUAGES[lang].typesFile}`,
+  name: `TouchQue ${LANGUAGES[lang].label} SDK — types/API reference`,
+  mimeType: LANGUAGES[lang].typesMime,
+  description: `Config, Step/StepState, StartOptions, CompleteExpectations, resource response types, for ${LANGUAGES[lang].package}.`,
+})));
+
+async function readDocsFile(bundledFilename, { allowRemote = false } = {}) {
+  if (allowRemote && DOCS_BASE_URL) {
+    // Only the Node docs (the historical single-language layout) have a
+    // remote dev-server equivalent, and only sdk-documentation.md/types.ts
+    // at that — never applies to python/php/go filenames.
+    const remoteName = bundledFilename.startsWith("node/") ? bundledFilename.slice("node/".length) : null;
+    if (remoteName) {
+      const url = `${DOCS_BASE_URL}/${remoteName}`;
+      const response = await fetch(url).catch(() => null);
+      if (response && response.ok) return await response.text();
+      // Fall through to the bundled copy rather than failing outright — an
+      // explicit override that's temporarily unreachable shouldn't break the
+      // tool when a good-enough local answer already exists.
+    }
   }
   return fs.readFileSync(path.join(DOCS_DIR, bundledFilename), "utf8");
 }
@@ -81,15 +182,24 @@ async function readDocsFile(bundledFilename) {
 const HELP_TEXT = `TouchQue MCP Server — start here.
 
 This server helps you add TouchQue push-2FA/passkey step-up authentication
-to a codebase correctly, using the CURRENT API (requireTouchQue / 202 +
-X-TouchQue-Token step-up — not the old synchronous tq.login.verify()).
+to a codebase correctly, using the CURRENT API (requireTouchQue-equivalent
+guard / 202 + X-TouchQue-Token step-up — not the old synchronous
+.login.verify()). All 4 official server SDKs — Node, Python, PHP, Go —
+share this exact same model, just with per-language naming
+(requireTouchQue / @require_touchque / ->middleware('touchque:...') /
+touchque.Require).
+
+FIRST, if you don't already know: ask which language/framework the user's
+backend is in. Every tool below takes an optional "language" argument
+("node" | "python" | "php" | "go", defaults to "node") — pass the right
+one, don't assume Node.
 
 Call these tools, in this order, for a normal integration:
-  1. get_touchque_docs      — the SDK README (install + the step-up model)
-  2. get_sdk_types          — TypeScript types, to check exact method shapes
+  1. get_touchque_docs({ language })    — that SDK's README (install + the step-up model)
+  2. get_sdk_types({ language })        — that SDK's type/class reference, to check exact method shapes
   3. (write the integration code)
-  4. validate_integration   — checks your code against the current API
-  5. ping_touchque_api      — checks a backend URL is actually reachable
+  4. validate_integration({ code, framework, language }) — checks your code against that SDK's current API
+  5. ping_touchque_api                  — checks a backend URL is actually reachable
 
 Push + passkey step-up is the default flow. TouchQue ALSO has "Offline
 Sign" — a QR code + 7-character code flow for when the user's phone has no
@@ -154,13 +264,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_touchque_docs",
-        description: "Returns the official @touchque/node SDK README (install, the requireTouchQue step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone.",
-        inputSchema: { type: "object", properties: {}, required: [] }
+        description: "Returns the official TouchQue SDK README for the given language (install, the step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone. All 4 server SDKs (Node, Python, PHP, Go) share the same API shape.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            language: {
+              type: "string",
+              description: "Which SDK's docs to return. Defaults to 'node'.",
+              enum: LANGUAGE_NAMES,
+            },
+          },
+          required: []
+        }
       },
       {
         name: "get_sdk_types",
-        description: "Returns the TouchQue Node.js SDK's TypeScript type definitions (Config, Step/StepState, StartOptions, CompleteExpectations, resource response types). Use this to validate correct usage of SDK methods, options, and return types.",
-        inputSchema: { type: "object", properties: {}, required: [] }
+        description: "Returns the TouchQue SDK's type/class reference for the given language (Config, Step/StepState, StartOptions, CompleteExpectations, resource response types). Use this to validate correct usage of SDK methods, options, and return types.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            language: {
+              type: "string",
+              description: "Which SDK's types to return. Defaults to 'node'.",
+              enum: LANGUAGE_NAMES,
+            },
+          },
+          required: []
+        }
       },
       {
         name: "ping_touchque_api",
@@ -178,7 +308,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "validate_integration",
-        description: "Performs a static analysis checklist on a code snippet to verify it follows the current requireTouchQue step-up model and TouchQue security best practices. Returns a structured report of passed/failed checks.",
+        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and TouchQue security best practices, for whichever SDK language the code is in. Returns a structured report of passed/failed checks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -186,10 +316,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "The code snippet to validate (route handler, middleware, or service file)"
             },
+            language: {
+              type: "string",
+              description: "Which SDK the code uses. Defaults to 'node'. If omitted and framework makes it obvious (e.g. 'flask' implies python), that's used instead.",
+              enum: LANGUAGE_NAMES,
+            },
             framework: {
               type: "string",
-              description: "The web framework being used (express, fastify, koa, nextjs, nestjs)",
-              enum: ["express", "fastify", "koa", "nextjs", "nestjs", "other"]
+              description: "The web framework being used — express/fastify/koa/nextjs/nestjs (Node), flask/django/fastapi (Python), laravel (PHP), net-http (Go), or 'other'.",
+              enum: Array.from(new Set(Object.values(LANGUAGES).flatMap((l) => l.frameworks)))
             }
           },
           required: ["code", "framework"]
@@ -208,12 +343,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === "get_touchque_docs") {
-      const content = await readDocsFile("sdk-documentation.md");
+      const language = resolveLanguage(args?.language);
+      const content = await readDocsFile(`${language}/sdk-documentation.md`, { allowRemote: true });
       return { content: [{ type: "text", text: content }] };
     }
 
     if (name === "get_sdk_types") {
-      const content = await readDocsFile("types.ts");
+      const language = resolveLanguage(args?.language);
+      const content = await readDocsFile(`${language}/${LANGUAGES[language].typesFile}`, { allowRemote: true });
       return { content: [{ type: "text", text: content }] };
     }
 
@@ -236,42 +373,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "validate_integration") {
       const { code, framework } = args;
+      const language = resolveLanguage(args.language || FRAMEWORK_LANGUAGE[framework]);
+      const patterns = VALIDATION_PATTERNS[language];
       const checks = [];
 
-      // Security & correctness checks, against the current step-up API
-      // (requireTouchQue / withTouchQue / touchqueRouter — not the old
-      // synchronous tq.login.verify()/tq.protect() model).
-      const hasImport = /require\s*\(\s*['"]@touchque\/node['"]\s*\)|from\s+['"]@touchque\/node['"]/.test(code);
-      checks.push({ id: "import", label: "SDK is imported", pass: hasImport });
+      // Security & correctness checks, against the current step-up API —
+      // requireTouchQue/withTouchQue/touchqueRouter (Node), @require_touchque
+      // (Python), ->middleware('touchque:...') (PHP), touchque.Require (Go)
+      // — never the old per-language synchronous .login.verify() model.
+      const hasImport = patterns.import.test(code);
+      checks.push({ id: "import", label: `${LANGUAGES[language].package} SDK is imported`, pass: hasImport });
 
-      const hasStepUpGuard = /requireTouchQue\s*\(|withTouchQue\s*\(|touchqueRouter\s*\(/.test(code);
-      const hasLegacyGuard = /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/.test(code);
+      const hasStepUpGuard = patterns.stepUpGuard.test(code);
+      const hasLegacyGuard = patterns.legacyGuard && patterns.legacyGuard.test(code);
       checks.push({
         id: "protection",
         label: hasLegacyGuard && !hasStepUpGuard
-          ? "Route protection applied (found the OLD tq.protect()/middleware pattern — migrate to requireTouchQue())"
-          : "Route protection applied (requireTouchQue/withTouchQue/touchqueRouter)",
+          ? `Route protection applied (found an OLD middleware pattern — migrate to ${patterns.guardName})`
+          : `Route protection applied (${patterns.guardName})`,
         pass: hasStepUpGuard,
       });
 
-      const hasSynchronousVerify = /\.login\.verify\s*\(/.test(code);
+      const hasSynchronousVerify = patterns.syncVerify.test(code);
       checks.push({
         id: "no_synchronous_verify",
-        label: "Not using the old synchronous login.verify() inside a route handler (it can't show a matching number/QR before approval — use requireTouchQue instead)",
+        label: "Not using the old synchronous login.verify() inside a route handler (it can't show a matching number/QR before approval — use the step-up guard instead)",
         pass: !hasSynchronousVerify,
       });
 
-      const hasHardcodedSecret = /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/.test(code);
+      const hasHardcodedSecret = patterns.hardcodedSecret.test(code);
       checks.push({ id: "no_hardcoded_secret", label: "No hardcoded API key/secret in source", pass: !hasHardcodedSecret });
 
-      const hasEnvVar = /process\.env\.|env\[/.test(code);
+      const hasEnvVar = patterns.envVar.test(code);
       checks.push({ id: "env_vars", label: "Environment variables used for secrets", pass: hasEnvVar });
 
-      const hasErrorHandling = /catch|try\s*{|\.catch\s*\(/.test(code) || hasStepUpGuard;
+      const hasErrorHandling = patterns.errorHandling.test(code) || hasStepUpGuard;
       checks.push({
         id: "error_handling",
         label: hasStepUpGuard
-          ? "Error handling (requireTouchQue's own 202/403/408/423/429 responses cover the step-up flow)"
+          ? `Error handling (${patterns.guardName}'s own 202/403/408/423/429 responses cover the step-up flow)`
           : "Error handling present",
         pass: hasErrorHandling,
       });
@@ -287,7 +427,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         content: [{
           type: "text",
-          text: `TouchQue Integration Validation Report\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}`
+          text: `TouchQue Integration Validation Report\nLanguage: ${LANGUAGES[language].label}\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}`
         }]
       };
     }
@@ -386,11 +526,24 @@ IDENTITY & AUTHORITY
 MANDATORY PRE-FLIGHT SEQUENCE (follow in order)
 ═══════════════════════════════════════════════════
 STEP 1 — DISCOVERY
-  → Ask the user to share: framework (Express / Fastify / NestJS / Next.js / other), Node.js version, and the file(s) where authentication currently lives.
+  → Ask the user which BACKEND LANGUAGE this is (Node / Python / PHP / Go)
+    — do not assume Node. All 4 have the exact same step-up model, just
+    with different guard names (requireTouchQue / @require_touchque /
+    ->middleware('touchque:...') / touchque.Require). Once you know the
+    language, call get_touchque_docs({ language }) and
+    get_sdk_types({ language }) for THAT language — the JS example below is
+    a reference for the shape of the contract, not something to hand-
+    translate into another language without checking the real signature.
+  → Also ask: framework (Express/Fastify/NestJS/Next.js for Node; Flask/
+    Django/FastAPI for Python; Laravel for PHP; net/http for Go), and the
+    file(s) where authentication currently lives.
   → Do NOT write any code yet.
 
 STEP 2 — DEPENDENCY CHECK
-  → Ask to see package.json. Confirm @touchque/node is listed.
+  → Ask to see the dependency manifest (package.json / requirements.txt or
+    pyproject.toml / composer.json / go.mod). Confirm the TouchQue SDK is
+    listed (@touchque/node, touchque-authenticator, touchque-authenticator/
+    php-sdk, or github.com/Touchque/touchque-go).
   → If missing: instruct the user to run "npm install @touchque/node" and stop until they confirm.
   → If present: note the installed version and verify it matches the docs.
 
@@ -452,6 +605,14 @@ app.post(
 \`\`\`
 
   → Until approved, this answers 202 { touchque: step, token }. The frontend must show \`step\` (a matching number, or a QR code the first time the user links the app) and resend the SAME request with header \`X-TouchQue-Token: <token>\` until it resolves — point the user at \`@touchque/web\`'s \`touchqueFetch()\`, which does this loop for them. Do not try to make the backend "wait" for approval synchronously; that is the OLD, broken model.
+
+  → IF THE BACKEND IS PYTHON/PHP/GO, NOT NODE: the JS above shows the shape
+    of the contract (202/token/step/exactly-once), not the syntax. Use the
+    real guard for that language instead — @require_touchque('SEND_MONEY',
+    details=...) (Python), ->middleware('touchque:SEND_MONEY') (Laravel),
+    or touchque.Require(tq, "SEND_MONEY", handler, opts) (Go) — and verify
+    the exact option names against get_sdk_types({ language }) rather than
+    guessing a translation of the JS option names.
 
 STEP 7 — VALIDATION
   → After writing code, call the validate_integration tool on the final snippet.

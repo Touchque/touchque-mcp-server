@@ -1,15 +1,37 @@
 {
   "name": "touchque-mcp-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "MCP server for TouchQue — gives AI coding assistants (Claude, Cursor, …) accurate, up-to-date TouchQue SDK docs, types and an integration validator so they don't guess at the API.",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "bin": {
+    "touchque-mcp-server": "./index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "files": [
+    "index.js",
+    "bundled"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test index.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "touchque",
+    "2fa",
+    "claude",
+    "ai-agent"
+  ],
+  "author": "TouchQue",
+  "license": "MIT",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Touchque/touchque-mcp-server"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
   }

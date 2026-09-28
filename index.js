@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+const fs = require("fs");
+const path = require("path");
+
 const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const {
@@ -9,11 +12,38 @@ const {
   GetPromptRequestSchema
 } = require("@modelcontextprotocol/sdk/types.js");
 
-const DOCS_BASE_URL = process.env.DOCS_BASE_URL || "http://localhost:5174/docs";
+// This server talks over stdio only (no HTTP/SSE, no port, no server-side
+// auth) — it's meant to run as a local child process launched by an MCP
+// client (Claude Desktop, Claude Code, Cursor, …), the same way `npx -y
+// touchque-mcp-server` would. See README.md for client config examples.
+//
+// It reads and validates code you paste in, and fetches your own backend's
+// health — it never touches a real TouchQue account or holds a secret, so
+// there is nothing here that needs gating with an API key.
+
+const DOCS_DIR = path.join(__dirname, "bundled");
+
+// Optional override for local development against a docs site you're
+// editing right now (e.g. DOCS_BASE_URL=http://localhost:5176/docs). Most
+// users should never need to set this — the bundled copies below are
+// current as of this package's version and need no network access at all.
+const DOCS_BASE_URL = process.env.DOCS_BASE_URL || null;
+
+async function readDocsFile(bundledFilename, remoteFilename) {
+  if (DOCS_BASE_URL) {
+    const url = `${DOCS_BASE_URL}/${remoteFilename}`;
+    const response = await fetch(url).catch(() => null);
+    if (response && response.ok) return await response.text();
+    // Fall through to the bundled copy rather than failing outright — an
+    // explicit override that's temporarily unreachable shouldn't break the
+    // tool when a good-enough local answer already exists.
+  }
+  return fs.readFileSync(path.join(DOCS_DIR, bundledFilename), "utf8");
+}
 
 const server = new Server({
   name: "touchque-mcp-server",
-  version: "2.0.0"
+  version: "1.0.0"
 }, {
   capabilities: {
     tools: {},
@@ -29,12 +59,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "get_touchque_docs",
-        description: "Fetches the official TouchQue SDK documentation and integration guide from the remote documentation server. Always call this before writing any integration code.",
+        description: "Returns the official @touchque/node SDK README (install, the requireTouchQue step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone.",
         inputSchema: { type: "object", properties: {}, required: [] }
       },
       {
         name: "get_sdk_types",
-        description: "Fetches the complete TypeScript type definitions and interfaces for the TouchQue SDK. Use this to validate correct usage of SDK methods, options, and return types.",
+        description: "Returns the TouchQue Node.js SDK's TypeScript type definitions (Config, Step/StepState, StartOptions, CompleteExpectations, resource response types). Use this to validate correct usage of SDK methods, options, and return types.",
         inputSchema: { type: "object", properties: {}, required: [] }
       },
       {
@@ -45,7 +75,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             apiUrl: {
               type: "string",
-              description: "The full base URL of the TouchQue backend (e.g. https://api.yourapp.com or http://localhost:5001)"
+              description: "The full base URL of the TouchQue backend (e.g. https://api.touchque.com or http://localhost:5001)"
             }
           },
           required: ["apiUrl"]
@@ -53,7 +83,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "validate_integration",
-        description: "Performs a static analysis checklist on a code snippet to verify it follows TouchQue security best practices. Returns a structured report of passed/failed checks.",
+        description: "Performs a static analysis checklist on a code snippet to verify it follows the current requireTouchQue step-up model and TouchQue security best practices. Returns a structured report of passed/failed checks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -79,26 +109,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     if (name === "get_touchque_docs") {
-      const url = `${DOCS_BASE_URL}/sdk-documentation.md`;
-      const response = await fetch(url).catch(() => null);
-
-      if (!response || !response.ok) {
-        throw new Error(`Documentation server unreachable (URL: ${url}) — Status: ${response?.status ?? "no response"}. Ensure DOCS_BASE_URL is set correctly.`);
-      }
-
-      const content = await response.text();
+      const content = await readDocsFile("sdk-documentation.md", "sdk-documentation.md");
       return { content: [{ type: "text", text: content }] };
     }
 
     if (name === "get_sdk_types") {
-      const url = `${DOCS_BASE_URL}/types.ts`;
-      const response = await fetch(url).catch(() => null);
-
-      if (!response || !response.ok) {
-        throw new Error(`Type definitions server unreachable (URL: ${url}) — Status: ${response?.status ?? "no response"}`);
-      }
-
-      const content = await response.text();
+      const content = await readDocsFile("types.ts", "types.ts");
       return { content: [{ type: "text", text: content }] };
     }
 
@@ -123,22 +139,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { code, framework } = args;
       const checks = [];
 
-      // Security & correctness checks
+      // Security & correctness checks, against the current step-up API
+      // (requireTouchQue / withTouchQue / touchqueRouter — not the old
+      // synchronous tq.login.verify()/tq.protect() model).
       const hasImport = /require\s*\(\s*['"]@touchque\/node['"]\s*\)|from\s+['"]@touchque\/node['"]/.test(code);
       checks.push({ id: "import", label: "SDK is imported", pass: hasImport });
 
-      const hasProtect = /tq\.protect\(|touchque\.protect\(|TouchQue\.protect\(/.test(code);
-      const hasMiddleware = /touchqueMiddleware|tqMiddleware|tq\.middleware/.test(code);
-      checks.push({ id: "protection", label: "Route protection applied (protect() or middleware)", pass: hasProtect || hasMiddleware });
+      const hasStepUpGuard = /requireTouchQue\s*\(|withTouchQue\s*\(|touchqueRouter\s*\(/.test(code);
+      const hasLegacyGuard = /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/.test(code);
+      checks.push({
+        id: "protection",
+        label: hasLegacyGuard && !hasStepUpGuard
+          ? "Route protection applied (found the OLD tq.protect()/middleware pattern — migrate to requireTouchQue())"
+          : "Route protection applied (requireTouchQue/withTouchQue/touchqueRouter)",
+        pass: hasStepUpGuard,
+      });
 
-      const hasHardcodedSecret = /apiKey\s*[:=]\s*['"][a-zA-Z0-9]{20,}['"]/.test(code);
-      checks.push({ id: "no_hardcoded_secret", label: "No hardcoded API keys in source", pass: !hasHardcodedSecret });
+      const hasSynchronousVerify = /\.login\.verify\s*\(/.test(code);
+      checks.push({
+        id: "no_synchronous_verify",
+        label: "Not using the old synchronous login.verify() inside a route handler (it can't show a matching number/QR before approval — use requireTouchQue instead)",
+        pass: !hasSynchronousVerify,
+      });
+
+      const hasHardcodedSecret = /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/.test(code);
+      checks.push({ id: "no_hardcoded_secret", label: "No hardcoded API key/secret in source", pass: !hasHardcodedSecret });
 
       const hasEnvVar = /process\.env\.|env\[/.test(code);
       checks.push({ id: "env_vars", label: "Environment variables used for secrets", pass: hasEnvVar });
 
-      const hasErrorHandling = /catch|try\s*{|\.catch\s*\(/.test(code);
-      checks.push({ id: "error_handling", label: "Error handling present", pass: hasErrorHandling });
+      const hasErrorHandling = /catch|try\s*{|\.catch\s*\(/.test(code) || hasStepUpGuard;
+      checks.push({
+        id: "error_handling",
+        label: hasStepUpGuard
+          ? "Error handling (requireTouchQue's own 202/403/408/423/429 responses cover the step-up flow)"
+          : "Error handling present",
+        pass: hasErrorHandling,
+      });
 
       const passed = checks.filter(c => c.pass).length;
       const total = checks.length;
@@ -234,30 +271,32 @@ STEP 4 — CODEBASE REVIEW
   → Summarize your understanding back to the user before touching anything.
 
 STEP 5 — SURGICAL INTEGRATION
-  → Use the 'requireTouchQue' Express middleware to protect routes in one line.
+  → Use the 'requireTouchQue' Express middleware to protect routes in one line — it takes the ACTION and options directly, not a client instance.
   → Never rewrite surrounding business logic.
-  → Preserve existing error response shapes (JSON structure, HTTP status codes).
+  → Preserve existing error response shapes for YOUR OWN business errors — but understand that requireTouchQue answers 202 (not your normal 200/4xx) while approval is pending; this is expected, not a bug to "fix".
   → Use this exact pattern as your reference for integration:
 
 \`\`\`javascript
-const { TouchQue, requireTouchQue } = require('@touchque/node');
+const { requireTouchQue } = require('@touchque/node');
+// TQ_API_KEY / TQ_API_SECRET are read from the environment automatically.
 
-const tq = new TouchQue({
-  apiKey: process.env.TQ_API_KEY,
-  apiSecret: process.env.TQ_API_SECRET
-});
-
-// Example of protecting a sensitive route:
-// Provide a semantic action type like "SEND_MONEY" or "LOGIN" for the AI Risk Engine.
+// Provide a semantic action type like "SEND_MONEY" or "LOGIN" for the AI Risk Engine,
+// and (for anything sensitive) the transaction details the user should see and approve.
 app.post(
   '/api/transfer',
-  requireTouchQue(tq, 'SEND_MONEY'),
+  requireTouchQue('SEND_MONEY', {
+    user: (req) => req.session.user?.email,
+    details: (req) => ({ Amount: \`\${req.body.amount} EUR\`, To: req.body.iban }),
+  }),
   (req, res) => {
-    // Only reached if user approved on their mobile device!
-    res.json({ success: true, message: 'Transfer completed!' });
+    // Only reached once the user approved on their phone — req.touchque
+    // carries { requestId, assurance, approvalProof, ... }.
+    res.json({ success: true, assurance: req.touchque.assurance });
   }
 );
 \`\`\`
+
+  → Until approved, this answers 202 { touchque: step, token }. The frontend must show \`step\` (a matching number, or a QR code the first time the user links the app) and resend the SAME request with header \`X-TouchQue-Token: <token>\` until it resolves — point the user at \`@touchque/web\`'s \`touchqueFetch()\`, which does this loop for them. Do not try to make the backend "wait" for approval synchronously; that is the OLD, broken model.
 
 STEP 6 — VALIDATION
   → After writing code, call the validate_integration tool on the final snippet.
@@ -266,20 +305,21 @@ STEP 6 — VALIDATION
 
 STEP 7 — HANDOFF
   → Provide a concise test checklist the developer can run manually:
-    [ ] 2FA challenge triggers correctly
-    [ ] Valid OTP grants access
-    [ ] Invalid OTP is rejected with correct error
+    [ ] First request to the protected route answers 202 with a step (number or enroll QR)
+    [ ] Approving on the phone lets the retried request through exactly once
+    [ ] Rejecting on the phone returns a clear rejected/expired response, not a 500
     [ ] Existing non-2FA routes are unaffected
-    [ ] No secrets appear in logs or responses
+    [ ] No secrets (API key/secret, or approval tokens) appear in logs or client-visible responses
 
 ═══════════════════════════════════════════════════
 HARD CONSTRAINTS — NEVER VIOLATE
 ═══════════════════════════════════════════════════
 ✗ Never hardcode API keys, secrets, or URLs in generated code.
 ✗ Never remove or bypass existing auth middleware.
-✗ Never change HTTP status codes that existing clients depend on.
+✗ Never change HTTP status codes that existing clients depend on — but do NOT "fix" the 202 pending-approval response; that is correct.
 ✗ Never write speculative code without seeing the actual file first.
 ✗ Never mark the integration complete without running validate_integration.
+✗ Never write the OLD synchronous tq.login.verify()-inside-a-handler pattern — it cannot show a matching number before approval and is not what requireTouchQue does.
 
 ═══════════════════════════════════════════════════
 BEGIN
@@ -310,11 +350,11 @@ AUDIT SCOPE
 You will review:
   1. SDK initialization and configuration
   2. Secret management (API keys, environment variables)
-  3. Route protection coverage (are all sensitive routes protected?)
-  4. Error handling (are 2FA errors leaking internal details?)
-  5. Token/OTP lifecycle (expiry, reuse prevention, rate limiting)
+  3. Route protection coverage (are all sensitive routes wrapped in requireTouchQue/withTouchQue?)
+  4. Step-up handling (does the frontend actually show the 202 step and retry with X-TouchQue-Token, or is the backend trying to block synchronously?)
+  5. Approval consumption (is req.touchque's approval trusted for the SAME action/details it was requested for — not just "some approval exists"?)
   6. Fallback behavior (what happens when TouchQue API is unreachable?)
-  7. Logging (are OTPs or user PII accidentally logged?)
+  7. Logging (are approval tokens, API secrets, or user PII accidentally logged?)
   8. Dependency hygiene (@touchque/node version, known CVEs)
 
 ═══════════════════════════════════════════════════
@@ -393,16 +433,17 @@ When a user reports a problem, work through this tree in order:
 3. SDK EXCEPTIONS (thrown errors from @touchque/node)
    → Ask for the full stack trace.
    → Call get_sdk_types to verify the method signature they are using.
-   → Common causes: wrong argument types, calling async methods without await, SDK version mismatch.
+   → Common causes: wrong argument types, calling requireTouchQue with the OLD (client, action) signature instead of (action, options), SDK version mismatch.
 
-4. OTP / CHALLENGE FAILURES
-   → Ask: Are users failing on first attempt or consistently?
-   → Consistent failures suggest: clock skew on server (NTP sync), wrong OTP window configuration, channel delivery issue (SMS/email).
-   → Intermittent failures suggest: race condition or session state bug.
+4. PUSH / STEP-UP FAILURES (the route never resolves, or resolves wrong)
+   → Ask: Does the first request come back as 202 { touchque, token } at all? If not, the middleware/route wiring is broken, not the phone flow.
+   → Ask: Does the frontend re-send the SAME request with header X-TouchQue-Token, or is it trying to "wait" on the first response? The old synchronous model is gone — the frontend MUST retry.
+   → Ask: Is the user actually enrolled? A never-linked user gets step.state === 'enroll' with a QR, not an error.
+   → Consistent rejects/expires suggest: clock skew on server (NTP sync), a details/referenceId mismatch between the request that got approved and the one being completed.
 
 5. MIDDLEWARE / ROUTE ORDER ISSUES
    → Ask the user to paste their route registration code and middleware chain.
-   → Verify tq.protect() or the middleware is applied BEFORE the route handler, not after.
+   → Verify requireTouchQue(...) is applied BEFORE the route handler, not after.
    → Verify it is not accidentally applied to public routes.
 
 6. ENVIRONMENT / BUILD ISSUES
@@ -422,7 +463,7 @@ COMMUNICATION STANDARDS
 CONSTRAINTS
 ═══════════════════════════════════════════════════
 ✗ Never suggest disabling 2FA as a workaround.
-✗ Never suggest logging OTP values for debugging — use masked logs only.
+✗ Never suggest logging approval tokens or API secrets for debugging — use masked logs only.
 ✗ Never assume the problem is in TouchQue itself without ruling out configuration and environment first.
 
 Begin by asking the user to describe what they expected to happen, what actually happened, and the exact error message or behavior they are seeing.`
@@ -441,10 +482,14 @@ Begin by asking the user to describe what they expected to happen, what actually
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("🚀 TouchQue MCP Server v2.0.0 started successfully.");
+  console.error("🚀 TouchQue MCP Server v1.0.0 started successfully (stdio transport).");
 }
 
-main().catch((error) => {
-  console.error("Server startup error:", error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("Server startup error:", error);
+    process.exit(1);
+  });
+}
+
+module.exports = { server, readDocsFile };

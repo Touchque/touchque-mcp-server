@@ -25,7 +25,7 @@ async function withClient(fn) {
   }
 }
 
-test("lists exactly the 4 real tools", async () => {
+test("lists exactly the 5 real tools, including the touchque_help fallback", async () => {
   await withClient(async (client) => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
@@ -33,8 +33,40 @@ test("lists exactly the 4 real tools", async () => {
       "get_sdk_types",
       "get_touchque_docs",
       "ping_touchque_api",
+      "touchque_help",
       "validate_integration",
     ]);
+  });
+});
+
+test("touchque_help works with no arguments and explains the server, for clients with no prompts/resources support", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: "touchque_help", arguments: {} });
+    const text = result.content[0].text;
+    assert.match(text, /get_touchque_docs/);
+    assert.match(text, /validate_integration/);
+  });
+});
+
+test("server advertises MCP-native instructions on connect (works even without any tool call)", async () => {
+  await withClient(async (client) => {
+    const serverInstructions = client.getInstructions();
+    assert.match(serverInstructions, /TouchQue MCP Server/);
+    assert.match(serverInstructions, /get_touchque_docs/);
+  });
+});
+
+test("lists the bundled docs as MCP resources and can read them", async () => {
+  await withClient(async (client) => {
+    const { resources } = await client.listResources();
+    const uris = resources.map((r) => r.uri).sort();
+    assert.deepEqual(uris, [
+      "touchque://docs/sdk-documentation.md",
+      "touchque://docs/types.ts",
+    ]);
+
+    const read = await client.readResource({ uri: "touchque://docs/sdk-documentation.md" });
+    assert.match(read.contents[0].text, /requireTouchQue/);
   });
 });
 

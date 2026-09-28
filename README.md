@@ -14,7 +14,23 @@ URL you pass in).
 
 ## What it gives an assistant
 
+Not every MCP client renders every MCP primitive — some editors only ever
+show **tools**, some show tools + prompts, few show resources. So the same
+content is reachable three independent ways, and none of them require the
+others:
+
+1. **Server `instructions`** (MCP-native "help" text, sent on connect —
+   shown automatically by clients that support it, no call needed).
+2. **The `touchque_help` tool** — works in literally every MCP client,
+   since tools are the one primitive everyone implements. If your editor
+   doesn't show a help command or can't find the docs, look for this tool.
+3. **`resources/list` + `resources/read`** — for clients that browse
+   resources instead of (or alongside) tools.
+
 **Tools:**
+- `touchque_help` — **start here.** Explains what this server is for and
+  which tool to call next. This is the fallback of last resort — call it if
+  nothing else here is obvious.
 - `get_touchque_docs` — the current `@touchque/node` README (install, the
   `requireTouchQue` step-up model, framework adapters, error handling,
   security).
@@ -31,7 +47,14 @@ URL you pass in).
   secrets kept out of source and read from the environment, is there error
   handling.
 
-**Prompts** (pre-built instruction sets an assistant can load):
+**Resources** (for clients that browse resources, e.g. as an alternative to
+tools):
+- `touchque://docs/sdk-documentation.md` — same content as `get_touchque_docs`.
+- `touchque://docs/types.ts` — same content as `get_sdk_types`.
+
+**Prompts** (pre-built instruction sets an assistant can load — support for
+this varies by client; if your client doesn't show these, use the tools
+above directly instead):
 - `integrate_touchque` — a step-by-step wizard for adding TouchQue to an
   existing codebase without breaking anything.
 - `audit_touchque_integration` — a formal security-review checklist for an
@@ -71,6 +94,25 @@ Claude Code):
 }
 ```
 
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json` (same shape as Cursor's):
+
+```json
+{
+  "mcpServers": {
+    "touchque": {
+      "command": "npx",
+      "args": ["-y", "@touchque/mcp-server"]
+    }
+  }
+}
+```
+
+Windsurf doesn't currently render MCP prompts — use the `touchque_help` and
+`get_touchque_docs` tools directly there (see "What it gives an assistant"
+above).
+
 No API key, no environment variables, no separate server process to run —
 `npx` fetches and runs it on demand over stdio, the same way you'd wire up
 any other local MCP server.
@@ -91,7 +133,7 @@ If you're editing this server (not consuming it), point it at a docs site
 you're actively editing instead of the bundled copies:
 
 ```bash
-DOCS_BASE_URL=http://localhost:5176/docs npx touchque-mcp-server
+DOCS_BASE_URL=http://localhost:5176/docs npx @touchque/mcp-server
 ```
 
 The server tries `DOCS_BASE_URL/sdk-documentation.md` and
@@ -110,9 +152,10 @@ npm test
 
 Tests spawn the actual server over stdio using the official MCP SDK's
 `Client`/`StdioClientTransport` — the same path any real MCP client takes —
-and check the real tool/prompt list, that the bundled docs/types load without
-network access, and that `validate_integration` correctly distinguishes the
-current step-up API from the old, removed synchronous one.
+and check the real tool/prompt/resource lists, the server `instructions`
+field, that the bundled docs/types load without network access, and that
+`validate_integration` correctly distinguishes the current step-up API from
+the old, removed synchronous one.
 
 ## Security
 

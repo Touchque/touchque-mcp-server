@@ -9,29 +9,66 @@ const {
   ListToolsRequestSchema,
   CallToolRequestSchema,
   ListPromptsRequestSchema,
-  GetPromptRequestSchema
+  GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 
 // This server talks over stdio only (no HTTP/SSE, no port, no server-side
 // auth) — it's meant to run as a local child process launched by an MCP
-// client (Claude Desktop, Claude Code, Cursor, …), the same way `npx -y
-// touchque-mcp-server` would. See README.md for client config examples.
+// client (Claude Desktop, Claude Code, Cursor, Windsurf, …), the same way
+// `npx -y @touchque/mcp-server` would. See README.md for client config
+// examples.
 //
 // It reads and validates code you paste in, and fetches your own backend's
 // health — it never touches a real TouchQue account or holds a secret, so
 // there is nothing here that needs gating with an API key.
+//
+// IMPORTANT — client compatibility: not every MCP client renders every MCP
+// primitive. `prompts` (the wizard/audit/troubleshoot instructions below)
+// and `resources` (the raw docs/types files) are BOTH inconsistently
+// supported across clients — some editors only ever show `tools`. So the
+// docs/instructions are deliberately reachable THREE independent ways:
+//   1. The server-level `instructions` string (every client that shows
+//      anything on connect shows this).
+//   2. The `touchque_help` TOOL (tools are the one primitive every MCP
+//      client supports — this is the actual "help command" a client that
+//      doesn't support prompts/resources should find).
+//   3. `resources/list` + `resources/read`, for clients that browse
+//      resources instead of/alongside tools.
+// Never remove #2 even if #1/#3 seem redundant — it's the fallback of last
+// resort for the least-capable client.
+
+const { version: PACKAGE_VERSION } = require("./package.json");
 
 const DOCS_DIR = path.join(__dirname, "bundled");
 
 // Optional override for local development against a docs site you're
-// editing right now (e.g. DOCS_BASE_URL=http://localhost:5176/docs). Most
+// actively editing (e.g. DOCS_BASE_URL=http://localhost:5176/docs). Most
 // users should never need to set this — the bundled copies below are
 // current as of this package's version and need no network access at all.
 const DOCS_BASE_URL = process.env.DOCS_BASE_URL || null;
 
-async function readDocsFile(bundledFilename, remoteFilename) {
+const BUNDLED_DOCS = [
+  {
+    uri: "touchque://docs/sdk-documentation.md",
+    filename: "sdk-documentation.md",
+    name: "TouchQue Node.js SDK — README",
+    mimeType: "text/markdown",
+    description: "Install, the requireTouchQue step-up model, framework adapters, error handling, security.",
+  },
+  {
+    uri: "touchque://docs/types.ts",
+    filename: "types.ts",
+    name: "TouchQue Node.js SDK — TypeScript types",
+    mimeType: "text/x-typescript",
+    description: "Config, Step/StepState, StartOptions, CompleteExpectations, resource response types.",
+  },
+];
+
+async function readDocsFile(bundledFilename) {
   if (DOCS_BASE_URL) {
-    const url = `${DOCS_BASE_URL}/${remoteFilename}`;
+    const url = `${DOCS_BASE_URL}/${bundledFilename}`;
     const response = await fetch(url).catch(() => null);
     if (response && response.ok) return await response.text();
     // Fall through to the bundled copy rather than failing outright — an
@@ -41,14 +78,42 @@ async function readDocsFile(bundledFilename, remoteFilename) {
   return fs.readFileSync(path.join(DOCS_DIR, bundledFilename), "utf8");
 }
 
+const HELP_TEXT = `TouchQue MCP Server — start here.
+
+This server helps you add TouchQue push-2FA/passkey step-up authentication
+to a codebase correctly, using the CURRENT API (requireTouchQue / 202 +
+X-TouchQue-Token step-up — not the old synchronous tq.login.verify()).
+
+Call these tools, in this order, for a normal integration:
+  1. get_touchque_docs      — the SDK README (install + the step-up model)
+  2. get_sdk_types          — TypeScript types, to check exact method shapes
+  3. (write the integration code)
+  4. validate_integration   — checks your code against the current API
+  5. ping_touchque_api      — checks a backend URL is actually reachable
+
+If your client supports MCP prompts, three ready-made instruction sets are
+also available: integrate_touchque (step-by-step wizard),
+audit_touchque_integration (security review), troubleshoot_touchque
+(fixing a broken integration). If your client doesn't show prompts, just
+call get_touchque_docs and follow it directly — nothing here requires
+prompts to work.
+
+This server is read-only dev tooling: no API key, no account access, no
+required network calls (docs/types are bundled, not fetched).`;
+
 const server = new Server({
   name: "touchque-mcp-server",
-  version: "1.0.0"
+  version: PACKAGE_VERSION,
 }, {
   capabilities: {
     tools: {},
-    prompts: {}
-  }
+    prompts: {},
+    resources: {},
+  },
+  // MCP-native "help" — many clients (Claude Desktop/Code, and others)
+  // surface this on connect without any tool call. Clients that don't show
+  // it still have the touchque_help tool below.
+  instructions: HELP_TEXT,
 });
 
 // ==========================================
@@ -57,6 +122,11 @@ const server = new Server({
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
+      {
+        name: "touchque_help",
+        description: "START HERE. Explains what this MCP server is for and which tool to call next. Call this first if you're not sure what TouchQue is or how this server works — it works in every MCP client, including ones that don't support prompts or resources.",
+        inputSchema: { type: "object", properties: {}, required: [] }
+      },
       {
         name: "get_touchque_docs",
         description: "Returns the official @touchque/node SDK README (install, the requireTouchQue step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone.",
@@ -108,13 +178,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    if (name === "touchque_help") {
+      return { content: [{ type: "text", text: HELP_TEXT }] };
+    }
+
     if (name === "get_touchque_docs") {
-      const content = await readDocsFile("sdk-documentation.md", "sdk-documentation.md");
+      const content = await readDocsFile("sdk-documentation.md");
       return { content: [{ type: "text", text: content }] };
     }
 
     if (name === "get_sdk_types") {
-      const content = await readDocsFile("types.ts", "types.ts");
+      const content = await readDocsFile("types.ts");
       return { content: [{ type: "text", text: content }] };
     }
 
@@ -201,6 +275,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: "text", text: `Tool error: ${error.message}` }]
     };
   }
+});
+
+// ==========================================
+// RESOURCES
+// ==========================================
+// A second discovery path for clients that browse resources instead of (or
+// in addition to) calling tools. Read-only, same bundled content as
+// get_touchque_docs/get_sdk_types.
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  return {
+    resources: BUNDLED_DOCS.map(({ uri, name, mimeType, description }) => ({
+      uri, name, mimeType, description,
+    })),
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const { uri } = request.params;
+  const doc = BUNDLED_DOCS.find((d) => d.uri === uri);
+  if (!doc) throw new Error(`Unknown resource: ${uri}`);
+
+  const text = await readDocsFile(doc.filename);
+  return {
+    contents: [{ uri: doc.uri, mimeType: doc.mimeType, text }],
+  };
 });
 
 // ==========================================
@@ -482,7 +581,7 @@ Begin by asking the user to describe what they expected to happen, what actually
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("🚀 TouchQue MCP Server v1.0.0 started successfully (stdio transport).");
+  console.error(`🚀 TouchQue MCP Server v${PACKAGE_VERSION} started successfully (stdio transport).`);
 }
 
 if (require.main === module) {
@@ -492,4 +591,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, readDocsFile };
+module.exports = { server, readDocsFile, HELP_TEXT, BUNDLED_DOCS };

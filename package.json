@@ -1,6 +1,6 @@
 {
   "name": "@touchque/mcp-server",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "MCP server for TouchQue — gives AI coding assistants (Claude, Cursor, …) accurate, up-to-date TouchQue SDK docs, types and an integration validator so they don't guess at the API.",
   "main": "index.js",
   "bin": {

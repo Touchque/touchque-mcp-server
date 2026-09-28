@@ -32,6 +32,9 @@
     "type": "git",
     "url": "https://github.com/Touchque/touchque-mcp-server"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
   }

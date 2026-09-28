@@ -55,8 +55,13 @@ tools):
 **Prompts** (pre-built instruction sets an assistant can load — support for
 this varies by client; if your client doesn't show these, use the tools
 above directly instead):
-- `integrate_touchque` — a step-by-step wizard for adding TouchQue to an
-  existing codebase without breaking anything.
+- `integrate_touchque` — a step-by-step wizard for adding TouchQue's
+  default push/passkey step-up to an existing codebase without breaking
+  anything.
+- `configure_offline_sign` — a separate wizard for TouchQue's "Offline
+  Sign" flow (QR + 7-character code, for when the phone has no internet —
+  kiosks, air-gapped environments, poor signal). Distinct from
+  `integrate_touchque`; use this one when offline approval is the ask.
 - `audit_touchque_integration` — a formal security-review checklist for an
   existing integration.
 - `troubleshoot_touchque` — a triage decision tree for a broken integration.

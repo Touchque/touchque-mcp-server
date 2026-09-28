@@ -70,15 +70,33 @@ test("lists the bundled docs as MCP resources and can read them", async () => {
   });
 });
 
-test("lists exactly the 3 real prompts", async () => {
+test("lists exactly the 4 real prompts", async () => {
   await withClient(async (client) => {
     const { prompts } = await client.listPrompts();
     const names = prompts.map((p) => p.name).sort();
     assert.deepEqual(names, [
       "audit_touchque_integration",
+      "configure_offline_sign",
       "integrate_touchque",
       "troubleshoot_touchque",
     ]);
+  });
+});
+
+test("configure_offline_sign prompt teaches the real tq.offline.challenge()/verify() API", async () => {
+  await withClient(async (client) => {
+    const result = await client.getPrompt({ name: "configure_offline_sign" });
+    const text = result.messages[0].content.text;
+    assert.match(text, /tq\.offline\.challenge/);
+    assert.match(text, /tq\.offline\.verify\(/);
+    assert.match(text, /qrDataUrl/);
+  });
+});
+
+test("touchque_help mentions Offline Sign as a distinct flow from push/passkey", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: "touchque_help", arguments: {} });
+    assert.match(result.content[0].text, /Offline Sign/);
   });
 });
 

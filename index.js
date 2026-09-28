@@ -91,12 +91,19 @@ Call these tools, in this order, for a normal integration:
   4. validate_integration   — checks your code against the current API
   5. ping_touchque_api      — checks a backend URL is actually reachable
 
-If your client supports MCP prompts, three ready-made instruction sets are
-also available: integrate_touchque (step-by-step wizard),
-audit_touchque_integration (security review), troubleshoot_touchque
+Push + passkey step-up is the default flow. TouchQue ALSO has "Offline
+Sign" — a QR code + 7-character code flow for when the user's phone has no
+internet (tq.offline.challenge() / tq.offline.verify() in the SDK). If the
+user mentions offline approval, kiosks, air-gapped environments, or "what
+if the phone has no signal", use that flow, not requireTouchQue.
+
+If your client supports MCP prompts, four ready-made instruction sets are
+also available: integrate_touchque (step-by-step wizard, push/passkey),
+configure_offline_sign (wizard for the QR + 7-character-code offline
+flow), audit_touchque_integration (security review), troubleshoot_touchque
 (fixing a broken integration). If your client doesn't show prompts, just
 call get_touchque_docs and follow it directly — nothing here requires
-prompts to work.
+prompts to work; the Offline Sign flow is documented in there too.
 
 This server is read-only dev tooling: no API key, no account access, no
 required network calls (docs/types are bundled, not fetched).`;
@@ -313,6 +320,10 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
         description: "🔐 Integration Wizard — Step-by-step guide for adding TouchQue 2FA to an existing project. Inspects your codebase first, never breaks existing logic.",
       },
       {
+        name: "configure_offline_sign",
+        description: "📴 Offline Sign Wizard — Step-by-step guide for adding TouchQue's QR + 7-character-code approval flow, for when the user's phone has no internet (kiosks, air-gapped environments, poor signal).",
+      },
+      {
         name: "audit_touchque_integration",
         description: "🛡️ Security Audit — Reviews an existing TouchQue integration for vulnerabilities, misconfigurations, and deviations from best practices. Produces a prioritized findings report.",
       },
@@ -431,7 +442,105 @@ Start by asking for the framework and pointing the user to Step 1.`
   }
 
   // ─────────────────────────────────────────────────────────────
-  // PROMPT 2 — SECURITY AUDIT
+  // PROMPT 2 — OFFLINE SIGN WIZARD
+  // ─────────────────────────────────────────────────────────────
+  if (name === "configure_offline_sign") {
+    return {
+      description: "TouchQue Offline Sign Integration Wizard",
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `You are adding TouchQue's "Offline Sign" flow to an existing codebase: approval via a QR code the phone scans WITHOUT internet, which then shows the user a 7-character code they type on the website. This is a DIFFERENT flow from push/passkey step-up (requireTouchQue) — use this prompt only when the user specifically needs approval to work when the phone has no signal/data (kiosks, air-gapped environments, poor connectivity, "what if there's no internet on the phone").
+
+═══════════════════════════════════════════════════
+PREREQUISITE — DASHBOARD POLICY
+═══════════════════════════════════════════════════
+→ Offline Sign must be turned on for the integration in the TouchQue
+  Dashboard's Security Policy page first ("Offline sign"). For critical
+  actions it must also be explicitly allowed there, and \`details\` becomes
+  required on every challenge. Tell the user to check this before anything
+  else — a correct integration still fails with \`offline_disabled\` if this
+  toggle is off.
+
+═══════════════════════════════════════════════════
+THE FLOW
+═══════════════════════════════════════════════════
+1. The user is on your page, ONLINE. Your backend creates a challenge and
+   shows its QR:
+
+\`\`\`javascript
+const { TouchQue } = require('@touchque/node');
+const tq = new TouchQue(); // TQ_API_KEY / TQ_API_SECRET from the environment
+
+app.post('/api/offline-challenge', async (req, res) => {
+  const ch = await tq.offline.challenge({
+    user: req.session.user.email,
+    type: 'WITHDRAW',                 // your action type
+    details: { Amount: '1,250.00 USD', Recipient: 'Jane Doe' }, // required for critical actions
+    clientIp: req.ip,
+    userAgent: req.get('user-agent'),
+  });
+  // ch: { challengeId, qr (text), qrDataUrl (data:image/png;base64,...), expiresInSeconds, totpAvailable }
+  res.json(ch);
+});
+\`\`\`
+
+2. Render \`qrDataUrl\` directly as an \`<img>\` src — no client-side QR
+   library needed. The user's phone scans it OFFLINE, shows the \`details\`
+   for confirmation (Face ID/fingerprint), and displays a 7-character code.
+
+3. The user types that code into your page; your backend verifies it:
+
+\`\`\`javascript
+app.post('/api/offline-verify', async (req, res) => {
+  const result = await tq.offline.verify({
+    challengeId: req.body.challengeId,
+    code: req.body.code,
+  });
+  // result: { approved: true } | { approved: false, reason, attemptsLeft }
+  // NEVER throws for a wrong/expired/used/locked code — always check .approved.
+  res.json(result);
+});
+\`\`\`
+
+4. Optional, lower-assurance alternative with no QR at all — a rolling
+   time-based code (refused for critical actions):
+   \`tq.offline.verifyTotp({ user, code, type, clientIp })\`.
+
+═══════════════════════════════════════════════════
+THINGS THAT WILL BE WRONG IF YOU SKIP THEM
+═══════════════════════════════════════════════════
+✗ Do not treat a wrong code as an exception — verify() resolves
+  \`{ approved: false, reason }\`, it does not throw.
+✗ Do not build \`details\` from anything the browser sent unvalidated — it's
+  shown on the phone as what the user is approving (WYSIWYS); build it
+  from your own server-side state only.
+✗ Do not skip the Dashboard policy prerequisite step — this is the #1
+  reason a first attempt returns \`offline_disabled\`.
+✗ A code works once; a challenge locks after 5 wrong codes; there is an
+  hourly failed-attempt limit per user. Don't build a retry loop that
+  ignores \`attemptsLeft\`.
+✗ Only TouchQue can verify a code server-side (it's a MAC, not something a
+  third party can check) — never try to validate it yourself.
+
+═══════════════════════════════════════════════════
+VALIDATION
+═══════════════════════════════════════════════════
+→ After writing the code, call validate_integration on it too — the same
+  "no hardcoded secrets / env vars used / error handling" checks apply
+  here as to a push/passkey integration.
+
+Begin by confirming Offline Sign is enabled in the Dashboard, then ask for the framework and the action type this challenge is for.`
+          }
+        }
+      ]
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // PROMPT 3 — SECURITY AUDIT
   // ─────────────────────────────────────────────────────────────
   if (name === "audit_touchque_integration") {
     return {
@@ -502,7 +611,7 @@ Begin by asking the user to share the files they want audited.`
   }
 
   // ─────────────────────────────────────────────────────────────
-  // PROMPT 3 — TROUBLESHOOTER
+  // PROMPT 4 — TROUBLESHOOTER
   // ─────────────────────────────────────────────────────────────
   if (name === "troubleshoot_touchque") {
     return {

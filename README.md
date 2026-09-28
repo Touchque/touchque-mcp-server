@@ -12,6 +12,23 @@ docs/types tools (they're bundled with the package). The only network calls
 it makes are ones you explicitly ask for (`ping_touchque_api`, pointed at a
 URL you pass in).
 
+## What this server does NOT do
+
+**This server has no file system access of its own.** It cannot open,
+read, or edit your project's files, and it has no idea what's in
+"my login page" or "the file I'm working on" — it only returns text (docs,
+wizard instructions, a validation report on code YOU paste in).
+
+The actual file editing — adding `requireTouchQue` to a route, wiring the
+Offline Sign QR/code into your login screen — is done by **the coding
+assistant you're using** (Claude Code, Cursor, Windsurf, …), using *its
+own* file tools, guided by what this server returns. So "does it edit my
+login screen when I say 'set it up'?" depends on your assistant actually
+being in an agentic/edit mode with file access — this server's job is only
+to make sure it edits it *correctly* (current API, correct prerequisites)
+once it does. The wizard prompts say this explicitly and instruct the
+assistant to ask for exact file paths rather than guess.
+
 ## What it gives an assistant
 
 Not every MCP client renders every MCP primitive — some editors only ever

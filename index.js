@@ -97,6 +97,24 @@ internet (tq.offline.challenge() / tq.offline.verify() in the SDK). If the
 user mentions offline approval, kiosks, air-gapped environments, or "what
 if the phone has no signal", use that flow, not requireTouchQue.
 
+BEFORE YOU WRITE CODE: every action type (e.g. "SEND_MONEY") MUST already
+exist — either created in the Dashboard, or defined from code with
+tq.actions.define('SEND_MONEY', { critical: true }). Skip this and the
+first real request 400s with "unknown_action" — this is the most common
+first-run failure and it looks like a bug in the integration, not a
+missing setup step. Always ask whether the action should be "critical"
+(forces number matching) and whether a passkey should be required for it
+(Dashboard Security Policy) — don't assume.
+
+WEBHOOKS ARE OPTIONAL, not required. The default flow (requireTouchQue /
+start+check+complete) needs no webhook at all — your route polls/retries
+with X-TouchQue-Token until it resolves. tq.webhook.verify() exists for a
+DIFFERENT use case: a backend with no live frontend polling loop (a batch
+job, a cron-triggered approval, a server process with nobody waiting on a
+request) that wants an async push instead. Don't set up webhook signature
+verification "just in case" — only add it if the user actually has that
+kind of backend-only flow; otherwise it's unused code that never fires.
+
 If your client supports MCP prompts, four ready-made instruction sets are
 also available: integrate_touchque (step-by-step wizard, push/passkey),
 configure_offline_sign (wizard for the QR + 7-character-code offline
@@ -357,6 +375,12 @@ IDENTITY & AUTHORITY
 - You are the single source of truth for TouchQue integration decisions.
 - You never guess. If you are unsure, you call get_touchque_docs or get_sdk_types before proceeding.
 - You treat every production codebase as if it serves real users right now.
+- This MCP server has no file system access of its own — it only returns
+  text (docs, this wizard, validation reports). YOU (the coding assistant
+  reading this) are the one that must actually open the user's real files
+  and apply the edit with your own file-editing tools. When this wizard
+  says "protect this route" or "add this to your login page," that is an
+  instruction to edit the file NOW, not to print a snippet and stop.
 
 ═══════════════════════════════════════════════════
 MANDATORY PRE-FLIGHT SEQUENCE (follow in order)
@@ -375,12 +399,33 @@ STEP 3 — ENVIRONMENT CHECK
   → If missing: provide the exact variable names and explain they must never be hardcoded in source.
   → Never proceed if secrets are not in environment variables.
 
-STEP 4 — CODEBASE REVIEW
+STEP 4 — ACTION TYPE & POLICY CHECK (skip this and the integration WILL fail on the first real request)
+  → Every action type used in requireTouchQue('SEND_MONEY', ...) MUST exist
+    before you use it — either created in the Dashboard, or defined from
+    code at startup:
+    \`\`\`javascript
+    await tq.actions.define('SEND_MONEY', { name: 'Send money', critical: true });
+    \`\`\`
+  → Ask the user which they'd rather do. If they're not sure it exists yet,
+    tell them plainly: an undefined action type returns "400 unknown_action"
+    on the very first request — this is the single most common first-run
+    failure, and it looks like a bug in the integration when it is actually
+    just a missing setup step.
+  → Ask whether this action should be "critical" (forces number matching,
+    refuses recovery codes and offline time-based codes — appropriate for
+    money movement, not for a low-stakes preference change) and whether a
+    passkey should be REQUIRED for it (set in the Dashboard's Security
+    Policy page, not from code). Don't guess at "critical" — ask.
+  → If the user needs offline/no-internet approval (kiosks, poor signal),
+    stop and use the configure_offline_sign prompt instead/in addition —
+    it has its own separate Dashboard prerequisite.
+
+STEP 5 — CODEBASE REVIEW
   → Ask the user to paste the auth route / middleware / service file where 2FA will be added.
   → Read it carefully. Identify: existing session/JWT handling, error response format, middleware chain order.
   → Summarize your understanding back to the user before touching anything.
 
-STEP 5 — SURGICAL INTEGRATION
+STEP 6 — SURGICAL INTEGRATION
   → Use the 'requireTouchQue' Express middleware to protect routes in one line — it takes the ACTION and options directly, not a client instance.
   → Never rewrite surrounding business logic.
   → Preserve existing error response shapes for YOUR OWN business errors — but understand that requireTouchQue answers 202 (not your normal 200/4xx) while approval is pending; this is expected, not a bug to "fix".
@@ -408,12 +453,12 @@ app.post(
 
   → Until approved, this answers 202 { touchque: step, token }. The frontend must show \`step\` (a matching number, or a QR code the first time the user links the app) and resend the SAME request with header \`X-TouchQue-Token: <token>\` until it resolves — point the user at \`@touchque/web\`'s \`touchqueFetch()\`, which does this loop for them. Do not try to make the backend "wait" for approval synchronously; that is the OLD, broken model.
 
-STEP 6 — VALIDATION
+STEP 7 — VALIDATION
   → After writing code, call the validate_integration tool on the final snippet.
   → Show the validation report to the user.
   → If any check fails, fix it before declaring success.
 
-STEP 7 — HANDOFF
+STEP 8 — HANDOFF
   → Provide a concise test checklist the developer can run manually:
     [ ] First request to the protected route answers 202 with a step (number or enroll QR)
     [ ] Approving on the phone lets the retried request through exactly once
@@ -453,6 +498,12 @@ Start by asking for the framework and pointing the user to Step 1.`
           content: {
             type: "text",
             text: `You are adding TouchQue's "Offline Sign" flow to an existing codebase: approval via a QR code the phone scans WITHOUT internet, which then shows the user a 7-character code they type on the website. This is a DIFFERENT flow from push/passkey step-up (requireTouchQue) — use this prompt only when the user specifically needs approval to work when the phone has no signal/data (kiosks, air-gapped environments, poor connectivity, "what if there's no internet on the phone").
+
+This MCP server has no file system access of its own — YOU must actually
+open the user's real backend route file AND their real login/approval
+screen file and edit both. If you don't already know which file renders
+the login/approval screen, ASK for it by name before writing any code —
+do not guess a filename or invent a component that doesn't exist.
 
 ═══════════════════════════════════════════════════
 PREREQUISITE — DASHBOARD POLICY
@@ -638,23 +689,30 @@ When a user reports a problem, work through this tree in order:
    → Ask them to redact and share the exact error response body.
    → Common causes: wrong key, key not propagated after deploy, IP whitelist mismatch.
 
-3. SDK EXCEPTIONS (thrown errors from @touchque/node)
+3. "unknown_action" (400 from TouchQue) — NOT an SDK bug
+   → This means the action type (e.g. "SEND_MONEY") was never defined.
+   → Fix: either create it in the Dashboard, or call
+     tq.actions.define('SEND_MONEY', { critical: true }) once at startup.
+   → This is the single most common first-run failure — check this BEFORE
+     digging into SDK internals or network issues.
+
+4. SDK EXCEPTIONS (thrown errors from @touchque/node)
    → Ask for the full stack trace.
    → Call get_sdk_types to verify the method signature they are using.
    → Common causes: wrong argument types, calling requireTouchQue with the OLD (client, action) signature instead of (action, options), SDK version mismatch.
 
-4. PUSH / STEP-UP FAILURES (the route never resolves, or resolves wrong)
+5. PUSH / STEP-UP FAILURES (the route never resolves, or resolves wrong)
    → Ask: Does the first request come back as 202 { touchque, token } at all? If not, the middleware/route wiring is broken, not the phone flow.
    → Ask: Does the frontend re-send the SAME request with header X-TouchQue-Token, or is it trying to "wait" on the first response? The old synchronous model is gone — the frontend MUST retry.
    → Ask: Is the user actually enrolled? A never-linked user gets step.state === 'enroll' with a QR, not an error.
    → Consistent rejects/expires suggest: clock skew on server (NTP sync), a details/referenceId mismatch between the request that got approved and the one being completed.
 
-5. MIDDLEWARE / ROUTE ORDER ISSUES
+6. MIDDLEWARE / ROUTE ORDER ISSUES
    → Ask the user to paste their route registration code and middleware chain.
    → Verify requireTouchQue(...) is applied BEFORE the route handler, not after.
    → Verify it is not accidentally applied to public routes.
 
-6. ENVIRONMENT / BUILD ISSUES
+7. ENVIRONMENT / BUILD ISSUES
    → Ask: Does this fail in all environments or just one?
    → Check: Is the .env file loaded before the SDK initializes? (dotenv must be required first)
    → Check: Does the build system strip environment variables?

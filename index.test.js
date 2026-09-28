@@ -127,6 +127,41 @@ test("integrate_touchque prompt teaches the current step-up API, not the old syn
   });
 });
 
+test("integrate_touchque prompt requires defining the action type first (unknown_action) and clarifies webhooks are optional", async () => {
+  await withClient(async (client) => {
+    const result = await client.getPrompt({ name: "integrate_touchque" });
+    const text = result.messages[0].content.text;
+    assert.match(text, /tq\.actions\.define\(/);
+    assert.match(text, /unknown_action/);
+  });
+});
+
+test("integrate_touchque and configure_offline_sign both tell the assistant it must actually edit real files itself", async () => {
+  await withClient(async (client) => {
+    const wizard = await client.getPrompt({ name: "integrate_touchque" });
+    const offline = await client.getPrompt({ name: "configure_offline_sign" });
+    for (const text of [wizard.messages[0].content.text, offline.messages[0].content.text]) {
+      assert.match(text, /no file system access of its own/);
+    }
+  });
+});
+
+test("touchque_help explains action types must be pre-defined and that webhooks are optional", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: "touchque_help", arguments: {} });
+    const text = result.content[0].text;
+    assert.match(text, /unknown_action/);
+    assert.match(text, /WEBHOOKS ARE OPTIONAL/);
+  });
+});
+
+test("troubleshoot_touchque covers unknown_action as its own triage branch", async () => {
+  await withClient(async (client) => {
+    const result = await client.getPrompt({ name: "troubleshoot_touchque" });
+    assert.match(result.messages[0].content.text, /unknown_action/);
+  });
+});
+
 test("validate_integration scores a current-API snippet as fully passing", async () => {
   await withClient(async (client) => {
     const goodCode = `

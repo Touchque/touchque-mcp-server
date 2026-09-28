@@ -50,7 +50,7 @@ Claude Code):
   "mcpServers": {
     "touchque": {
       "command": "npx",
-      "args": ["-y", "touchque-mcp-server"]
+      "args": ["-y", "@touchque/mcp-server"]
     }
   }
 }
@@ -65,7 +65,7 @@ Claude Code):
   "mcpServers": {
     "touchque": {
       "command": "npx",
-      "args": ["-y", "touchque-mcp-server"]
+      "args": ["-y", "@touchque/mcp-server"]
     }
   }
 }
@@ -78,7 +78,7 @@ any other local MCP server.
 ### Run it directly
 
 ```bash
-npx -y touchque-mcp-server
+npx -y @touchque/mcp-server
 ```
 
 It talks [MCP](https://modelcontextprotocol.io) over stdio (stdin/stdout) —

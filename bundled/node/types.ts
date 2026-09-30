@@ -1,6 +1,6 @@
 // TouchQue Node.js SDK — bundled type reference for AI assistants.
 // Concatenation of touchque-node/src/types.ts + touchque-node/src/steps.ts
-// from the SDK source. Regenerate by copying those files here whenever
+// from the SDK source. Regenerate with `node scripts/sync-bundled.js` whenever
 // the SDK's public API changes (see touchque-mcp-server/README.md).
 
 // src/types.ts
@@ -121,6 +121,15 @@ export interface OfflineChallengeOptions {
   ttlSeconds?: number;
   /** Set false to skip the ready-made QR image (`qrDataUrl` is then null). */
   includeQrImage?: boolean;
+  /**
+   * The push request (`requestId` from `login.request` / `tq.start`) this QR is a fallback for.
+   * TouchQue then treats them as ONE sign-in: once the phone REJECTS the push the QR is dead
+   * (no new QR is issued, a code for the old one is refused), and if the push asked for number
+   * matching the QR asks for the same number. Always pass it when the QR follows a push.
+   */
+  requestId?: string;
+  /** Ask for number matching on a standalone QR (implied when `requestId` points at a push that has one). */
+  requireNumberMatch?: boolean;
 }
 
 export interface OfflineChallengeResponse {
@@ -133,6 +142,12 @@ export interface OfflineChallengeResponse {
   expiresInSeconds: number;
   /** True when the workspace allows the time-based code fallback (no camera). */
   totpAvailable: boolean;
+  /**
+   * Number matching: print this number under the QR. The phone shows three numbers (this one and
+   * two decoys) after scanning and the user taps the one that matches the page. Absent when the
+   * QR needs no number matching.
+   */
+  challengeCode?: string;
 }
 
 export interface OfflineVerifyOptions {
@@ -147,11 +162,13 @@ export interface OfflineTotpVerifyOptions {
   /** The action the code is for; critical actions are refused. */
   type?: string;
   clientIp?: string;
+  /** The push request this sign-in belongs to: a code is refused once the phone rejected it. */
+  requestId?: string;
 }
 
 export interface OfflineVerifyResult {
   approved: boolean;
-  /** When not approved: invalid_code | locked | expired | used | unknown_challenge | too_many_failures | frozen | … */
+  /** When not approved: invalid_code | locked | expired | used | unknown_challenge | request_rejected | too_many_failures | frozen | … */
   reason?: string;
   /** Wrong codes left before the challenge locks (only with reason `invalid_code`). */
   attemptsLeft?: number;
@@ -287,6 +304,21 @@ export interface VerifyWebhookOptions {
    * disable the freshness check.
    */
   toleranceSeconds?: number;
+  /**
+   * De-duplicates deliveries by their signed `jti`. A second delivery with
+   * the same `jti` throws `TouchQueWebhookReplayError`. Use
+   * `MemoryWebhookReplayCache` for a single process, or implement this
+   * interface over Redis / your database when you run several instances.
+   */
+  replayCache?: WebhookReplayCache;
+}
+
+/**
+ * Storage for webhook `jti`s already accepted. `checkAndSet` must atomically
+ * record `jti` for `ttlSeconds` and return `true` if it was NOT seen before.
+ */
+export interface WebhookReplayCache {
+  checkAndSet(jti: string, ttlSeconds: number): boolean;
 }
 
 export interface WebhookPayload {
@@ -369,7 +401,7 @@ export type StepState =
   | 'expired'
   | 'enroll' // no phone linked yet — show `enroll.qrCodeDataUrl`
   | 'passkey_required' // policy: approve with a passkey (browser ceremony)
-  | 'offline' // offline approval started — show `offline.qrDataUrl`, ask for the code
+  | 'offline' // offline approval started — show `offline.qrDataUrl` (and `offline.challengeCode`), ask for the code
   | 'blocked' // refused by policy / risk / action disabled — see `reason`
   | 'frozen' // too many rejections — see `retryAfter`
   | 'rate_limited'; // too many requests — see `retryAfter`
@@ -383,7 +415,15 @@ export interface Step {
   /** Transaction details the phone shows (amount, recipient…). */
   details?: Array<{ label: string; value: string }>;
   enroll?: { qrCodeDataUrl: string; recoveryCodes?: string[]; expiresAt?: string };
-  offline?: { challengeId: string; qrDataUrl?: string; expiresAt?: string; totpAvailable?: boolean; attemptsLeft?: number };
+  offline?: {
+    challengeId: string;
+    qrDataUrl?: string;
+    expiresAt?: string;
+    totpAvailable?: boolean;
+    attemptsLeft?: number;
+    /** Number matching: print this under the QR; the phone offers it among two decoys. */
+    challengeCode?: string;
+  };
   reason?: string;
   retryAfter?: number;
   assurance?: ApprovalAssurance;

@@ -4,7 +4,7 @@ The official Go server SDK for [TouchQue](https://touchque.com) — biometric pu
 2FA, passkeys, and offline approval codes, added to any `net/http` backend
 with one middleware wrap per route.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v3.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v3)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
@@ -12,7 +12,7 @@ with one middleware wrap per route.
 ## Install
 
 ```bash
-go get github.com/Touchque/touchque-go
+go get github.com/Touchque/touchque-go/v3
 ```
 
 ## Setup
@@ -30,7 +30,7 @@ left empty.
 ## Quick start (net/http)
 
 ```go
-import "github.com/Touchque/touchque-go/touchque"
+import "github.com/Touchque/touchque-go/v3/touchque"
 
 tq := touchque.NewClient(touchque.Config{})
 
@@ -90,13 +90,27 @@ for critical actions in the Dashboard's Security Policy.
 ## Offline sign
 
 ```go
-ch, _ := tq.Offline.Challenge(ctx, touchque.OfflineChallengeOptions{
-    User: "jane@acme.com", Type: "WITHDRAW",
+ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{
+    ExternalUsername: "jane@acme.com", Type: "WITHDRAW",
     Details: []touchque.LoginDetail{{Label: "Amount", Value: "1,250.00 USD"}},
 })
 // show ch.QRDataURL — the phone scans it offline and shows a 7-character code
-result, _ := tq.Offline.Verify(ctx, ch.ChallengeID, code)
+result, _ := tq.Offline.Verify(ch.ChallengeID, code)
 ```
+
+**A QR that follows a push.** Set `RequestID` when the offline QR is the fallback for a push the user
+already started (the guard does this for you):
+
+```go
+ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{ExternalUsername: "jane@acme.com", Type: "LOGIN", RequestID: step.RequestID})
+// ch.ChallengeCode is the number to print under the QR when number matching applies.
+```
+
+If the user **rejects the push on the phone, the offline QR dies with it**: no new QR is issued for that
+sign-in (409 `request_rejected`), a code for a QR already on screen is refused (`Reason == "request_rejected"`)
+and so is the time-based code (`VerifyTotpFor(..., requestID)`). With number matching, print `ChallengeCode`
+under the QR: the phone shows it among two decoys and the user taps the match; a wrong tap yields a code that
+fails verification.
 
 ## Webhooks
 

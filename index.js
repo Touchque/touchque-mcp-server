@@ -70,7 +70,7 @@ const LANGUAGES = {
     frameworks: ["laravel", "other"],
   },
   go: {
-    label: "Go", package: "github.com/Touchque/touchque-go", typesFile: "types.go", typesMime: "text/x-go",
+    label: "Go", package: "github.com/Touchque/touchque-go/v3", typesFile: "types.go", typesMime: "text/x-go",
     frameworks: ["net-http", "other"],
   },
 };
@@ -107,6 +107,8 @@ const VALIDATION_PATTERNS = {
     hardcodedSecret: /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
     envVar: /process\.env\.|env\[/,
     errorHandling: /catch|try\s*{|\.catch\s*\(/,
+    offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
+    offlineLinked: /\brequestId\b/,
   },
   python: {
     guardName: "@require_touchque",
@@ -117,6 +119,8 @@ const VALIDATION_PATTERNS = {
     hardcodedSecret: /api_secret\s*=\s*['"][a-zA-Z0-9]{10,}['"]|api_key\s*=\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
     envVar: /os\.environ|os\.getenv\s*\(/,
     errorHandling: /try\s*:|except\b/,
+    offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
+    offlineLinked: /\brequest_id\b/,
   },
   php: {
     guardName: "->middleware('touchque:...')",
@@ -132,16 +136,20 @@ const VALIDATION_PATTERNS = {
     hardcodedSecret: /new\s+Config\s*\(\s*['"]tq_[a-zA-Z0-9]{6,}['"]\s*,\s*['"][a-zA-Z0-9]{10,}['"]/,
     envVar: /getenv\s*\(|\$_ENV\[/,
     errorHandling: /try\s*{|catch\s*\(/,
+    offlineChallenge: /->offline\s*->\s*challenge\s*\(/,
+    offlineLinked: /\$requestId\b|\brequestId\b|\brequest_id\b/,
   },
   go: {
     guardName: "touchque.Require",
-    import: /["']github\.com\/Touchque\/touchque-go\/touchque["']/,
+    import: /["']github\.com\/Touchque\/touchque-go(?:\/v\d+)?\/touchque["']/,
     stepUpGuard: /touchque\.Require\s*\(/,
     legacyGuard: null,
     syncVerify: /\.Login\.Verify\s*\(/,
     hardcodedSecret: /APIKey:\s*"tq_[a-zA-Z0-9]{6,}"|APISecret:\s*"[a-zA-Z0-9]{10,}"/,
     envVar: /os\.Getenv\s*\(/,
     errorHandling: /if\s+err\s*!=\s*nil/,
+    offlineChallenge: /\.Offline\s*\.\s*Challenge\s*\(/,
+    offlineLinked: /\bRequestID\b/,
   },
 };
 
@@ -206,6 +214,12 @@ Sign" — a QR code + 7-character code flow for when the user's phone has no
 internet (tq.offline.challenge() / tq.offline.verify() in the SDK). If the
 user mentions offline approval, kiosks, air-gapped environments, or "what
 if the phone has no signal", use that flow, not requireTouchQue.
+When an offline QR is the FALLBACK for a push the user already started (the
+usual "Verify offline" button next to a waiting screen), link it to that push
+with requestId: a phone-side REJECT then kills the QR (no new QR, no code
+finishes it), and the matching number is printed under the QR
+(challengeCode). requireTouchQue / touchqueRouter / the step-up guard do
+this automatically — only hand-written offline routes need to pass it.
 
 BEFORE YOU WRITE CODE: every action type (e.g. "SEND_MONEY") MUST already
 exist — either created in the Dashboard, or defined from code with
@@ -424,10 +438,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `${c.pass ? "✅" : "❌"} ${c.label}`
       ).join("\n");
 
+      // Advisories are not scored: they point at things that are only wrong in some setups.
+      const advisories = [];
+      if (patterns.offlineChallenge.test(code) && !patterns.offlineLinked.test(code)) {
+        advisories.push(
+          "⚠️ This code issues an offline QR but never links it to a push (no requestId). If the QR is the fallback for a push the user already started, pass that push's requestId: then a REJECT on the phone kills the QR and no code can finish that sign-in, and the number-matching number comes back as challengeCode (print it under the QR). Ignore this only for a standalone offline flow (kiosk, no push)."
+        );
+      }
+      const advisoryText = advisories.length ? `\n\n${advisories.join("\n")}` : "";
+
       return {
         content: [{
           type: "text",
-          text: `TouchQue Integration Validation Report\nLanguage: ${LANGUAGES[language].label}\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}`
+          text: `TouchQue Integration Validation Report\nLanguage: ${LANGUAGES[language].label}\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}${advisoryText}`
         }]
       };
     }
@@ -604,6 +627,7 @@ app.post(
 );
 \`\`\`
 
+  → Frontend steps to render: \`waiting\` (show \`step.number\` when present — the number the user must tap on the phone), \`enroll\` (QR), \`passkey_required\`, and \`offline\` (the "no internet on the phone" fallback: show \`step.offline.qrDataUrl\` and, when present, \`step.offline.challengeCode\` UNDER the QR as the number to tap on the phone, then \`controls.submitCode(code)\`). While the QR is on screen \`touchqueFetch\` keeps checking the push: a REJECT on the phone arrives as a final \`rejected\` step (\`reason: 'request_rejected'\`) — the QR is dead, so reset the form and let the user start over; an approval finishes the action without typing a code. Do NOT add your own offline routes next to the guard.
   → Until approved, this answers 202 { touchque: step, token }. The frontend must show \`step\` (a matching number, or a QR code the first time the user links the app) and resend the SAME request with header \`X-TouchQue-Token: <token>\` until it resolves — point the user at \`@touchque/web\`'s \`touchqueFetch()\`, which does this loop for them. Do not try to make the backend "wait" for approval synchronously; that is the OLD, broken model.
 
   → IF THE BACKEND IS PYTHON/PHP/GO, NOT NODE: the JS above shows the shape
@@ -688,13 +712,15 @@ const tq = new TouchQue(); // TQ_API_KEY / TQ_API_SECRET from the environment
 
 app.post('/api/offline-challenge', async (req, res) => {
   const ch = await tq.offline.challenge({
-    user: req.session.user.email,
+    externalUsername: req.session.user.email,   // NOT \`user\` — this call takes externalUsername
     type: 'WITHDRAW',                 // your action type
     details: { Amount: '1,250.00 USD', Recipient: 'Jane Doe' }, // required for critical actions
     clientIp: req.ip,
     userAgent: req.get('user-agent'),
+    requestId: req.body.requestId,    // ONLY when this QR is the fallback for a push already started — see below
   });
-  // ch: { challengeId, qr (text), qrDataUrl (data:image/png;base64,...), expiresInSeconds, totpAvailable }
+  // ch: { challengeId, qr (text), qrDataUrl (data:image/png;base64,...), expiresInSeconds, totpAvailable,
+  //       challengeCode? (number matching: print it UNDER the QR) }
   res.json(ch);
 });
 \`\`\`
@@ -719,7 +745,41 @@ app.post('/api/offline-verify', async (req, res) => {
 
 4. Optional, lower-assurance alternative with no QR at all — a rolling
    time-based code (refused for critical actions):
-   \`tq.offline.verifyTotp({ user, code, type, clientIp })\`.
+   \`tq.offline.verifyTotp({ externalUsername, code, type, clientIp, requestId })\`.
+
+═══════════════════════════════════════════════════
+WHEN THE QR FOLLOWS A PUSH (the usual "Verify offline" button)
+═══════════════════════════════════════════════════
+If the user already started a push (requireTouchQue / tq.start / login.request)
+and then taps "Verify offline", pass THAT push's \`requestId\` to
+\`offline.challenge()\` and to \`offline.verifyTotp()\`. It links the two into ONE
+sign-in:
+  • If the user REJECTS the push on the phone, the QR dies: no new QR is issued
+    (409 \`request_rejected\`), a code for a QR already on screen is refused
+    (\`reason: 'request_rejected'\`), and so is the time-based code. Treat
+    \`request_rejected\` as a FINAL "no" — reset your form and start over;
+    never offer another factor for that attempt.
+  • While the QR is on screen KEEP CHECKING the push (tq.check(requestId), or
+    keep re-sending the guarded request). A reject must end the attempt at
+    once, and an approval finishes it without typing a code. \`requireTouchQue\`,
+    \`touchqueRouter\` and the web SDK's \`touchqueFetch\` already do all of this
+    — if the project uses them, do NOT hand-write the offline routes.
+  • An EXPIRED push does not block offline mode — that is what it is for.
+
+NUMBER MATCHING ON THE QR
+  If the push asked for number matching (or you pass \`requireNumberMatch:
+  true\`), \`challenge()\` returns \`challengeCode\`. PRINT IT UNDER THE QR
+  (e.g. "On your phone, tap this number: 47"). After scanning, the phone shows
+  three numbers — this one and two decoys — and the user taps the match. The
+  phone is never told which one is right: a wrong tap produces a code that
+  fails \`verify()\`, so treat it like any wrong code (\`invalid_code\`).
+
+Other languages: Python \`tq.offline.challenge(external_username, type, request_id=…)\`
+and \`verify_totp(…, request_id=…)\`; PHP \`$tq->offline->challenge($user, $type, $details,
+$ip, $ua, $ttl, true, $requestId)\` and \`verifyTotp(…, $requestId)\`; Go
+\`touchque.OfflineChallengeOptions{ExternalUsername, Type, RequestID}\` and
+\`VerifyTotpFor(…, requestID)\`. Call get_touchque_docs / get_sdk_types with the
+language for the exact signatures.
 
 ═══════════════════════════════════════════════════
 THINGS THAT WILL BE WRONG IF YOU SKIP THEM
@@ -734,6 +794,9 @@ THINGS THAT WILL BE WRONG IF YOU SKIP THEM
 ✗ A code works once; a challenge locks after 5 wrong codes; there is an
   hourly failed-attempt limit per user. Don't build a retry loop that
   ignores \`attemptsLeft\`.
+✗ Do not build a second, separate offline path next to a push without
+  \`requestId\` — it would let a REJECTED sign-in be finished with a QR.
+✗ Do not keep showing the QR after the push was rejected; the QR is dead.
 ✗ Only TouchQue can verify a code server-side (it's a MAC, not something a
   third party can check) — never try to validate it yourself.
 
@@ -776,6 +839,7 @@ You will review:
   6. Fallback behavior (what happens when TouchQue API is unreachable?)
   7. Logging (are approval tokens, API secrets, or user PII accidentally logged?)
   8. Dependency hygiene (@touchque/node version, known CVEs)
+  9. Offline fallback (if the app offers an offline QR/code: is it LINKED to the push via requestId so a phone-side REJECT kills it, does the page stop showing the QR and reset on request_rejected, and is challengeCode printed under the QR when number matching applies? An offline path that can finish a REJECTED sign-in is a HIGH finding.)
 
 ═══════════════════════════════════════════════════
 AUDIT PROCESS
@@ -867,6 +931,11 @@ When a user reports a problem, work through this tree in order:
    → Ask: Does the frontend re-send the SAME request with header X-TouchQue-Token, or is it trying to "wait" on the first response? The old synchronous model is gone — the frontend MUST retry.
    → Ask: Is the user actually enrolled? A never-linked user gets step.state === 'enroll' with a QR, not an error.
    → Consistent rejects/expires suggest: clock skew on server (NTP sync), a details/referenceId mismatch between the request that got approved and the one being completed.
+
+5b. OFFLINE QR / CODE REFUSED WITH \`request_rejected\` (409 on challenge, 410 on verify)
+   → Not a bug: the user rejected the push on the phone, and a rejected sign-in cannot be finished with an offline QR or time-based code. The page must reset and start a NEW sign-in.
+   → If the QR is refused right after a reject and the user expected it to work, that is the security feature working.
+   → If offline works AFTER a reject in their app, they are not passing \`requestId\` (or use hand-written routes instead of the guard) — see configure_offline_sign.
 
 6. MIDDLEWARE / ROUTE ORDER ISSUES
    → Ask the user to paste their route registration code and middleware chain.

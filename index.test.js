@@ -296,3 +296,112 @@ test("ping_touchque_api reports unreachable for a bogus URL", async () => {
     assert.match(result.content[0].text, /unreachable/);
   });
 });
+
+// ── Offline QR linked to its push (reject kills the QR) + number matching ─────────────────────────
+
+test("configure_offline_sign teaches linking the QR to its push (requestId), request_rejected as a final no, and the number under the QR", async () => {
+  await withClient(async (client) => {
+    const text = (await client.getPrompt({ name: "configure_offline_sign" })).messages[0].content.text;
+    assert.match(text, /requestId/);
+    assert.match(text, /request_rejected/);
+    assert.match(text, /challengeCode/);
+    assert.match(text, /UNDER THE QR/);
+    // The real option name: externalUsername (the old prompt said `user`, which this call does not take).
+    assert.match(text, /externalUsername: req\.session\.user\.email/);
+    assert.doesNotMatch(text, /^\s*user: req\.session\.user\.email/m);
+    // Other languages are pointed at with their real parameter names.
+    assert.match(text, /request_id/);
+    assert.match(text, /RequestID/);
+  });
+});
+
+test("integrate_touchque, audit and troubleshoot prompts know about the reject-linked offline QR", async () => {
+  await withClient(async (client) => {
+    const integrate = (await client.getPrompt({ name: "integrate_touchque" })).messages[0].content.text;
+    assert.match(integrate, /step\.offline\.challengeCode/);
+    assert.match(integrate, /request_rejected/);
+    const audit = (await client.getPrompt({ name: "audit_touchque_integration" })).messages[0].content.text;
+    assert.match(audit, /Offline fallback/);
+    assert.match(audit, /REJECT/);
+    const troubleshoot = (await client.getPrompt({ name: "troubleshoot_touchque" })).messages[0].content.text;
+    assert.match(troubleshoot, /request_rejected/);
+  });
+});
+
+test("touchque_help explains linking an offline QR to its push", async () => {
+  await withClient(async (client) => {
+    const text = (await client.callTool({ name: "touchque_help", arguments: {} })).content[0].text;
+    assert.match(text, /requestId/);
+    assert.match(text, /challengeCode/);
+  });
+});
+
+test("bundled docs and types carry requestId / challengeCode for the offline QR in all 4 languages", async () => {
+  await withClient(async (client) => {
+    const expectations = {
+      node: /requestId\?: string[\s\S]*challengeCode\?: string/,
+      python: /request_id[\s\S]*challengeCode/,
+      php: /requestId[\s\S]*challengeCode/,
+      go: /RequestID[\s\S]*ChallengeCode/,
+    };
+    for (const [language, re] of Object.entries(expectations)) {
+      const types = (await client.callTool({ name: "get_sdk_types", arguments: { language } })).content[0].text;
+      assert.match(types, re, `${language} types lack the offline requestId/challengeCode`);
+      const docs = (await client.callTool({ name: "get_touchque_docs", arguments: { language } })).content[0].text;
+      assert.match(docs, /request_rejected/, `${language} docs lack the request_rejected behaviour`);
+    }
+  });
+});
+
+test("bundled offline examples use the real signatures (externalUsername / external_username / OfflineChallengeOptions{ExternalUsername})", async () => {
+  await withClient(async (client) => {
+    const node = (await client.callTool({ name: "get_touchque_docs", arguments: { language: "node" } })).content[0].text;
+    assert.match(node, /tq\.offline\.challenge\(\{\s*externalUsername:/);
+    const py = (await client.callTool({ name: "get_touchque_docs", arguments: { language: "python" } })).content[0].text;
+    assert.match(py, /offline\.challenge\(external_username=/);
+    const go = (await client.callTool({ name: "get_touchque_docs", arguments: { language: "go" } })).content[0].text;
+    assert.match(go, /OfflineChallengeOptions\{\s*ExternalUsername:/);
+    assert.doesNotMatch(go, /Offline\.Challenge\(ctx,/);
+  });
+});
+
+test("validate_integration warns (unscored) when an offline QR is issued without a requestId, and stays quiet when it is linked", async () => {
+  await withClient(async (client) => {
+    const base = (offlineCall) => `
+      const { TouchQue } = require('@touchque/node');
+      const tq = new TouchQue({ apiKey: process.env.TQ_API_KEY, apiSecret: process.env.TQ_API_SECRET });
+      app.post('/offline', async (req, res) => {
+        try { res.json(await ${offlineCall}); } catch (e) { res.status(500).end(); }
+      });
+      app.post('/x', requireTouchQue('SEND_MONEY', { user: (r) => r.session.user }), (q, r) => r.json({ ok: 1 }));`;
+    const unlinked = (await client.callTool({
+      name: "validate_integration",
+      arguments: { code: base("tq.offline.challenge({ externalUsername: 'a@b.c', type: 'LOGIN' })"), framework: "express" },
+    })).content[0].text;
+    assert.match(unlinked, /never links it to a push/);
+    assert.match(unlinked, /Score: 100%/); // advisory only — not scored
+
+    const linked = (await client.callTool({
+      name: "validate_integration",
+      arguments: { code: base("tq.offline.challenge({ externalUsername: 'a@b.c', type: 'LOGIN', requestId: req.body.requestId })"), framework: "express" },
+    })).content[0].text;
+    assert.doesNotMatch(linked, /never links it to a push/);
+  });
+});
+
+test("validate_integration recognizes the versioned Go module path (…/touchque-go/v3/touchque)", async () => {
+  await withClient(async (client) => {
+    const code = `package main
+import (
+  "os"
+  "github.com/Touchque/touchque-go/v3/touchque"
+)
+func main() {
+  _ = os.Getenv("TQ_API_KEY")
+  h := touchque.Require(tq, "SEND_MONEY", handler, opts)
+  if err := serve(h); err != nil { panic(err) }
+}`;
+    const text = (await client.callTool({ name: "validate_integration", arguments: { code, framework: "net-http", language: "go" } })).content[0].text;
+    assert.match(text, /✅ github\.com\/Touchque\/touchque-go\/v3 SDK is imported/);
+  });
+});

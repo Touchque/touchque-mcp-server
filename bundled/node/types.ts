@@ -1,7 +1,8 @@
 // TouchQue Node.js SDK — bundled type reference for AI assistants.
-// Concatenation of touchque-node/src/types.ts + touchque-node/src/steps.ts
-// from the SDK source. Regenerate with `node scripts/sync-bundled.js` whenever
-// the SDK's public API changes (see touchque-mcp-server/README.md).
+// Concatenation of touchque-node/src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}
+// plus the public part of src/router.ts (touchqueRouter), from the SDK source.
+// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API
+// changes (see touchque-mcp-server/README.md).
 
 // src/types.ts
 // All TypeScript types and interfaces for the TouchQue Node.js SDK
@@ -620,3 +621,480 @@ export function verifyGuardToken(apiSecret: string, token: unknown): GuardTokenC
     return null;
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// From src/approvalProof.ts — verifyApprovalProof (device proof, pin the key)
+// ─────────────────────────────────────────────────────────────
+
+// src/approvalProof.ts
+// Verifies the device-signed proof of an approval ("what you see is what you
+// sign"). When the user's phone holds a Secure Enclave key, every approval is
+// signed by it over the request id, the action type, the number-match code
+// and a digest of the transaction details the user was shown. The proof
+// arrives in the SUCCESS webhook (`approvalProof`) and in
+// `login.status(id).approvalProof`; verifying it here does not require
+// trusting TouchQue: it proves the enrolled phone signed exactly these
+// details.
+
+import * as crypto from 'crypto';
+import type { LoginRequestDetails } from './types';
+
+export interface ApprovalProof {
+  version: 'v2';
+  algorithm: 'ECDSA-P256-SHA256';
+  /** The exact text the device signed */
+  message: string;
+  /** base64 DER signature */
+  signature: string;
+  /** base64 X9.63 Secure Enclave public key of the approving device */
+  publicKey: string;
+}
+
+export interface VerifyApprovalProofOptions {
+  /** The request id returned by login.request() */
+  requestId: string;
+  /** The action type you sent (e.g. 'WITHDRAW') */
+  type: string;
+  /**
+   * The details you sent with login.request(), exactly as you sent them.
+   * Pass undefined when you sent none.
+   */
+  details?: LoginRequestDetails;
+  /**
+   * The challenge code login.request() returned, when number matching was
+   * used for this request.
+   */
+  challengeCode?: string;
+  /**
+   * Pin the device: the base64 public key you stored for this user (e.g. the
+   * `proof.publicKey` of their first verified approval). A proof from any
+   * other key is rejected. Required unless `allowUnpinnedKey` is set.
+   */
+  expectedPublicKey?: string;
+  /**
+   * Accept a proof from whatever key it carries. Without a pinned key the
+   * proof only shows that *some* key signed these details — anyone able to
+   * forge the webhook or status response could bring their own. Only for
+   * trust-on-first-use: store `proof.publicKey` after this first check and
+   * pass it as `expectedPublicKey` from then on.
+   */
+  allowUnpinnedKey?: boolean;
+}
+
+function toPairs(details?: LoginRequestDetails): Array<{ label: string; value: string }> {
+  if (!details) return [];
+  const pairs = Array.isArray(details)
+    ? details.map((d) => ({ label: d.label, value: d.value }))
+    : Object.entries(details).map(([label, value]) => ({ label, value }));
+  return pairs.map((p) => ({ label: String(p.label).trim(), value: String(p.value).trim() }));
+}
+
+/** SHA-256 hex of the details as displayed on the phone ('' when none). */
+export function detailsDigest(details?: LoginRequestDetails): string {
+  const pairs = toPairs(details);
+  if (pairs.length === 0) return '';
+  const canonical = pairs.map((p) => `${p.label}\u001F${p.value}`).join('\u001E');
+  return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
+
+/**
+ * Returns true only if the proof was signed by the device's key over exactly
+ * the request, type, challenge code and details you expect. Fails closed:
+ * without `expectedPublicKey` (or an explicit `allowUnpinnedKey: true`) it
+ * returns false. Never throws for malformed input; returns false.
+ */
+export function verifyApprovalProof(
+  proof: ApprovalProof | null | undefined,
+  options: VerifyApprovalProofOptions
+): boolean {
+  try {
+    if (!proof || proof.version !== 'v2' || proof.algorithm !== 'ECDSA-P256-SHA256') return false;
+    if (options.expectedPublicKey) {
+      if (proof.publicKey !== options.expectedPublicKey) return false;
+    } else if (options.allowUnpinnedKey !== true) {
+      return false;
+    }
+
+    const expectedMessage = [
+      'touchque-approve:v2',
+      options.requestId,
+      options.type,
+      options.challengeCode ?? '',
+      detailsDigest(options.details),
+    ].join('\n');
+    if (proof.message !== expectedMessage) return false;
+
+    const raw = Buffer.from(proof.publicKey, 'base64');
+    if (raw.length !== 65 || raw[0] !== 0x04) return false;
+    const b64url = (b: Buffer) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const key = crypto.createPublicKey({
+      key: { kty: 'EC', crv: 'P-256', x: b64url(raw.subarray(1, 33)), y: b64url(raw.subarray(33, 65)) },
+      format: 'jwk',
+    });
+    return crypto.verify(
+      'sha256',
+      Buffer.from(proof.message, 'utf8'),
+      { key, dsaEncoding: 'der' },
+      Buffer.from(proof.signature, 'base64')
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// From src/resources/Login.ts — tq.login (request/status/verify/reportFraud)
+// ─────────────────────────────────────────────────────────────
+
+// src/resources/Login.ts
+// Login request management — request 2FA, check status, wait for approval
+//
+// This is the core of TouchQue: any action that needs 2FA confirmation
+// (login, withdraw, transfer, purchase, etc.) uses these methods.
+
+import { HttpClient } from '../core/HttpClient';
+import {
+  LoginRequestOptions,
+  LoginRequestResponse,
+  LoginStatusResponse,
+  WaitForApprovalOptions,
+  WaitForApprovalResult,
+} from '../types';
+import { TouchQueTimeoutError, TouchQueRejectedError, TouchQuePasskeyRequiredError } from '../errors';
+
+export class Login {
+  constructor(private readonly http: HttpClient) {}
+
+  /**
+   * Request 2FA confirmation from a user's TouchQue app.
+   *
+   * The user will receive a push notification on their device.
+   * They can then approve or reject the request.
+   *
+   * Built-in `type` values:
+   * - `'LOGIN'` — User is logging in
+   * - `'DISABLE_2FA'` — User is disabling 2FA
+   * - Custom action type IDs or slugs configured in your TouchQue Dashboard
+   *
+   * @example
+   * // Basic login verification
+   * const response = await tq.login.request({
+   *   externalUsername: 'user@company.com',
+   *   type: 'LOGIN'
+   * });
+   *
+   * @example
+   * // Protect a custom action using its Dashboard-configured ID or slug
+   * const response = await tq.login.request({
+   *   externalUsername: 'user@company.com',
+   *   type: 'action_type_slug_or_id',
+   *   referenceId: 'txn_abc123' // Your internal transaction ID
+   * });
+   *
+   * @example
+   * // Show the user what they are approving, where it came from
+   * const response = await tq.login.request({
+   *   externalUsername: 'user@company.com',
+   *   type: 'WITHDRAW',
+   *   clientIp: req.ip,
+   *   userAgent: req.get('user-agent'),
+   *   details: { Amount: '1,250.00 USD', Recipient: 'Jane Doe' },
+   * });
+   */
+  async request(options: LoginRequestOptions): Promise<LoginRequestResponse> {
+    return this.http.post<LoginRequestResponse>('/login/request', {
+      externalUsername: options.externalUsername,
+      type: options.type,
+      ...(options.referenceId && { referenceId: options.referenceId }),
+      ...(options.clientIp && { clientIp: options.clientIp }),
+      ...(options.userAgent && { userAgent: options.userAgent }),
+      ...(options.details && { details: options.details }),
+      ...(options.requireBiometric && { requireBiometric: options.requireBiometric }),
+      ...(options.requireNumberMatch && { requireNumberMatch: options.requireNumberMatch }),
+    });
+  }
+
+  /**
+   * Check the current status of a login request.
+   *
+   * Returns: `'PENDING'` | `'CONFIRMED'` | `'REJECTED'` | `'EXPIRED'`
+   *
+   * @example
+   * const { status } = await tq.login.status('request_id_here');
+   * if (status === 'CONFIRMED') {
+   *   // User approved — proceed with action
+   * }
+   */
+  async status(requestId: string): Promise<LoginStatusResponse> {
+    return this.http.get<LoginStatusResponse>(`/login/status/${encodeURIComponent(requestId)}`);
+  }
+
+  /**
+   * Wait for the user to approve or reject a login request.
+   *
+   * This is a convenience method that polls the status endpoint
+   * until the request is approved, rejected, or times out.
+   *
+   * **This is the recommended way to integrate TouchQue into your routes.**
+   *
+   * @throws {TouchQueRejectedError} If the user rejects the request
+   * @throws {TouchQueTimeoutError} If the request times out (user didn't respond)
+   *
+   * @example
+   * // Simple: Send request and wait for approval in one step
+   * try {
+   *   const loginReq = await tq.login.request({
+   *     externalUsername: 'user@company.com',
+   *     type: 'LOGIN'
+   *   });
+   *
+   *   const result = await tq.login.waitForApproval({
+   *     requestId: loginReq.requestId,
+   *     timeout: 30000  // Wait up to 30 seconds
+   *   });
+   *
+   *   if (result.approved) {
+   *     // ✅ User approved — proceed
+   *     proceedWithAction();
+   *   }
+   * } catch (err) {
+   *   if (err instanceof TouchQueRejectedError) {
+   *     // ❌ User rejected — cancel the action
+   *   } else if (err instanceof TouchQueTimeoutError) {
+   *     // ⏰ User didn't respond in time
+   *   }
+   * }
+   */
+  async waitForApproval(options: WaitForApprovalOptions): Promise<WaitForApprovalResult> {
+    const timeout = options.timeout || 30000;
+    const pollInterval = options.pollInterval || 400; // 0.4s default polling
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      const { status } = await this.status(options.requestId);
+
+      if (status === 'CONFIRMED') {
+        return { approved: true, status };
+      }
+
+      if (status === 'REJECTED') {
+        throw new TouchQueRejectedError(options.requestId);
+      }
+
+      if (status === 'EXPIRED') {
+        throw new TouchQueTimeoutError(options.requestId, timeout);
+      }
+
+      // Wait before next poll
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    // Timeout reached
+    throw new TouchQueTimeoutError(options.requestId, timeout);
+  }
+
+  /**
+   * Convenience: Send a 2FA request AND wait for approval in one call.
+   *
+   * Perfect for protecting any action with a single function call.
+   *
+   * @throws {TouchQueRejectedError} User rejected
+   * @throws {TouchQueTimeoutError} User didn't respond in time
+   *
+   * @example
+   * // Protect an action with 2FA — ONE LINE!
+   * const result = await tq.login.verify({
+   *   externalUsername: 'user@company.com',
+   *   type: 'action_type_slug_or_id',
+   *   referenceId: 'action_789'
+   * });
+   * // If we reach here, user approved ✅
+   * executeAction();
+   */
+  async verify(
+    options: LoginRequestOptions & { timeout?: number; pollInterval?: number }
+  ): Promise<WaitForApprovalResult & { requestId: string; challengeCode?: string }> {
+    const { timeout, pollInterval, ...requestOptions } = options;
+
+    // Step 1: Send the 2FA request
+    const loginReq = await this.request(requestOptions);
+    // Passkey-only (phishing-resistant policy): nothing was pushed, so don't poll for 30 s.
+    if (loginReq.requiresPasskey) throw new TouchQuePasskeyRequiredError(loginReq.requestId);
+
+    // Step 2: Wait for the user's response
+    const result = await this.waitForApproval({
+      requestId: loginReq.requestId,
+      timeout,
+      pollInterval,
+    });
+
+    return {
+      ...result,
+      requestId: loginReq.requestId,
+      challengeCode: loginReq.challengeCode,
+    };
+  }
+
+  /**
+   * Approve a pending 2FA request using a Recovery Code.
+   * Useful when a user loses their phone and needs to bypass 2FA
+   * using one of the backup codes generated during setup.
+   */
+  async approveWithRecoveryCode(options: { requestId: string; code: string }): Promise<{ success: boolean; message: string }> {
+    return this.http.post<{ success: boolean; message: string }>('/login/recovery', {
+      requestId: options.requestId,
+      code: options.code,
+    });
+  }
+
+  /**
+   * Report a request you later learned was fraud — a chargeback, a confirmed
+   * account takeover, a scam the user was talked into. TouchQue's risk engine
+   * learns from it (it is the strongest signal it gets) and the report is
+   * kept in your audit log. The request's status does not change. Safe to
+   * call more than once: a repeat answers `alreadyReported: true`.
+   */
+  async reportFraud(requestId: string, options: ReportFraudOptions = {}): Promise<ReportFraudResponse> {
+    if (!requestId) throw new Error('reportFraud() needs the request id');
+    return this.http.post<ReportFraudResponse>(`/login/${encodeURIComponent(requestId)}/report-fraud`, {
+      ...(options.reason && { reason: options.reason }),
+      ...(options.note && { note: options.note }),
+    });
+  }
+}
+
+export type FraudReason = 'chargeback' | 'account_takeover' | 'social_engineering' | 'other';
+
+export interface ReportFraudOptions {
+  /** Default 'other'. */
+  reason?: FraudReason;
+  /** Free text for your audit log, at most 500 characters. */
+  note?: string;
+}
+
+export interface ReportFraudResponse {
+  reported: true;
+  /** true when this request had already been reported. */
+  alreadyReported: boolean;
+  requestId: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// From src/router.ts — touchqueRouter, the relay routes @touchque/web calls (public part)
+// ─────────────────────────────────────────────────────────────
+
+// src/router.ts
+//
+// A mountable Express Router that wires the ~9 relay routes every partner
+// backend needs for classic push 2FA + passkeys — the exact routes
+// `@touchque/web`'s README previously told every partner to hand-copy (see
+// its "Minimal Express relay" example). Nothing here is
+// partner-specific except how you resolve the signed-in user (`getUserId`)
+// and what you do once someone is authenticated (`onAuthenticated`).
+//
+//   app.use('/touchque', touchqueRouter(tq, {
+//     getUserId: (req) => req.session.user?.email,
+//     onAuthenticated: (req, res, info) => { req.session.authenticated = true; },
+//   }));
+//
+// Endpoints mounted (relative to wherever you app.use() this router):
+//   POST   /enroll/start                    (auth required) -> GenerateSecretResponse
+//   GET    /enroll/status                   (auth required) -> { linked, used, deviceId }
+//   POST   /login                           (pre-auth) -> 202 { touchque: step, token } until approved (same contract as requireTouchQue)
+//   POST   /offline/challenge               (pre-auth, body.externalUsername) -> QR for a phone with no internet
+//   POST   /offline/verify                  (pre-auth, body.challengeId/code)
+//   POST   /offline/totp                    (pre-auth, body.externalUsername/code) -> time-based code fallback
+//   POST   /passkey/authenticate/options    (pre-auth, body.externalUsername)
+//   POST   /passkey/authenticate/verify     (pre-auth, body.attemptId/response)
+//   POST   /passkey/login/options           (pre-auth, body.requestId — approve a pending 2FA request)
+//   POST   /passkey/login/verify            (pre-auth, body.requestId/response[/externalUsername])
+//   POST   /passkey/register/options        (auth required)
+//   POST   /passkey/register/verify         (auth required)
+//   GET    /passkey/credentials             (auth required)
+//   DELETE /passkey/credentials/:id         (auth required)
+//
+// "auth required" routes 401 with UNAUTHORIZED_FOR_2FA if `getUserId(req)`
+// returns nothing — put your own session/auth middleware in front of this
+// router (or have `getUserId` itself check and return undefined).
+//
+// Pre-auth routes are rate limited per IP and per username by default
+// (`rateLimit`), and TouchQue itself caps approval pushes per user. Set
+// `getLoginUser` so POST /login and the offline routes only work for a user
+// who already passed YOUR first factor (password step): then nobody can make
+// TouchQue push to, or lock out, an arbitrary user through your server.
+// The offline routes are OFF until you do (or explicitly opt out with
+// `allowOfflineWithoutFirstFactor`): with the username taken from the body,
+// anyone could burn a user's offline attempts and lock them out.
+
+import { Router, Request, Response } from 'express';
+import { TouchQue } from './index';
+import { TouchQueRejectedError, TouchQueTimeoutError, TouchQuePasskeyRequiredError, TouchQueAPIError } from './errors';
+import { runGuard, guardInputFromHeaders } from './guard';
+import type { LoginRequestDetails } from './types';
+import { FixedWindowLimiter, RateLimitOptions } from './rateLimiter';
+
+export interface TouchQueRouterOptions {
+  /**
+   * Resolve the signed-in user's identifier for the "auth required" routes
+   * (enrollment, passkey registration/management). Return `undefined` if
+   * there is no signed-in user — the route responds 401.
+   */
+  getUserId: (req: Request) => string | undefined;
+
+  /**
+   * STRONGLY RECOMMENDED. The user who has already passed your first factor
+   * (e.g. the password step stored in the session). When set, POST /login,
+   * POST /offline/challenge and POST /offline/totp use this user and IGNORE any
+   * username in the request body; if it returns nothing they answer 401
+   * FIRST_FACTOR_REQUIRED. Without it, anyone can type any user's email and
+   * make TouchQue push to that user's phone (push-bombing) or spend that
+   * user's offline attempts.
+   */
+  getLoginUser?: (req: Request) => string | undefined | Promise<string | undefined>;
+
+  /**
+   * Built-in limits for the pre-auth routes (per client IP and per username,
+   * per route). On by default: 20 requests per IP and 5 per username per
+   * minute. Pass `false` if you already rate limit in front of this router.
+   * `req.ip` must be the real client (configure Express `trust proxy`).
+   */
+  rateLimit?: RateLimitOptions | false;
+
+  /**
+   * The offline routes (/offline/challenge, /offline/verify, /offline/totp)
+   * answer 403 OFFLINE_REQUIRES_FIRST_FACTOR unless `getLoginUser` is set.
+   * Set this to `true` only if you really want them to trust the username in
+   * the request body (e.g. your own gateway already authenticated the user).
+   */
+  allowOfflineWithoutFirstFactor?: boolean;
+
+  /** LoginType passed to the classic-2FA POST /login route. Default: 'LOGIN'. */
+  actionType?: string;
+
+  /** @deprecated no effect — POST /login no longer holds the request open; the page polls with the token. */
+  loginTimeout?: number;
+
+  /**
+   * Optional transaction context for the classic-2FA POST /login push,
+   * shown on the approval screen (see `LoginRequestOptions.details`). Build
+   * it from your own server-side state — anything read from `req.body` here
+   * is attacker-controlled.
+   */
+  getDetails?: (req: Request) => LoginRequestDetails | undefined | Promise<LoginRequestDetails | undefined>;
+
+  /**
+   * Called right before this router sends its own success response for
+   * POST /login (once approved) or POST /passkey/authenticate/verify (once
+   * verified) — the one place a partner almost always needs to do
+   * something (open a session cookie, etc.). Mutate `res` here (e.g.
+   * `res.cookie(...)`); do not call `res.json()`/`res.send()` yourself —
+   * the router does that right after.
+   */
+  onAuthenticated?: (
+    req: Request,
+    res: Response,
+    info: { externalUsername: string; requestId?: string; via: 'login' | 'passkey' | 'offline' | 'offline-totp' }
+  ) => void | Promise<void>;
+}
+
+export function touchqueRouter(tq: TouchQue, options: TouchQueRouterOptions): Router;  // implementation omitted

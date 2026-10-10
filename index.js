@@ -94,9 +94,11 @@ const FRAMEWORK_LANGUAGE = {
 };
 
 // Per-language static-analysis patterns for validate_integration. Every
-// language keeps the same 6 checks (import / protection / no legacy
+// language keeps the same 6 scored checks (import / protection / no legacy
 // synchronous verify / no hardcoded secret / env vars / error handling) —
-// only the regex and the "guardName" shown in the report differ.
+// only the regex and the "guardName" shown in the report differ. Go adds a
+// 7th scored check (see goOptionsMissingUser below). The `proof*` entries
+// drive the unscored device-proof advisories (SDK 3.2.0).
 const VALIDATION_PATTERNS = {
   node: {
     guardName: "requireTouchQue/withTouchQue/touchqueRouter",
@@ -109,11 +111,20 @@ const VALIDATION_PATTERNS = {
     errorHandling: /catch|try\s*{|\.catch\s*\(/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequestId\b/,
+    proofVerify: /\bverifyApprovalProof\s*\(/,
+    proofUnpinned: /\ballowUnpinnedKey\s*:\s*true\b/,
+    proofNames: {
+      verify: "verifyApprovalProof(proof, { requestId, type, details, challengeCode, expectedPublicKey })",
+      unpinned: "allowUnpinnedKey: true", pin: "expectedPublicKey", storedKey: "proof.publicKey",
+    },
   },
   python: {
-    guardName: "@require_touchque",
+    guardName: "@require_touchque / RequireTouchQue / relay (touchque_relay_blueprint/_router/_view/_urls, RelayHandler)",
     import: /from\s+touchque(\.\w+)*\s+import|import\s+touchque\b/,
-    stepUpGuard: /@require_touchque\s*\(|RequireTouchQue\s*\(/,
+    // The relay adapters (Flask blueprint, FastAPI router, Django view/urls)
+    // and the framework-agnostic RelayHandler run the same guard for POST
+    // /login as the decorators do — same as touchqueRouter on Node.
+    stepUpGuard: /@require_touchque\s*\(|RequireTouchQue\s*\(|touchque_relay_(?:blueprint|router|view|urls)\s*\(|\bRelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /\.login\.verify\s*\(/,
     hardcodedSecret: /api_secret\s*=\s*['"][a-zA-Z0-9]{10,}['"]|api_key\s*=\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
@@ -121,16 +132,23 @@ const VALIDATION_PATTERNS = {
     errorHandling: /try\s*:|except\b/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequest_id\b/,
+    proofVerify: /\bverify_approval_proof\s*\(/,
+    proofUnpinned: /\ballow_unpinned_key\s*=\s*True\b/,
+    proofNames: {
+      verify: "verify_approval_proof(proof, request_id=..., type=..., details=..., challenge_code=..., expected_public_key=...) (pip install \"touchque-authenticator[proof]\")",
+      unpinned: "allow_unpinned_key=True", pin: "expected_public_key", storedKey: "proof['publicKey']",
+    },
   },
   php: {
-    guardName: "->middleware('touchque:...')",
+    guardName: "->middleware('touchque:...') / TouchQueRelay::routes / RelayHandler",
     // Laravel usage often references the middleware only by its string
     // alias ('touchque:SEND_MONEY') in the route file — the actual `use
     // TouchQue\...` import/registration lives in bootstrap/app.php or a
     // service provider, not necessarily in the same file. Treat the alias
+    // (and the relay's TouchQueRelay::routes() call in routes/web.php)
     // itself as evidence of SDK usage too, not just a literal `use` line.
-    import: /use\s+TouchQue\\|TouchQue\\\\TouchQue|->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware/,
-    stepUpGuard: /->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware/,
+    import: /use\s+TouchQue\\|TouchQue\\\\TouchQue|->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware|TouchQueRelay::routes\s*\(/,
+    stepUpGuard: /->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware|TouchQueRelay::routes\s*\(|new\s+\\?(?:TouchQue\\Laravel\\)?TouchQueRelay\s*\(|new\s+\\?(?:TouchQue\\Relay\\)?RelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /->login->verify\s*\(/,
     hardcodedSecret: /new\s+Config\s*\(\s*['"]tq_[a-zA-Z0-9]{6,}['"]\s*,\s*['"][a-zA-Z0-9]{10,}['"]/,
@@ -138,11 +156,18 @@ const VALIDATION_PATTERNS = {
     errorHandling: /try\s*{|catch\s*\(/,
     offlineChallenge: /->offline\s*->\s*challenge\s*\(/,
     offlineLinked: /\$requestId\b|\brequestId\b|\brequest_id\b/,
+    proofVerify: /\bApprovalProof::verify\s*\(/,
+    // PHP's `true` is case-insensitive.
+    proofUnpinned: /['"]allowUnpinnedKey['"]\s*=>\s*true\b/i,
+    proofNames: {
+      verify: "TouchQue\\ApprovalProof::verify($proof, ['requestId' => ..., 'type' => ..., 'details' => ..., 'challengeCode' => ..., 'expectedPublicKey' => ...])",
+      unpinned: "'allowUnpinnedKey' => true", pin: "'expectedPublicKey'", storedKey: "$proof['publicKey']",
+    },
   },
   go: {
-    guardName: "touchque.Require",
+    guardName: "touchque.Require / touchque.NewRelayHandler",
     import: /["']github\.com\/Touchque\/touchque-go(?:\/v\d+)?\/touchque["']/,
-    stepUpGuard: /touchque\.Require\s*\(/,
+    stepUpGuard: /touchque\.Require\s*\(|touchque\.NewRelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /\.Login\.Verify\s*\(/,
     hardcodedSecret: /APIKey:\s*"tq_[a-zA-Z0-9]{6,}"|APISecret:\s*"[a-zA-Z0-9]{10,}"/,
@@ -150,8 +175,67 @@ const VALIDATION_PATTERNS = {
     errorHandling: /if\s+err\s*!=\s*nil/,
     offlineChallenge: /\.Offline\s*\.\s*Challenge\s*\(/,
     offlineLinked: /\bRequestID\b/,
+    proofVerify: /\bVerifyApprovalProof\s*\(/,
+    proofUnpinned: /\bAllowUnpinnedKey\s*:\s*true\b/,
+    proofNames: {
+      verify: "touchque.VerifyApprovalProof(proof, touchque.VerifyApprovalProofOptions{RequestID, Type, Details, ChallengeCode, ExpectedPublicKey})",
+      unpinned: "AllowUnpinnedKey: true", pin: "ExpectedPublicKey", storedKey: "the proof's PublicKey",
+    },
   },
 };
+
+// Language-independent: code that acts on an approved request — the
+// 'login.confirmed' webhook event, a 'CONFIRMED' login status, a step state
+// compared with 'approved' (or Go's StepApproved), or code that reads the
+// approvalProof field. Drives the unscored "verify the device proof" hint.
+const APPROVED_HANDLING = /['"`]login\.confirmed['"`]|['"`]CONFIRMED['"`]|(?:[!=]==?|\bcase)\s*['"`]approved['"`]|['"`]approved['"`]\s*[!=]==?|\bStepApproved\b|\bapprovalProof\b|\.ApprovalProof\b/;
+
+// Go only (SDK 3.1.1 / 3.2.0): touchque.Require panics at startup when
+// RequireOptions.User is nil — it no longer falls back to the client-sent
+// X-Touchque-User header — and touchque.NewRelayHandler panics when
+// RelayOptions.UserID is nil. Returns a description of every
+// `touchque.RequireOptions{...}` / `touchque.RelayOptions{...}` literal that
+// does not set that field.
+//
+// A deliberately simple heuristic, not a Go parser:
+//   - it finds each literal and its matching closing brace by counting braces
+//     (braces inside strings or comments can confuse it — rare in options);
+//   - it only looks for the key at the literal's own nesting level, so a
+//     `User:` inside a nested func body or struct does not count;
+//   - unkeyed (positional) literals are not understood;
+//   - a later `opts.User = ...` / `opts.UserID = ...` assignment anywhere in
+//     the snippet suppresses the finding, since the literal may be completed
+//     after construction.
+const GO_REQUIRED_USER_FIELD = [
+  { literal: "touchque.RequireOptions{", field: "User", ctor: "touchque.Require" },
+  { literal: "touchque.RelayOptions{", field: "UserID", ctor: "touchque.NewRelayHandler" },
+];
+function goOptionsMissingUser(code) {
+  const missing = [];
+  for (const { literal, field, ctor } of GO_REQUIRED_USER_FIELD) {
+    if (new RegExp(`\\.${field}\\s*=[^=]`).test(code)) continue;
+    const keyAtTopLevel = new RegExp(`(?:^|[\\s,{])${field}\\s*:`);
+    let from = 0;
+    for (;;) {
+      const at = code.indexOf(literal, from);
+      if (at < 0) break;
+      let depth = 1;
+      let topLevel = "";
+      let i = at + literal.length;
+      for (; i < code.length && depth > 0; i++) {
+        const ch = code[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        else if (depth === 1) topLevel += ch;
+      }
+      if (!keyAtTopLevel.test(topLevel)) {
+        missing.push(`${literal}…} has no ${field} (${ctor} panics at startup)`);
+      }
+      from = i;
+    }
+  }
+  return missing;
+}
 
 const BUNDLED_DOCS = LANGUAGE_NAMES.map((lang) => ({
   uri: `touchque://docs/${lang}/sdk-documentation.md`,
@@ -239,6 +323,25 @@ request) that wants an async push instead. Don't set up webhook signature
 verification "just in case" — only add it if the user actually has that
 kind of backend-only flow; otherwise it's unused code that never fires.
 
+NEW IN SDK 3.2.0 (Node, Python, PHP, Go):
+  - Relay routers — every route @touchque/web calls (POST /login,
+    enrollment, offline codes, passkeys), so nobody hand-writes them:
+    touchqueRouter (Node); touchque_relay_blueprint / touchque_relay_router /
+    touchque_relay_urls (Flask / FastAPI / Django) or RelayHandler (Python);
+    TouchQueRelay::routes($router, 'touchque') (Laravel) or
+    TouchQue\\Relay\\RelayHandler (PHP); touchque.NewRelayHandler (Go).
+    Always set the login-user option (getLoginUser / get_login_user /
+    LoginUser) so POST /login only works after your password step.
+  - Device-proof verification — verifyApprovalProof / verify_approval_proof /
+    ApprovalProof::verify / touchque.VerifyApprovalProof checks the phone's
+    own signature over exactly what was approved. Pin the device key
+    (expectedPublicKey); allowUnpinnedKey is trust on first use only.
+  - Fraud reports — tq.login.reportFraud(requestId, { reason }) (report_fraud /
+    ->reportFraud / Login.ReportFraud) for chargebacks and account takeovers;
+    it is the strongest signal the risk engine learns from.
+  - Go: touchque.Require now REQUIRES RequireOptions.User (and
+    NewRelayHandler RelayOptions.UserID) — both panic at startup when nil.
+
 If your client supports MCP prompts, four ready-made instruction sets are
 also available: integrate_touchque (step-by-step wizard, push/passkey),
 configure_offline_sign (wizard for the QR + 7-character-code offline
@@ -322,7 +425,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "validate_integration",
-        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and TouchQue security best practices, for whichever SDK language the code is in. Returns a structured report of passed/failed checks.",
+        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and TouchQue security best practices, for whichever SDK language the code is in: SDK imported, route protected by the step-up guard or relay router, no old synchronous login.verify(), no hardcoded secrets, env vars, error handling, and (Go) User/UserID set on RequireOptions/RelayOptions. Also gives unscored advisories: an offline QR not linked to its push, device-proof verification without a pinned key, and approved requests whose device proof is never verified. Returns a structured report of passed/failed checks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -393,8 +496,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Security & correctness checks, against the current step-up API —
       // requireTouchQue/withTouchQue/touchqueRouter (Node), @require_touchque
-      // (Python), ->middleware('touchque:...') (PHP), touchque.Require (Go)
-      // — never the old per-language synchronous .login.verify() model.
+      // or the relay adapters (Python), ->middleware('touchque:...') or
+      // TouchQueRelay/RelayHandler (PHP), touchque.Require or NewRelayHandler
+      // (Go) — never the old per-language synchronous .login.verify() model.
       const hasImport = patterns.import.test(code);
       checks.push({ id: "import", label: `${LANGUAGES[language].package} SDK is imported`, pass: hasImport });
 
@@ -430,6 +534,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         pass: hasErrorHandling,
       });
 
+      if (language === "go") {
+        const missingUser = goOptionsMissingUser(code);
+        checks.push({
+          id: "go_options_user_required",
+          label: missingUser.length
+            ? `touchque.RequireOptions sets User and touchque.RelayOptions sets UserID — found ${missingUser.join("; ")}. Since SDK 3.1.1 Require no longer falls back to the client-sent X-Touchque-User header (anyone could name any user); resolve the user from your server-side session`
+            : "touchque.RequireOptions sets User and touchque.RelayOptions sets UserID (required since SDK 3.1.1 / 3.2.0 — a nil func panics at startup)",
+          pass: missingUser.length === 0,
+        });
+      }
+
       const passed = checks.filter(c => c.pass).length;
       const total = checks.length;
       const score = Math.round((passed / total) * 100);
@@ -440,9 +555,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Advisories are not scored: they point at things that are only wrong in some setups.
       const advisories = [];
+      // id: offline_qr_not_linked
       if (patterns.offlineChallenge.test(code) && !patterns.offlineLinked.test(code)) {
         advisories.push(
           "⚠️ This code issues an offline QR but never links it to a push (no requestId). If the QR is the fallback for a push the user already started, pass that push's requestId: then a REJECT on the phone kills the QR and no code can finish that sign-in, and the number-matching number comes back as challengeCode (print it under the QR). Ignore this only for a standalone offline flow (kiosk, no push)."
+        );
+      }
+      const proof = patterns.proofNames;
+      if (patterns.proofUnpinned.test(code)) {
+        // id: unpinned_approval_proof
+        advisories.push(
+          `⚠️ The device proof is verified WITHOUT a pinned key (${proof.unpinned}). That is trust on first use: any key that signs the proof is accepted, so the check only shows that *some* key signed these details — whoever can forge the webhook or status response can bring their own key. Use it only for a user's very first approval: after it succeeds, store ${proof.storedKey} with the user, then always pass it as ${proof.pin} (and drop ${proof.unpinned}); treat a different key later as a new device that needs re-enrollment, not as a pass.`
+        );
+      }
+      if (APPROVED_HANDLING.test(code) && !patterns.proofVerify.test(code)) {
+        // id: approval_proof_not_verified
+        advisories.push(
+          `ℹ️ This code acts on an approved/confirmed request but never verifies the device proof. For money movement or other high-value actions, check approvalProof yourself with ${proof.verify} and pin the device key (${proof.pin}): the phone's own hardware-key signature then proves exactly what the user approved, without trusting TouchQue's API response. Optional — not required for a working integration.`
         );
       }
       const advisoryText = advisories.length ? `\n\n${advisories.join("\n")}` : "";
@@ -634,9 +763,44 @@ app.post(
     of the contract (202/token/step/exactly-once), not the syntax. Use the
     real guard for that language instead — @require_touchque('SEND_MONEY',
     details=...) (Python), ->middleware('touchque:SEND_MONEY') (Laravel),
-    or touchque.Require(tq, "SEND_MONEY", handler, opts) (Go) — and verify
-    the exact option names against get_sdk_types({ language }) rather than
-    guessing a translation of the JS option names.
+    or touchque.Require(tq, "SEND_MONEY", handler, touchque.RequireOptions{
+    User: ...}) (Go — User is REQUIRED since 3.1.1; a nil User panics at
+    startup) — and verify the exact option names against
+    get_sdk_types({ language }) rather than guessing a translation of the
+    JS option names.
+
+  → SIGN-IN / FRONTEND RELAY ROUTES: if the frontend uses @touchque/web
+    (POST /login, enrollment, offline codes, passkeys), mount the SDK's
+    relay router instead of hand-writing those routes:
+      Node    app.use('/touchque', touchqueRouter(tq, { getUserId, getLoginUser }))
+      Python  touchque_relay_blueprint(tq, get_user_id=..., get_login_user=...) (Flask),
+              touchque_relay_router(...) (FastAPI), touchque_relay_urls(...) (Django),
+              or touchque.RelayHandler(...).handle(...) without a framework
+      PHP     TouchQueRelay::routes($router, 'touchque') (Laravel; bind TouchQueRelay
+              with 'getLoginUser'), or TouchQue\\Relay\\RelayHandler elsewhere
+      Go      touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})
+              (UserID is REQUIRED — it panics without it)
+    Always set the login-user option so POST /login and the offline routes
+    only work for the user who already passed the password step.
+
+  → DEVICE PROOF (recommended for money movement): an approval from a phone
+    with a hardware key carries approvalProof. Verify it with
+    verifyApprovalProof (Node) / verify_approval_proof (Python, needs
+    pip install "touchque-authenticator[proof]") / TouchQue\\ApprovalProof::verify
+    (PHP) / touchque.VerifyApprovalProof (Go), passing the same requestId,
+    type, details and challengeCode, and PIN the device key
+    (expectedPublicKey / expected_public_key / ExpectedPublicKey). Without a
+    pin it fails closed; allowUnpinnedKey is trust-on-first-use only — store
+    the proof's publicKey on the first verified approval, then pin it.
+
+  → FRAUD REPORTS: when the business later learns an approved request was
+    fraud (chargeback, account takeover, social engineering), call
+    tq.login.reportFraud(requestId, { reason: 'chargeback' }) /
+    tq.login.report_fraud(request_id, reason=...) / $tq->login->reportFraud($requestId,
+    $reason, $note) / tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: ...}).
+    Reasons: chargeback | account_takeover | social_engineering | other. It is
+    the strongest signal TouchQue's risk engine learns from — suggest wiring
+    it into the existing chargeback/dispute or support workflow.
 
 STEP 7 — VALIDATION
   → After writing code, call the validate_integration tool on the final snippet.
@@ -833,13 +997,15 @@ AUDIT SCOPE
 You will review:
   1. SDK initialization and configuration
   2. Secret management (API keys, environment variables)
-  3. Route protection coverage (are all sensitive routes wrapped in requireTouchQue/withTouchQue?)
+  3. Route protection coverage (are all sensitive routes wrapped in the step-up guard — requireTouchQue/withTouchQue (Node), @require_touchque/RequireTouchQue (Python), ->middleware('touchque:...') (Laravel), touchque.Require (Go)? Are the sign-in/enrollment/passkey/offline routes served by the SDK's relay router — touchqueRouter (Node), touchque_relay_blueprint/touchque_relay_router/touchque_relay_urls or RelayHandler (Python), TouchQueRelay::routes or TouchQue\\Relay\\RelayHandler (PHP), touchque.NewRelayHandler (Go) — rather than hand-written copies? Is the login-user option (getLoginUser / get_login_user / LoginUser) set, so POST /login cannot push to an arbitrary user? Go: a RequireOptions without User or RelayOptions without UserID panics at startup since 3.1.1/3.2.0, and any user identity read from a client-sent header such as X-Touchque-User is a CRITICAL finding.)
   4. Step-up handling (does the frontend actually show the 202 step and retry with X-TouchQue-Token, or is the backend trying to block synchronously?)
   5. Approval consumption (is req.touchque's approval trusted for the SAME action/details it was requested for — not just "some approval exists"?)
   6. Fallback behavior (what happens when TouchQue API is unreachable?)
   7. Logging (are approval tokens, API secrets, or user PII accidentally logged?)
-  8. Dependency hygiene (@touchque/node version, known CVEs)
+  8. Dependency hygiene (SDK version — @touchque/node, touchque-authenticator, touchque-authenticator/php-sdk or touchque-go; 3.2.0+ ships the relay routers, device-proof verification and fraud reports in every language, and Go below 3.1.1 falls back to a client-sent user header when RequireOptions.User is nil; known CVEs)
   9. Offline fallback (if the app offers an offline QR/code: is it LINKED to the push via requestId so a phone-side REJECT kills it, does the page stop showing the QR and reset on request_rejected, and is challengeCode printed under the QR when number matching applies? An offline path that can finish a REJECTED sign-in is a HIGH finding.)
+  10. Device proof (for money movement / high-value actions: is approvalProof verified with verifyApprovalProof / verify_approval_proof / ApprovalProof::verify / touchque.VerifyApprovalProof against the SAME requestId, type, details and challengeCode? Is the device key PINNED (expectedPublicKey / expected_public_key / ExpectedPublicKey)? allowUnpinnedKey / allow_unpinned_key=True / 'allowUnpinnedKey' => true / AllowUnpinnedKey: true outside a one-time trust-on-first-use step that then stores and pins the key is a MEDIUM finding; not verifying at all on a high-value action is LOW/INFO.)
+  11. Fraud feedback (when a chargeback, dispute or account-takeover is confirmed, does the app call tq.login.reportFraud(requestId, { reason }) / report_fraud / ->reportFraud / Login.ReportFraud with reason chargeback | account_takeover | social_engineering | other? It is the strongest signal the risk engine learns from; missing it is an INFO finding with a concrete hook point, e.g. the chargeback webhook or support tooling.)
 
 ═══════════════════════════════════════════════════
 AUDIT PROCESS

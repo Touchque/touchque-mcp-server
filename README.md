@@ -38,12 +38,19 @@ just with per-language naming. Every relevant tool below takes an optional
 `"node"`) — the AI assistant should ask which language your backend is in
 and pass it, rather than assuming Node.
 
-| Language | Package | Guard |
-|---|---|---|
-| Node | `@touchque/node` | `requireTouchQue('ACTION', opts)` |
-| Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` |
-| PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` |
-| Go | `github.com/Touchque/touchque-go` | `touchque.Require(tq, "ACTION", handler, opts)` |
+| Language | Package | Guard | Relay router (routes `@touchque/web` calls) |
+|---|---|---|---|
+| Node | `@touchque/node` | `requireTouchQue('ACTION', opts)` | `touchqueRouter(tq, { getUserId, getLoginUser })` |
+| Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` | `touchque_relay_blueprint` (Flask), `touchque_relay_router` (FastAPI), `touchque_relay_view` / `touchque_relay_urls` (Django), `RelayHandler` |
+| PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` | `TouchQueRelay::routes($router, 'touchque')` (Laravel), `TouchQue\Relay\RelayHandler` |
+| Go | `github.com/Touchque/touchque-go` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
+
+The docs, types, prompts and validator cover the SDK 3.2.0 API: the relay
+routers above, device-proof verification (`verifyApprovalProof` /
+`verify_approval_proof` / `ApprovalProof::verify` /
+`touchque.VerifyApprovalProof`, with the device key pinned), fraud reports
+(`reportFraud` / `report_fraud` / `ReportFraud`) and Go's required
+`RequireOptions.User` (3.1.1).
 
 ## What it gives an assistant
 
@@ -68,7 +75,8 @@ others:
   step-up model, framework adapters, error handling, security).
 - `get_sdk_types({ language })` — that language's type/class reference
   (`Config`, `Step`/`StepState`, `StartOptions`, `CompleteExpectations`,
-  resource response types).
+  resource response types, the approval-proof verifier, `login` with
+  `reportFraud`, and the public part of the relay router).
 - `ping_touchque_api` — checks that a TouchQue backend URL you give it is
   reachable, before the assistant blames the integration code for a network
   problem.
@@ -76,8 +84,18 @@ others:
   checklist on a pasted route handler, for whichever language it's in: is
   the SDK actually imported, is the route guarded with the current step-up
   API (as opposed to the old, removed synchronous `.login.verify()`
-  pattern), are secrets kept out of source and read from the environment,
-  is there error handling.
+  pattern; a relay router counts too), are secrets kept out of source and
+  read from the environment, is there error handling. Scored checks:
+  `import`, `protection`, `no_synchronous_verify`, `no_hardcoded_secret`,
+  `env_vars`, `error_handling`, and for Go `go_options_user_required` (a
+  `touchque.RequireOptions{…}` without `User:` or a
+  `touchque.RelayOptions{…}` without `UserID:` panics at startup since SDK
+  3.1.1 / 3.2.0). Unscored advisories: `offline_qr_not_linked` (an offline
+  QR without the push's `requestId`), `unpinned_approval_proof` (device
+  proof verified with `allowUnpinnedKey` / `allow_unpinned_key=True` /
+  `'allowUnpinnedKey' => true` / `AllowUnpinnedKey: true` — trust on first
+  use only) and `approval_proof_not_verified` (code acts on a
+  confirmed/approved request but never verifies the device proof).
 
 **Resources** (for clients that browse resources, e.g. as an alternative to
 tools):
@@ -91,13 +109,15 @@ this varies by client; if your client doesn't show these, use the tools
 above directly instead):
 - `integrate_touchque` — a step-by-step wizard for adding TouchQue's
   default push/passkey step-up to an existing codebase without breaking
-  anything.
+  anything, including the relay router for the sign-in routes, pinned
+  device-proof verification and fraud reports.
 - `configure_offline_sign` — a separate wizard for TouchQue's "Offline
   Sign" flow (QR + 7-character code, for when the phone has no internet —
   kiosks, air-gapped environments, poor signal). Distinct from
   `integrate_touchque`; use this one when offline approval is the ask.
 - `audit_touchque_integration` — a formal security-review checklist for an
-  existing integration.
+  existing integration (guard and relay-router coverage, Go's required
+  `User`/`UserID`, device-proof pinning, fraud feedback via `reportFraud`).
 - `troubleshoot_touchque` — a triage decision tree for a broken integration.
 
 ## Install
@@ -183,9 +203,12 @@ the bundled copy under [`bundled/node/`](./bundled/node) if that fetch
 fails — so an unset or unreachable override never breaks the tool.
 
 Keep every language's bundled copy in sync with its SDK source whenever the
-step-up API (or an SDK README) changes. Each bundle is a straight
-concatenation of the listed files; regenerate them all with one command
-(it reads the SDK monorepo next to this repo, or pass its path):
+step-up API (or an SDK README) changes. Each bundle is a concatenation of
+the listed files — verbatim, except the large relay-router files, of which
+only the public part (module docs, options type, constructor / entry point)
+is bundled to keep tool output small. Regenerate them all with one command
+(it reads the SDK monorepo next to this repo, or pass its path); it fails
+loudly if a source file or an excerpt marker is missing:
 
 ```bash
 node scripts/sync-bundled.js            # default: ../sdks
@@ -194,10 +217,10 @@ node scripts/sync-bundled.js /path/to/sdks
 
 | `bundled/<lang>/` | Source |
 |---|---|
-| `node/` | `sdks/touchque-node/README.md` + `src/{types.ts,steps.ts}` |
-| `python/` | `sdks/touchque-python/README.md` + `touchque/{config.py,client.py,steps.py,resources/offline.py}` |
-| `php/` | `sdks/touchque-php/README.md` + `src/{Config.php,TouchQue.php,Steps.php,Resources/Offline.php}` |
-| `go/` | `sdks/touchque-go/README.md` + `touchque/{config.go,types.go,client.go,steps.go,offline.go}` |
+| `node/` | `sdks/touchque-node/README.md` + `src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}` + public part of `src/router.ts` |
+| `python/` | `sdks/touchque-python/README.md` + `touchque/{__init__.py,config.py,client.py,steps.py,approval_proof.py,resources/login.py,resources/offline.py,contrib/flask.py,contrib/fastapi.py,contrib/django.py}` + public part of `touchque/relay.py` |
+| `php/` | `sdks/touchque-php/README.md` + `src/{Config.php,TouchQue.php,Steps.php,ApprovalProof.php,Resources/Login.php,Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchQueMiddleware.php,Laravel/TouchQueRelay.php}` + public part of `src/Relay/RelayHandler.php` |
+| `go/` | `sdks/touchque-go/README.md` + `touchque/{config.go,types.go,client.go,steps.go,offline.go,login.go,http_middleware.go,approval_proof.go}` + public part of `touchque/relay.go` |
 
 ## Testing
 
@@ -210,7 +233,9 @@ Tests spawn the actual server over stdio using the official MCP SDK's
 and check the real tool/prompt/resource lists, the server `instructions`
 field, that the bundled docs/types load without network access, and that
 `validate_integration` correctly distinguishes the current step-up API from
-the old, removed synchronous one.
+the old, removed synchronous one (and recognizes the relay routers, flags Go
+options without `User`/`UserID`, and warns about unpinned device proofs) in
+every language.
 
 ## Security
 

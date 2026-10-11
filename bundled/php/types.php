@@ -256,10 +256,16 @@ class Steps
                 return ['state' => 'passkey_required', 'requestId' => $res['requestId'] ?? null,
                     'expiresAt' => $res['expiresAt'] ?? null, 'details' => $norm ?: null];
             }
-            return [
+            $step = [
                 'state' => 'waiting', 'requestId' => $res['requestId'] ?? null, 'number' => $res['challengeCode'] ?? null,
                 'expiresAt' => $res['expiresAt'] ?? null, 'details' => $norm ?: null,
             ];
+            if (!empty($res['telemetryToken'])) {
+                // Only when the workspace collects behavioural signals: lets the browser post
+                // them for this one request (@touchque/web does it when given `telemetry`).
+                $step['telemetryToken'] = $res['telemetryToken'];
+            }
+            return $step;
         } catch (TouchQueAPIException $err) {
             $code = $err->getErrorCode() ?? ($err->getData()['error'] ?? null);
             if ($err->getStatus() === 404 && ($code === 'device_not_linked' || stripos($err->getMessage(), 'linked device') !== false)) {
@@ -904,6 +910,11 @@ class RelayHandler
     private string $actionType;
 
     private static bool $warnedPreAuth = false;
+
+    /** A 1.5 s poll for a 2-minute push is 80 requests: one attempt's worth of polls. */
+    private const POLLS_PER_ATTEMPT = 10;
+    /** Reserved action: the approval on the phone that unlocks adding a passkey. */
+    private const PASSKEY_ENROLL_ACTION = 'PASSKEY_ENROLL';
 
     private const ROUTES = [
         'POST /enroll/start' => 'enrollStart',

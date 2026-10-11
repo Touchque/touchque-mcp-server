@@ -364,6 +364,10 @@ type Step struct {
 	Reason     string        `json:"reason,omitempty"`
 	RetryAfter int           `json:"retryAfter,omitempty"`
 	Assurance  *Assurance    `json:"assurance,omitempty"`
+	// TelemetryToken is set only when the workspace collects behavioural
+	// signals: it lets the browser post them for this one request
+	// (@touchque/web does it when given `telemetry`). Not a credential.
+	TelemetryToken string `json:"telemetryToken,omitempty"`
 }
 
 // EnrollStep is shown when the user has not linked a phone yet.
@@ -448,7 +452,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		if res.RequiresPasskey {
 			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm}, nil
 		}
-		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm}, nil
+		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken}, nil
 	}
 
 	apiErr, ok := err.(*APIError)
@@ -1207,6 +1211,7 @@ package touchque
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 )
@@ -1224,8 +1229,9 @@ type RequireOptions struct {
 	Details func(*http.Request) []LoginDetail
 	// ReferenceID: your own transaction id, bound to the approval.
 	ReferenceID func(*http.Request) string
-	// IP: end user's address (default: r.RemoteAddr — set this explicitly
-	// behind a reverse proxy, from your trusted X-Forwarded-For hop).
+	// IP: end user's address (default: the host part of r.RemoteAddr — set
+	// this explicitly behind a reverse proxy, from your trusted
+	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
 	IP func(*http.Request) string
 }
 
@@ -1238,8 +1244,19 @@ func ApprovalFromContext(ctx context.Context) (*Approval, bool) {
 	return a, ok
 }
 
+// defaultIP is the host part of r.RemoteAddr: "ip:port" is not an address,
+// and the API would score your server instead of the user.
 func defaultIP(r *http.Request) string {
-	return r.RemoteAddr
+	return hostOnly(r.RemoteAddr)
+}
+
+// hostOnly drops the port from "host:port" / "[v6]:port"; any other value
+// is returned unchanged.
+func hostOnly(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func guardInputFromRequest(r *http.Request) (token, offline, code, codeType string) {
@@ -1458,7 +1475,6 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"

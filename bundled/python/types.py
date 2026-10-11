@@ -259,10 +259,15 @@ def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDet
         if res.get('requiresPasskey'):
             return {'state': 'passkey_required', 'requestId': res.get('requestId'),
                     'expiresAt': res.get('expiresAt'), 'details': norm or None}
-        return {
+        step = {
             'state': 'waiting', 'requestId': res.get('requestId'), 'number': res.get('challengeCode'),
             'expiresAt': res.get('expiresAt'), 'details': norm or None,
         }
+        if res.get('telemetryToken'):
+            # Only when the workspace collects behavioural signals: lets the browser post
+            # them for this one request (@touchque/web does it when given `telemetry`).
+            step['telemetryToken'] = res['telemetryToken']
+        return step
     except TouchQueAPIException as err:
         code = _err_code(err)
         if err.status == 404 and (code == 'device_not_linked' or 'linked device' in str(err).lower()):
@@ -765,8 +770,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 from .exceptions import (
     TouchQueAPIException, TouchQuePasskeyRequiredError, TouchQueRejectedException, TouchQueTimeoutException,
 )
-from .guard import guard_input_from_headers, run_guard
+from .guard import guard_input_from_headers, is_status_poll, run_guard
 from .rate_limiter import FixedWindowLimiter
+
+# A 1.5 s poll for a 2-minute push is 80 requests: one attempt's worth of polls.
+POLLS_PER_ATTEMPT = 10
+#: Reserved action: the approval on the phone that unlocks adding a passkey.
+PASSKEY_ENROLL_ACTION = 'PASSKEY_ENROLL'
 
 if TYPE_CHECKING:
     from .client import TouchQue

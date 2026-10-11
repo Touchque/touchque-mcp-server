@@ -645,7 +645,7 @@ test("touchque_help mentions the 3.2.0 features", async () => {
 test("server reports the package version", async () => {
   await withClient(async (client) => {
     assert.equal(client.getServerVersion().version, require("./package.json").version);
-    assert.equal(require("./package.json").version, "2.2.0");
+    assert.equal(require("./package.json").version, "2.3.0");
   });
 });
 
@@ -661,5 +661,51 @@ test("bundled types expose the 3.2.0 public API in all 4 languages", async () =>
       const types = (await client.callTool({ name: "get_sdk_types", arguments: { language } })).content[0].text;
       for (const re of res) assert.match(types, re, `${language} types lack ${re}`);
     }
+  });
+});
+
+test("touchque_help mentions the 3.3.0 changes", async () => {
+  await withClient(async (client) => {
+    const text = (await client.callTool({ name: "touchque_help", arguments: {} })).content[0].text;
+    assert.match(text, /3\.3\.0/);
+    assert.match(text, /trustedProxyHops/);
+    assert.match(text, /RequireOptions\.IP/);
+    assert.match(text, /PASSKEY_ENROLL/);
+  });
+});
+
+test("validate_integration warns (unscored) about the leftmost X-Forwarded-For hop in every language", async () => {
+  await withClient(async (client) => {
+    const snippets = {
+      node: "const ip = req.headers['x-forwarded-for'].split(',')[0];",
+      python: "ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip()",
+      php: "$ip = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0];",
+      go: 'ip := strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]',
+    };
+    for (const [language, line] of Object.entries(snippets)) {
+      const text = (await client.callTool({ name: "validate_integration", arguments: { code: line, language } })).content[0].text;
+      assert.match(text, /LEFTMOST X-Forwarded-For/, language);
+    }
+    const rightmost = (await client.callTool({
+      name: "validate_integration",
+      arguments: { code: "const hops = req.headers['x-forwarded-for'].split(','); const ip = hops[hops.length - 1];", language: "node" },
+    })).content[0].text;
+    assert.doesNotMatch(rightmost, /LEFTMOST X-Forwarded-For/);
+  });
+});
+
+test("validate_integration hints (unscored) when Next.js withTouchQue sends no end-user address", async () => {
+  await withClient(async (client) => {
+    const route = (opts) => `
+      import { withTouchQue${opts ? ", ipFromVercel" : ""} } from '@touchque/node';
+      export const POST = withTouchQue('SEND_MONEY', { user: getUser${opts} })(async (req) => {
+        try { return Response.json({ ok: true }); } catch (e) { return new Response(null, { status: 500 }); }
+      });`;
+    const bare = (await client.callTool({ name: "validate_integration", arguments: { code: route(""), framework: "nextjs" } })).content[0].text;
+    assert.match(bare, /sends no end-user address/);
+    const withIp = (await client.callTool({ name: "validate_integration", arguments: { code: route(", ip: ipFromVercel"), framework: "nextjs" } })).content[0].text;
+    assert.doesNotMatch(withIp, /sends no end-user address/);
+    const hops = (await client.callTool({ name: "validate_integration", arguments: { code: route(", trustedProxyHops: 1"), framework: "nextjs" } })).content[0].text;
+    assert.doesNotMatch(hops, /sends no end-user address/);
   });
 });

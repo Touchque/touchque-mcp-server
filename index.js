@@ -188,6 +188,16 @@ const VALIDATION_PATTERNS = {
 // 'login.confirmed' webhook event, a 'CONFIRMED' login status, a step state
 // compared with 'approved' (or Go's StepApproved), or code that reads the
 // approvalProof field. Drives the unscored "verify the device proof" hint.
+// SDK 3.3.0: the end user's address feeds the risk checks (Tor, location,
+// impossible travel). The leftmost X-Forwarded-For hop is whatever the client
+// sent, so reading it lets an attacker pick the address the engine scores.
+// Matched per line: a forwarded-for header and a [0] after split/explode.
+const FORWARDED_FOR = /x-forwarded-for|forwarded_for/i;
+const FIRST_SPLIT_PART = /(?:split|explode|Split)\s*\(.*\)\s*\[\s*0\s*\]/;
+const leftmostForwardedFor = (code) => code.split("\n").some((l) => FORWARDED_FOR.test(l) && FIRST_SPLIT_PART.test(l));
+// Next.js withTouchQue sends no end-user address unless told where it comes from.
+const NEXT_GUARD = /withTouchQue\s*\(/;
+const NEXT_IP_OPTION = /\bip\s*:|\btrustedProxyHops\s*:/;
 const APPROVED_HANDLING = /['"`]login\.confirmed['"`]|['"`]CONFIRMED['"`]|(?:[!=]==?|\bcase)\s*['"`]approved['"`]|['"`]approved['"`]\s*[!=]==?|\bStepApproved\b|\bapprovalProof\b|\.ApprovalProof\b/;
 
 // Go only (SDK 3.1.1 / 3.2.0): touchque.Require panics at startup when
@@ -342,6 +352,19 @@ NEW IN SDK 3.2.0 (Node, Python, PHP, Go):
   - Go: touchque.Require now REQUIRES RequireOptions.User (and
     NewRelayHandler RelayOptions.UserID) — both panic at startup when nil.
 
+NEW IN SDK 3.3.0 (Node, Python, PHP, Go, @touchque/web 1.2.0):
+  - The end user's address: the risk checks use it, and every SDK now sends
+    only an address it can trust. Next.js withTouchQue no longer reads
+    X-Forwarded-For by default — pass ip: ipFromVercel / ipFromCloudflare,
+    trustedProxyHops: N or your own function. Go sends the host part of
+    r.RemoteAddr (no port); behind a proxy set RequireOptions.IP. Never use
+    the leftmost X-Forwarded-For hop: the client controls it.
+  - Adding a passkey for a user with a linked phone needs a PASSKEY_ENROLL
+    approval on that phone first; the relay routers handle it.
+  - Relay status polls no longer count against the push rate limit.
+  - telemetryToken (only when the workspace collects behavioural signals):
+    pass it to @touchque/web's telemetry option.
+
 If your client supports MCP prompts, four ready-made instruction sets are
 also available: integrate_touchque (step-by-step wizard, push/passkey),
 configure_offline_sign (wizard for the QR + 7-character-code offline
@@ -425,7 +448,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "validate_integration",
-        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and TouchQue security best practices, for whichever SDK language the code is in: SDK imported, route protected by the step-up guard or relay router, no old synchronous login.verify(), no hardcoded secrets, env vars, error handling, and (Go) User/UserID set on RequireOptions/RelayOptions. Also gives unscored advisories: an offline QR not linked to its push, device-proof verification without a pinned key, and approved requests whose device proof is never verified. Returns a structured report of passed/failed checks.",
+        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and TouchQue security best practices, for whichever SDK language the code is in: SDK imported, route protected by the step-up guard or relay router, no old synchronous login.verify(), no hardcoded secrets, env vars, error handling, and (Go) User/UserID set on RequireOptions/RelayOptions. Also gives unscored advisories: an offline QR not linked to its push, device-proof verification without a pinned key, approved requests whose device proof is never verified, the end user's address taken from the leftmost X-Forwarded-For hop, and a Next.js withTouchQue with no end-user address. Returns a structured report of passed/failed checks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -572,6 +595,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // id: approval_proof_not_verified
         advisories.push(
           `ℹ️ This code acts on an approved/confirmed request but never verifies the device proof. For money movement or other high-value actions, check approvalProof yourself with ${proof.verify} and pin the device key (${proof.pin}): the phone's own hardware-key signature then proves exactly what the user approved, without trusting TouchQue's API response. Optional — not required for a working integration.`
+        );
+      }
+      if (leftmostForwardedFor(code)) {
+        // id: client_ip_from_leftmost_xff
+        advisories.push(
+          "⚠️ This code takes the LEFTMOST X-Forwarded-For hop as the user's address. The client writes that part, so an attacker can claim any address and walk past the Tor, location and impossible-travel checks. Use the address your own proxy appended (the rightmost hop, or the hop count of proxies you run: trustedProxyHops on Next.js), or your platform's trusted header (ipFromVercel / ipFromCloudflare)."
+        );
+      }
+      if (language === "node" && NEXT_GUARD.test(code) && !NEXT_IP_OPTION.test(code)) {
+        // id: nextjs_no_client_ip
+        advisories.push(
+          "ℹ️ withTouchQue sends no end-user address unless you say where it comes from (SDK 3.3.0), so the risk checks that need one (Tor, location, impossible travel) are skipped. Pass ip: ipFromVercel on Vercel, ip: ipFromCloudflare when only Cloudflare reaches your origin, trustedProxyHops: 1 behind one proxy of yours, or your own function."
         );
       }
       const advisoryText = advisories.length ? `\n\n${advisories.join("\n")}` : "";

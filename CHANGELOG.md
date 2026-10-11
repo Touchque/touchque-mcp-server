@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.3.0
+
+Updated for the TouchQue 3.3.0 server SDKs and `@touchque/web` 1.2.0.
+
+- Bundled docs and types regenerated from the 3.3.0 SDKs: the Next.js `ip` /
+  `trustedProxyHops` options and the Vercel / Cloudflare presets, Go's
+  end-user address (`RequireOptions.IP`, no port), `telemetryToken`, and the
+  `PASSKEY_ENROLL` approval before a passkey is added.
+- `touchque_help` and the server instructions list what is new in 3.3.0.
+- `validate_integration` has two new unscored advisories:
+  - `client_ip_from_leftmost_xff`: the end user's address is read from the
+    leftmost `X-Forwarded-For` hop, which the client controls, so an
+    attacker can pick the address the risk checks see. Any language.
+  - `nextjs_no_client_ip`: a Next.js `withTouchQue` with neither `ip` nor
+    `trustedProxyHops`, so the address-based risk checks are skipped.
+
 ## 2.2.0
 
 Updated for the TouchQue 3.2.0 server SDKs (Node, Python, PHP, Go).

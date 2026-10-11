@@ -50,7 +50,10 @@ routers above, device-proof verification (`verifyApprovalProof` /
 `verify_approval_proof` / `ApprovalProof::verify` /
 `touchque.VerifyApprovalProof`, with the device key pinned), fraud reports
 (`reportFraud` / `report_fraud` / `ReportFraud`) and Go's required
-`RequireOptions.User` (3.1.1).
+`RequireOptions.User` (3.1.1), plus the 3.3.0 changes: only a trusted
+end-user address goes to the risk engine (Next.js `ip` / `trustedProxyHops`,
+Go `RequireOptions.IP`), the `PASSKEY_ENROLL` approval before adding a
+passkey, and relay polls outside the push rate limit.
 
 ## What it gives an assistant
 
@@ -95,7 +98,11 @@ others:
   proof verified with `allowUnpinnedKey` / `allow_unpinned_key=True` /
   `'allowUnpinnedKey' => true` / `AllowUnpinnedKey: true` — trust on first
   use only) and `approval_proof_not_verified` (code acts on a
-  confirmed/approved request but never verifies the device proof).
+  confirmed/approved request but never verifies the device proof),
+  `client_ip_from_leftmost_xff` (the end user's address read from the
+  client-controlled leftmost `X-Forwarded-For` hop) and
+  `nextjs_no_client_ip` (a Next.js `withTouchQue` with neither `ip` nor
+  `trustedProxyHops`, so the address-based risk checks are skipped).
 
 **Resources** (for clients that browse resources, e.g. as an alternative to
 tools):

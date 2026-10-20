@@ -650,7 +650,7 @@ test("touchque_help mentions the 3.2.0 features", async () => {
 test("server reports the package version", async () => {
   await withClient(async (client) => {
     assert.equal(client.getServerVersion().version, require("./package.json").version);
-    assert.equal(require("./package.json").version, "2.3.0");
+    assert.equal(require("./package.json").version, "2.4.0");
   });
 });
 

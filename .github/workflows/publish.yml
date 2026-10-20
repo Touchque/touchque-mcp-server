@@ -16,6 +16,14 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm test
-      - run: npm publish --access public
+      # This package needs 2FA on npm, so it is usually published by hand
+      # (npm publish --auth-type=web); the tag then only marks that release.
+      - run: |
+          v=$(node -p "require('./package.json').version")
+          if npm view "@touchque/mcp-server@$v" version >/dev/null 2>&1; then
+            echo "@touchque/mcp-server@$v is already on npm; nothing to publish."
+            exit 0
+          fi
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

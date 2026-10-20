@@ -102,7 +102,9 @@ second call.
   Without an address the risk checks that need one (Tor, location, travel) are skipped.
 - **`touchqueRouter`**: mounts every relay route a frontend needs
   (`POST /login`, enrollment, passkey ceremonies, offline codes) so you don't
-  hand-write them.
+  hand-write them. `POST /passkey/authenticate/options` with no `email` answers options for any passkey of
+  your site, which `@touchque/web`'s passkey autofill (`passkeys.autofill()`) uses; the passkey the user picks
+  names the account (`tq.webauthn.primaryOptions()` with no `externalUsername` does the same).
 
 ```typescript
 import { touchqueRouter } from '@touchque/node';
@@ -160,19 +162,207 @@ const ch = await tq.offline.challenge({ externalUsername, type: 'LOGIN', request
 ## Webhooks
 
 ```typescript
+import { MemoryWebhookReplayCache, WebhookEvents, WebhookReasons } from '@touchque/node';
+const replayCache = new MemoryWebhookReplayCache();
+
 app.post('/webhooks/touchque', express.raw({ type: 'application/json' }), (req, res) => {
   try {
-    const event = tq.webhook.verify({
+    const payload = tq.webhook.verify({
       rawBody: req.body.toString(),
-      signature: req.headers['x-touchque-signature'] as string,
+      signature: req.headers['x-signature'] as string,
+      replayCache,
     });
-    // handle event.event: 'login.confirmed' | 'login.rejected' | …
+    if (payload.event === WebhookEvents.APPROVAL_REVOKED) endSessionsBuiltOn(payload.requestId); // see below
+    else if (payload.status === 'REJECTED' && payload.reason === WebhookReasons.USER_REPORTED_COACHED) lockAccount(payload.externalUsername);
     res.sendStatus(200);
   } catch {
     res.sendStatus(403); // not from TouchQue
   }
 });
 ```
+
+Login results carry `status` (`SUCCESS` | `REJECTED`) and, when rejected, a `reason` (`WebhookReasons`):
+`user_rejected`, `user_reported_fraud`, `user_reported_coached` (the user said someone on the phone told
+them to approve), `risk_reversed`, `risk_step_up`, `approval_signature_invalid`, `device_integrity_failed`,
+`vishing_suspected` and `phishing_origin` (see Vishing Shield). Treat a reason you do not know as a rejection.
+Event webhooks carry `event` (`WebhookEvents`): `DEVICE_LINKED`, `DEVICE_UNLINKED`, `PASSKEY_REGISTERED`,
+`PASSKEY_DELETED`, `APPROVAL_RECONFIRMED`, `APPROVAL_REVOKED`. Ignore events you do not know.
+
+## Vishing Shield (someone on the phone guiding the user)
+
+The phone tells TouchQue, signed with its hardware key, whether a call was active (or just ended), the screen
+was shared or the phone remote-controlled when the user tapped Approve. Depending on the server's mode:
+
+- **Passkey instead.** A user with a passkey finishes in the browser: the request stays open and turns into
+  `passkey_required` mid-flight. The step-up flow (`start` / `check`, the guard, `touchqueRouter`) and
+  `@touchque/web` handle it; the blocking `login.waitForApproval` / `login.verify` / `tq.protect` throw
+  `TouchQuePasskeyRequiredError` with `reason: 'step_up'`. No offline or recovery code can finish such a request.
+- **Refused.** A critical action without a passkey is rejected (`reason: 'vishing_suspected'`).
+- **Provisional.** Anything else is approved with `provisional: true` (on the `Approval`, `GET /login/status`,
+  consume and the SUCCESS webhook). Let the user in, but treat the session as limited: TouchQue refuses the
+  user's critical actions (`blocked` / `provisional`) until the phone re-confirms after the call
+  (`APPROVAL_RECONFIRMED`). `APPROVAL_REVOKED` (`reason: 'COACHED' | 'UNDO'`) means end the session; an approval
+  revoked before you consumed it can no longer be consumed (409 `revoked`).
+
+**Mirror Alarm.** Every waiting step carries `canary.url` once. `@touchque/web` loads it on the page showing the
+sign-in and sends a beacon to it, so a real-time phishing proxy in front of your site shows up as itself: the
+approval is refused (`reason: 'phishing_origin'`) and the phone warns the user. Allow the canary host in your
+Content-Security-Policy (`img-src` and `connect-src`).
+
+## TouchQue Actions (your code in the approval pipeline)
+
+Alerts, step-ups and refusals by country, local time, role or amount, passkeys
+for admins — from a template or a few lines of JavaScript, replayed against your
+real recent sign-ins before they go live. Full guide: [ACTIONS.md](../ACTIONS.md).
+
+```ts
+import type { LoginRequestEvent, LoginRequestApi } from '@touchque/node';
+
+// A no-code template
+await tq.actions.deploy('night-alert', {
+  trigger: 'approval.decided',
+  template: { id: 'alert', params: { channel: 'slack', when: { countries: ['TR'], hours: { from: 0, to: 6 } } } },
+});
+
+// Your own typed function (self-contained: it is sent as source text)
+await tq.actions.deploy('admins-use-passkeys', {
+  trigger: 'login.request',
+  handler: async (event: LoginRequestEvent, api: LoginRequestApi) => {
+    if ((event.context?.roles as string[] | undefined)?.includes('admin')) api.requirePasskey('Admins approve with a passkey');
+  },
+});
+
+// Before deploying: how many of the last 500 real decisions would it change?
+const report = await tq.actions.dryRun({ trigger: 'login.request', handler: myDraft });
+// report.transitions → { 'push→passkey': 12 }
+```
+
+Give Actions what only your server knows with `context` (never shown on the phone):
+`requireTouchQue('SEND_MONEY', { context: (req) => ({ roles: req.user.roles, amount: req.body.amount }) })`.
+Loosening calls (`skipNumberMatch`, `overrideBlock`, `allowSilent`) need a capability an
+admin approves on their phone. Action types moved to `tq.actionTypes` in 4.0.
+
+## Silent sign-ins (stop asking when nothing is new)
+
+A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
+with no risk signal since, does not need another push. TouchQue's risk engine decides; your server only skips the
+push when it says so.
+
+1. In the browser, `@touchque/web` 1.4.0 with `createTouchQueWeb({ browserKey: true })` keeps a non-extractable
+   key for your site and sends a fresh, signed proof of it in the `X-TouchQue-Browser` header.
+2. On the server, turn on `silentSignIn`:
+
+```typescript
+app.post('/login/2fa',
+  requireTouchQue('LOGIN', { user: (req) => req.session.passwordOkUser, silentSignIn: true }),
+  (req, res) => {
+    // req.touchque.assurance.method is 'silent' when no push was needed.
+    res.json({ ok: true });
+  });
+
+app.use('/touchque', touchqueRouter(tq, {
+  getUserId: (req) => req.session.user?.email,
+  getLoginUser: (req) => req.session.passwordOkUser,
+  silentSignIn: true, // or { maxAgeSeconds: 8 * 3600 } for your own limit
+}));
+```
+
+`withTouchQue` takes the same option. With it on, a new attempt that carries the header first calls
+`tq.risk.check`. Only an answer of exactly `prompt: false` approves it at once, with nothing sent to the phone:
+the approval has `assurance: { method: 'silent', phishingResistant: false }`, `confirmedVia: 'SILENT'`,
+`requestId: 'silent'` and `reasons` (`known_browser`, `recent_approval`, `same_phone`, `familiar_network`,
+`no_risk_signal`); `touchqueRouter` calls `onAuthenticated` with `via: 'silent'`. Anything else, and any error in the
+check, starts the usual push with the proof attached, so its approval makes the browser known. Polling with the
+token never checks again.
+
+TouchQue only lets a sign-in through silently when all of this holds: the browser proved its key and was approved
+on the phone (a confirmed push, not one approved during a call, or a passkey) within your `maxAgeSeconds` and at most
+7 days ago, by the phone that is linked now; the country and the network were seen in the user's earlier approved
+sign-ins; the risk engine allows it with no risk signal; and the action is an everyday one. A critical action always
+asks. In `shadow` mode (`silentMode`) it always asks and the reasons say what would have happened.
+
+Without the adapters:
+
+```typescript
+const browserProof = req.get('x-touchque-browser');
+const risk = await tq.risk.check({ externalUsername: user, type: 'LOGIN', clientIp: req.ip, browserProof });
+if (risk.prompt === false) return openSession(user); // risk.reasons say why
+const step = await tq.start('LOGIN', { user, ip: req.ip, browserProof }); // the approval makes the browser known
+
+const { browsers } = await tq.risk.browsers({ externalUsername: user });      // for an "approved browsers" list
+await tq.risk.forgetBrowsers({ externalUsername: user });                    // all; or { thumbprint } for one
+```
+
+Forget a user's browsers after a password reset or a "sign out everywhere". `risk.check` reads the answer fail-closed:
+`prompt` is `false` only when TouchQue answered the boolean `false`.
+
+## Never Locked Out (lost, dead or new phone)
+
+A user whose phone is gone moves to a new phone without a help desk. Colleagues they named beforehand vouch on their own
+phones, each typing a number the user reads them on a call; then a cooling-off (default 60 minutes) lets the old phone, any
+voucher or an admin stop it. The risk engine can refuse it or ask for more vouchers, and for 24 hours afterwards critical
+actions are refused. It is an option: offer it next to passkeys and the old phone's transfer, never as the only way.
+
+```ts
+// Settings page, after an approval on the user's phone:
+await tq.recovery.setVouchers({ externalUsername: user, vouchers: ['bo@acme.com', 'cy@acme.com'] });
+
+// "I lost my phone", after the password:
+const r = await tq.recovery.start({ externalUsername: user, clientIp: req.ip, displayName: 'Ada', fallbackVouchers: admins });
+showQr(r.bindUri);                     // the TouchQue app on the new phone scans it
+const now = await tq.recovery.status(r.recoveryId);
+now.vouchers.forEach((v) => show(v.externalUsername, v.code)); // read each code to that colleague
+// now.status: AWAITING_DEVICE → VOUCHING → COOLING → COMPLETED (or VETOED / EXPIRED / FAILED)
+
+// An admin who does not believe it:
+await tq.recovery.veto(r.recoveryId, { by: 'admin@acme.com' });
+```
+
+Every step is a hash-chained receipt (`receipts`); a voucher's step carries the signature of their phone's hardware key.
+
+## "Why?": case codes instead of guesswork
+
+Every approval decision names a short case code (`K7P-2QX`: 6 characters, no I, O, 0 or 1). A user who was asked to
+match a number, needed a passkey or was refused reads it out to your support team, and the team opens the whole
+decision by it in the TouchQue dashboard (Logs → Look up a case): what went in, each check's verdict (the access rule
+that matched, the risk signals that were acted on and the ones only measured), and the single change that would have
+let it through. No screenshots, no log digging. The code opens nothing on its own: only your workspace sees its
+decisions.
+
+```ts
+const step = await tq.start('WITHDRAW', { user, ip: req.ip });
+// step.caseCode → 'K7P-2QX'; step.reasons → [{ code: 'critical_action', text: 'The action is marked critical' }]
+try {
+  await tq.login.request({ externalUsername: user, type: 'LOGIN' });
+} catch (err) {
+  if (err instanceof TouchQueAPIError && err.caseCode) show(`Tell your support team: ${err.caseCode}`);
+}
+```
+
+`caseCode` is on `LoginRequestResponse`, `RiskCheckResult`, `TouchQueAPIError` and every step (the guard keeps it
+while it waits); `reasons` says why number matching or a passkey is needed, from a fixed list, never a score.
+
+## Blocking `verify()` and number matching
+
+`login.verify()` sends the request and waits for the phone in one call. With number matching (your option, a
+workspace policy, a critical action or the risk engine can turn it on) the phone asks the user to pick a number,
+and the call returns only after they have. Pass `onChallenge`: it runs once, right after the request is created and
+before the wait. **Show `challengeCode` to the user now; the phone asks for it.**
+
+```typescript
+await tq.login.verify({
+  externalUsername: user, type: 'SEND_MONEY',
+  onChallenge: ({ challengeCode, caseCode }) => {
+    if (challengeCode) socket.emit('touchque', { text: `Pick ${challengeCode} on your phone`, caseCode });
+  },
+});
+```
+
+It gets `{ requestId, challengeCode?, expiresAt, reasons?, caseCode? }`. It is not called when only a passkey can
+approve (`verify()` throws `TouchQuePasskeyRequiredError` first). An error it throws, or a promise it returns that
+rejects, is logged and ignored: `verify()` keeps waiting. `tq.protect()` takes the same `onChallenge`. In a web
+request, where the page hears nothing until you answer, use the router or `tq.start()`: their first answer already
+carries the number.
 
 ## Verifying the device proof (no need to trust TouchQue)
 

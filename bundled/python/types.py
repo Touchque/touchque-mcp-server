@@ -21,10 +21,12 @@ from .exceptions import (
     TouchQueConfigException,
     TouchQuePasskeyRequiredError,
 )
-from .resources.webhook import ReplayCache, MemoryReplayCache
+from .resources.webhook import ReplayCache, MemoryReplayCache, WebhookReasons, WebhookEvents
 from .steps import normalize_details, details_digest
 from .approval_proof import verify_approval_proof
-from .guard import run_guard, guard_input_from_headers
+from .guard import run_guard, guard_input_from_headers, silent_input_from_headers, BROWSER_HEADER
+from .resources.risk import parse_risk_check
+from .resources.recovery import is_recovery_open
 from .relay import RelayHandler, RelayResponse, RELAY_ROUTES
 from .rate_limiter import FixedWindowLimiter
 
@@ -41,6 +43,8 @@ __all__ = [
     'TouchQueWebhookReplayException',
     'ReplayCache',
     'MemoryReplayCache',
+    'WebhookReasons',
+    'WebhookEvents',
     'TouchQueConfigException',
     'TouchQuePasskeyRequiredError',
     'normalize_details',
@@ -48,6 +52,10 @@ __all__ = [
     'verify_approval_proof',
     'run_guard',
     'guard_input_from_headers',
+    'silent_input_from_headers',
+    'BROWSER_HEADER',
+    'parse_risk_check',
+    'is_recovery_open',
     'RelayHandler',
     'RelayResponse',
     'RELAY_ROUTES',
@@ -123,10 +131,13 @@ from typing import Any, Dict, Optional
 
 from .config import Config
 from .http_client import HttpClient
+from .resources.action_types import ActionTypes
 from .resources.actions import Actions
 from .resources.auth import Auth
 from .resources.login import Login
 from .resources.offline import Offline
+from .resources.risk import Risk
+from .resources.recovery import Recovery
 from .resources.webauthn import WebAuthn
 from .resources.webhook import Webhook
 from .steps import LoginDetails, check as _check, complete as _complete, start as _start
@@ -155,18 +166,28 @@ class TouchQue:
         self.webauthn = WebAuthn(http)
         self.webhook = Webhook(self.config)
         self.offline = Offline(http)
+        #: Action types: what users approve (LOGIN, SEND_MONEY…). Was ``actions`` before 4.0.
+        self.action_types = ActionTypes(http)
+        #: TouchQue Actions: your own code in the approval pipeline.
         self.actions = Actions(http)
+        #: Silent sign-ins: should this sign-in ask the phone, and which browsers TouchQue knows.
+        self.risk = Risk(http)
+        #: Never Locked Out: move a user whose phone is gone to a new phone, with colleagues vouching.
+        self.recovery = Recovery(http)
 
     # ── headless step-up (see touchque.steps / touchque.guard) ─────────────
 
     def start(self, action: str, user: str, details: Optional[LoginDetails] = None,
               reference_id: Optional[str] = None, ip: Optional[str] = None,
-              user_agent: Optional[str] = None) -> Dict[str, Any]:
+              user_agent: Optional[str] = None, browser_proof: Optional[str] = None) -> Dict[str, Any]:
         """Starts an approval and returns immediately — show the step in your
         UI. ``waiting`` + ``number``: show the number, the user picks it on
         the phone. ``enroll``: show ``enroll['qrCodeDataUrl']`` so the user
-        links the TouchQue app first."""
-        return _start(self, action, user, details=details, reference_id=reference_id, ip=ip, user_agent=user_agent)
+        links the TouchQue app first. ``browser_proof``: the browser's
+        ``X-TouchQue-Browser`` proof, so the approval makes the browser known
+        (silent sign-ins, see ``risk.check``)."""
+        return _start(self, action, user, details=details, reference_id=reference_id, ip=ip, user_agent=user_agent,
+                      browser_proof=browser_proof)
 
     def check(self, request_id: str) -> Dict[str, Any]:
         """Where a started approval is now: waiting, approved, rejected, expired…"""
@@ -244,40 +265,69 @@ def _err_code(err: TouchQueAPIException) -> Optional[str]:
     return err.code or (err.data or {}).get('error')
 
 
+def _why(res: Dict[str, Any]) -> Dict[str, Any]:
+    """"Why?": the case code (``K7P-2QX``) and plain reasons of a login request's
+    answer, for its step. Both are safe for the browser: show the code with the
+    step ("Tell your support team: K7P-2QX")."""
+    out: Dict[str, Any] = {}
+    if isinstance(res.get('caseCode'), str) and res['caseCode']:
+        out['caseCode'] = res['caseCode']
+    reasons = [{'code': r['code'], 'text': r.get('text') if isinstance(r.get('text'), str) else ''}
+               for r in (res.get('reasons') or []) if isinstance(r, dict) and isinstance(r.get('code'), str)]
+    if reasons:
+        out['reasons'] = reasons
+    return out
+
+
 def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDetails] = None,
           reference_id: Optional[str] = None, ip: Optional[str] = None, user_agent: Optional[str] = None,
-          enroll: bool = True) -> Dict[str, Any]:
-    """Starts an approval for `action` — never waits."""
+          enroll: bool = True, browser_proof: Optional[str] = None,
+          context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Starts an approval for `action` — never waits.
+
+    ``browser_proof`` (silent sign-ins): the browser's device-bound key proof
+    (``X-TouchQue-Browser``), passed through untouched. Once the user
+    approves, TouchQue knows this browser."""
     if not user:
         raise TouchQueConfigException('start() needs the user id')
     norm = normalize_details(details)
     try:
         res = client.login.request(
             user, type=action, reference_id=reference_id, client_ip=ip, user_agent=user_agent,
-            details=norm or None,
+            details=norm or None, browser_proof=browser_proof, context=context,
         )
+        canary = res.get('canary')
+        canary = {'url': canary['url']} if isinstance(canary, dict) and isinstance(canary.get('url'), str) else None
         if res.get('requiresPasskey'):
-            return {'state': 'passkey_required', 'requestId': res.get('requestId'),
-                    'expiresAt': res.get('expiresAt'), 'details': norm or None}
+            step = {'state': 'passkey_required', 'requestId': res.get('requestId'),
+                    'expiresAt': res.get('expiresAt'), 'details': norm or None, **_why(res)}
+            if canary:
+                step['canary'] = canary
+            return step
         step = {
             'state': 'waiting', 'requestId': res.get('requestId'), 'number': res.get('challengeCode'),
-            'expiresAt': res.get('expiresAt'), 'details': norm or None,
+            'expiresAt': res.get('expiresAt'), 'details': norm or None, **_why(res),
         }
         if res.get('telemetryToken'):
             # Only when the workspace collects behavioural signals: lets the browser post
             # them for this one request (@touchque/web does it when given `telemetry`).
             step['telemetryToken'] = res['telemetryToken']
+        if canary:
+            # Mirror Alarm: the page showing this step loads the canary (@touchque/web does it), so
+            # a phishing proxy in front of your site gets the approval refused. Only on this first step.
+            step['canary'] = canary
         return step
     except TouchQueAPIException as err:
         code = _err_code(err)
+        why = {'caseCode': err.case_code} if err.case_code else {}
         if err.status == 404 and (code == 'device_not_linked' or 'linked device' in str(err).lower()):
             if not enroll:
                 return {'state': 'enroll'}
             return _enroll_step(client, user)
         if err.status == 423:
-            return {'state': 'frozen', 'retryAfter': err.retry_after}
+            return {'state': 'frozen', 'retryAfter': err.retry_after, **why}
         if err.status == 429:
-            return {'state': 'rate_limited', 'retryAfter': err.retry_after}
+            return {'state': 'rate_limited', 'retryAfter': err.retry_after, **why}
         if err.status == 400 and (code == 'unknown_action' or 'invalid action type' in str(err).lower()):
             raise TouchQueConfigException(
                 f'Unknown action "{action}". Create it once with client.actions.define("{action}") '
@@ -288,7 +338,7 @@ def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDet
                 or ('passkey_not_registered' if code in ('passkey_not_registered',) or (err.data or {}).get('error') == 'phishing_resistant_required' else None) \
                 or ('action_disabled' if code == 'action_disabled' else None) \
                 or code or 'blocked'
-            return {'state': 'blocked', 'reason': reason}
+            return {'state': 'blocked', 'reason': reason, **why}
         raise
 
 
@@ -342,7 +392,7 @@ def complete(client: 'TouchQue', request_id: str, user: str, action: str,
     same_ref = (res.get('referenceId') or None) == (reference_id or None)
     if not same_user or res.get('type') != action or not same_details or not same_ref:
         raise TouchQueException('TouchQue: this approval is for a different user, action or transaction.')
-    return {
+    approval = {
         'requestId': request_id,
         'user': res.get('externalUsername'),
         'action': res.get('type'),
@@ -350,6 +400,14 @@ def complete(client: 'TouchQue', request_id: str, user: str, action: str,
         'confirmedVia': res.get('confirmedVia'),
         'approvalProof': res.get('approvalProof'),
     }
+    if 'provisional' in res:
+        # Vishing Shield: approved during a call. Let the user in, but treat the session as limited:
+        # critical actions are refused until APPROVAL_RECONFIRMED, and APPROVAL_REVOKED means end it.
+        approval.update({
+            'provisional': bool(res.get('provisional')), 'revoked': bool(res.get('revoked')),
+            'revokeReason': res.get('revokeReason'), 'reconfirmedAt': res.get('reconfirmedAt'),
+        })
+    return approval
 
 
 # ── Guard token ──────────────────────────────────────────────────────────
@@ -507,8 +565,9 @@ def verify_approval_proof(
 # From touchque/resources/login.py — tq.login (request/status/verify/report_fraud)
 # ─────────────────────────────────────────────────────────────
 
+import logging
 import time
-from typing import Dict, Any, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # Label -> value, or an ordered list of {'label': ..., 'value': ...}.
 LoginDetails = Union[Dict[str, Union[str, int, float]], List[Dict[str, Any]]]
@@ -516,11 +575,14 @@ from urllib.parse import quote
 from ..http_client import HttpClient
 from ..exceptions import TouchQueTimeoutException, TouchQueRejectedException, TouchQuePasskeyRequiredError, TouchQueConfigException
 
+logger = logging.getLogger('touchque')
+
+
 class Login:
     def __init__(self, http: HttpClient):
         self._http = http
 
-    def request(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, details: Optional[LoginDetails] = None) -> Dict[str, Any]:
+    def request(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Request a 2FA login/approval from the user's mobile device.
 
@@ -535,6 +597,17 @@ class Login:
         order). At most 8 entries, labels <= 40 and values <= 120
         characters; the API rejects (never truncates) anything outside those
         limits. Build it from server-side state, never from browser input.
+
+        ``browser_proof`` (silent sign-ins): the browser's device-bound key
+        proof, exactly as the browser sent it (``X-TouchQue-Browser`` header,
+        made by ``@touchque/web``). When the user approves this request on the
+        phone (or with a passkey), TouchQue remembers the browser, so a later
+        ``risk.check`` can let the same browser in without asking. Pass it
+        through untouched; an invalid proof only means "a browser TouchQue
+        does not know".
+
+        ``context``: for your TouchQue Actions only (``event.context``): roles,
+        plan, amount… Any JSON object up to 4 KB. Never shown on the phone.
         """
         payload = {
             'externalUsername': external_username,
@@ -552,6 +625,10 @@ class Login:
             payload['requireNumberMatch'] = True
         if details:
             payload['details'] = details
+        if browser_proof:
+            payload['browserProof'] = browser_proof
+        if context:
+            payload['context'] = context
 
         return self._http.post('/login/request', payload)
 
@@ -559,12 +636,39 @@ class Login:
         """Check the current status of a login request."""
         return self._http.get(f"/login/status/{quote(request_id, safe='')}")
 
-    def verify(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, timeout_ms: int = 30000, details: Optional[LoginDetails] = None) -> Dict[str, Any]:
-        """Request a login and wait (poll) until the user approves or rejects it."""
-        request_result = self.request(external_username, type, reference_id, client_ip, user_agent, require_biometric, require_number_match, details)
+    def verify(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, timeout_ms: int = 30000, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, on_challenge: Optional[Callable[[Dict[str, Any]], Any]] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Request a login and wait (poll) until the user approves or rejects it.
+
+        With number matching (your ``require_number_match``, a workspace policy
+        or the risk engine can turn it on) the user must pick a number on the
+        phone. ``on_challenge`` is called once, right after the request is
+        created and before any waiting, with ``{'requestId', 'challengeCode',
+        'expiresAt', 'reasons', 'caseCode'}``: show ``challengeCode`` to the
+        user now; the phone asks for it. An exception it raises is logged and
+        ignored (verify keeps waiting). It is not called when only a passkey
+        can approve::
+
+            tq.login.verify(user, 'SEND_MONEY',
+                            on_challenge=lambda c: c.get('challengeCode') and show(f"Pick {c['challengeCode']} on your phone"))
+
+        Raises ``TouchQuePasskeyRequiredError`` when a passkey must approve it:
+        a phishing-resistant policy (``reason='policy'``, no push sent), or the
+        user tapped Approve during a call (``reason='step_up'``, Vishing Shield):
+        finish it in the browser with ``@touchque/web``."""
+        request_result = self.request(external_username, type, reference_id, client_ip, user_agent, require_biometric, require_number_match, details, browser_proof, context)
         request_id = request_result['requestId']
         if request_result.get('requiresPasskey'):
             raise TouchQuePasskeyRequiredError(request_id)
+
+        if on_challenge is not None:
+            challenge = {'requestId': request_id, 'expiresAt': request_result.get('expiresAt')}
+            for key in ('challengeCode', 'reasons', 'caseCode'):
+                if request_result.get(key):
+                    challenge[key] = request_result[key]
+            try:
+                on_challenge(challenge)
+            except Exception as err:  # noqa: BLE001 — the user's callback must not stop the wait
+                logger.warning('[TouchQue] on_challenge failed: %s', err)
 
         start_time = time.time() * 1000
         poll_interval_sec = 0.4
@@ -581,6 +685,8 @@ class Login:
                     'challengeCode': request_result.get('challengeCode'),
                     'assurance': status_result.get('assurance'),
                     'confirmedVia': status_result.get('confirmedVia'),
+                    # Vishing Shield: approved during a call; critical actions wait for the phone to re-confirm.
+                    'provisional': bool(status_result.get('provisional')),
                 }
 
             if status == 'REJECTED':
@@ -588,6 +694,10 @@ class Login:
 
             if status == 'EXPIRED':
                 raise TouchQueTimeoutException(f"Request {request_id} expired before it was approved.")
+
+            # Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
+            if status == 'PENDING' and status_result.get('requiresPasskey'):
+                raise TouchQuePasskeyRequiredError(request_id, 'step_up')
 
             elapsed = (time.time() * 1000) - start_time
             if elapsed > timeout_ms:
@@ -741,7 +851,7 @@ Routes (relative to wherever you mount the relay):
   POST   /offline/challenge               (pre-auth, body.externalUsername) -> QR for a phone with no internet
   POST   /offline/verify                  (pre-auth, body.challengeId/code)
   POST   /offline/totp                    (pre-auth, body.externalUsername/code) -> time-based code fallback
-  POST   /passkey/authenticate/options    (pre-auth, body.email)
+  POST   /passkey/authenticate/options    (pre-auth, body.email; none = any passkey, for autofill)
   POST   /passkey/authenticate/verify     (pre-auth, body.attemptId/response)
   POST   /passkey/login/options           (pre-auth, body.requestId - approve a pending 2FA request)
   POST   /passkey/login/verify            (pre-auth, body.requestId/response)
@@ -770,7 +880,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 from .exceptions import (
     TouchQueAPIException, TouchQuePasskeyRequiredError, TouchQueRejectedException, TouchQueTimeoutException,
 )
-from .guard import guard_input_from_headers, is_status_poll, run_guard
+from .guard import SilentSignIn, guard_input_from_headers, is_status_poll, run_guard, silent_input_from_headers
 from .rate_limiter import FixedWindowLimiter
 
 # A 1.5 s poll for a 2-minute push is 80 requests: one attempt's worth of polls.
@@ -853,13 +963,24 @@ class RelayHandler:
     approval screen. Build it from server-side state - the request body is
     attacker-controlled.
 
+    ``silent_sign_in``: silent sign-ins for POST /login (default off). When
+    on, a new sign-in whose browser sent its device-bound key proof
+    (``X-TouchQue-Browser``, added by ``@touchque/web`` with
+    ``browserKey: true``) first asks TouchQue whether anything about it is
+    new. If nothing is, it succeeds at once with no push (``on_authenticated``
+    gets ``via: 'silent'``; the answer's ``assurance['method']`` is
+    ``'silent'``). Otherwise, and on any error, the usual push starts and its
+    approval makes the browser known. Set ``get_login_user`` too: the user
+    must have passed your password step. ``{'max_age_seconds': n}`` sets your
+    own limit on how long ago the last phone approval in that browser may be.
+
     ``on_authenticated(request, response, info)``: called right before the
     relay sends its own success response for POST /login (once approved),
     /offline/verify, /offline/totp, /passkey/authenticate/verify and
     /passkey/login/verify. ``info`` is ``{"externalUsername", "requestId"
-    (when known), "via": "login" | "passkey" | "offline" | "offline-totp"}``.
-    Open your session here: mutate ``request`` (session) or ``response``
-    (``set_cookie``); do not build a response yourself.
+    (when known), "via": "login" | "passkey" | "offline" | "offline-totp" |
+    "silent"}``. Open your session here: mutate ``request`` (session) or
+    ``response`` (``set_cookie``); do not build a response yourself.
 
     Callbacks receive the framework's native request object.
     """
@@ -874,6 +995,7 @@ class RelayHandler:
         action_type: str = 'LOGIN',
         get_details: Optional[Callable[[Any], Any]] = None,
         on_authenticated: Optional[Callable[[Any, Any, Dict[str, Any]], Any]] = None,
+        silent_sign_in: SilentSignIn = False,
     ):
         global _warned_pre_auth
         if get_user_id is None:
@@ -884,6 +1006,7 @@ class RelayHandler:
         self.action_type = action_type
         self.get_details = get_details
         self.on_authenticated = on_authenticated
+        self.silent_sign_in = silent_sign_in
         if rate_limit is False:
             self.limiter = None  # type: Optional[FixedWindowLimiter]
         else:
@@ -977,12 +1100,12 @@ as one Blueprint - see ``touchque.relay.RelayHandler`` for every option:
     ), url_prefix='/touchque')
 """
 import functools
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from flask import Blueprint, abort, current_app, g, json, jsonify, request
 
 from ..client import TouchQue, get_default_client
-from ..guard import guard_input_from_headers, run_guard
+from ..guard import SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
 from ..relay import RELAY_ROUTES, RelayHandler
 from ..steps import LoginDetails
 
@@ -1002,12 +1125,27 @@ def require_touchque(
     user: Optional[Callable[[], Optional[str]]] = None,
     details: Optional[Callable[[], Optional[LoginDetails]]] = None,
     reference_id: Optional[Callable[[], Optional[str]]] = None,
+    silent_sign_in: SilentSignIn = False,
+    context: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
 ) -> Callable:
     """
     ``user``: who is approving. Default: ``flask.g.user`` (string, or an
     object with ``.email``/``.id``/``.username``). For the login step, return
     the user who just passed your password check, e.g.
     ``user=lambda: session.get('password_ok')``.
+
+    ``silent_sign_in`` (default off): when on, a new attempt whose browser
+    sent its device-bound key proof (``X-TouchQue-Browser``, added by
+    ``@touchque/web`` with ``browserKey: true``) first asks TouchQue whether
+    anything about it is new. If nothing is, your view runs at once with no
+    push (``g.touchque['assurance']['method'] == 'silent'``,
+    ``g.touchque['reasons']``). Otherwise, and on any error, the usual push
+    starts and its approval makes the browser known.
+    ``{'max_age_seconds': n}`` sets your own limit on how long ago the last
+    phone approval in that browser may be.
+
+    ``context``: for your TouchQue Actions only (``event.context``), e.g.
+    ``context=lambda: {'roles': g.user.roles}``. Never shown on the phone.
     """
     user_of = user or _default_user
     tq = client
@@ -1021,8 +1159,10 @@ def require_touchque(
                 c, uid, action,
                 details=details() if details else None,
                 reference_id=reference_id() if reference_id else None,
+                context=context() if context else None,
                 ip=request.remote_addr, user_agent=request.headers.get('User-Agent'),
                 **guard_input_from_headers(lambda name: request.headers.get(name)),
+                **silent_input_from_headers(silent_sign_in, lambda name: request.headers.get(name)),
             )
             if 'approved' in result:
                 g.touchque = result['approved']
@@ -1142,7 +1282,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from ..client import TouchQue, get_default_client
-from ..guard import guard_input_from_headers, run_guard
+from ..guard import SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
 from ..relay import RELAY_ROUTES, RelayHandler
 from ..steps import LoginDetails
 
@@ -1162,11 +1302,26 @@ def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase
     user: Optional[Callable[[Request], Any]] = None,
     details: Optional[Callable[[Request], Optional[LoginDetails]]] = None,
     reference_id: Optional[Callable[[Request], Any]] = None,
+    silent_sign_in: SilentSignIn = False,
+    context: Optional[Callable[[Request], Any]] = None,
 ) -> Callable[[Request], Any]:
     """
     ``user``: async or sync callable resolving who is approving from the
     request. Default: ``request.state.user``. For the login step, return the
     user who just passed your password check.
+
+    ``silent_sign_in`` (default off): when on, a new attempt whose browser
+    sent its device-bound key proof (``X-TouchQue-Browser``, added by
+    ``@touchque/web`` with ``browserKey: true``) first asks TouchQue whether
+    anything about it is new. If nothing is, the dependency resolves at once
+    with no push (``approval['assurance']['method'] == 'silent'``,
+    ``approval['reasons']``). Otherwise, and on any error, the usual push
+    starts and its approval makes the browser known.
+    ``{'max_age_seconds': n}`` sets your own limit on how long ago the last
+    phone approval in that browser may be.
+
+    ``context``: for your TouchQue Actions only (``event.context``), e.g. the
+    user's roles. Never shown on the phone.
     """
     user_of = user or _default_user
     tq = client
@@ -1182,12 +1337,16 @@ def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase
         ref = reference_id(request) if reference_id else None
         if hasattr(ref, '__await__'):
             ref = await ref
+        ctx = context(request) if context else None
+        if hasattr(ctx, '__await__'):
+            ctx = await ctx
 
         result = await anyio.to_thread.run_sync(lambda: run_guard(
-            c, uid, action, details=det, reference_id=ref,
+            c, uid, action, details=det, reference_id=ref, context=ctx,
             ip=request.client.host if request.client else None,
             user_agent=request.headers.get('user-agent'),
             **guard_input_from_headers(lambda name: request.headers.get(name)),
+            **silent_input_from_headers(silent_sign_in, lambda name: request.headers.get(name)),
         ))
         if 'approved' in result:
             return result['approved']
@@ -1316,7 +1475,7 @@ or pass ``csrf_exempt=True`` if you protect them another way.
 """
 import functools
 import json
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
@@ -1324,7 +1483,7 @@ from django.urls import re_path
 from django.views.decorators.csrf import csrf_exempt as _csrf_exempt
 
 from ..client import TouchQue, get_default_client
-from ..guard import guard_input_from_headers, run_guard
+from ..guard import SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
 from ..relay import RelayHandler
 from ..steps import LoginDetails
 
@@ -1345,12 +1504,27 @@ def require_touchque(
     user: Optional[Callable[[HttpRequest], Optional[str]]] = None,
     details: Optional[Callable[[HttpRequest], Optional[LoginDetails]]] = None,
     reference_id: Optional[Callable[[HttpRequest], Optional[str]]] = None,
+    silent_sign_in: SilentSignIn = False,
+    context: Optional[Callable[[HttpRequest], Optional[Dict[str, Any]]]] = None,
 ) -> Callable:
     """
     ``user``: who is approving, given the request. Default:
     ``request.user.email`` (Django auth). For the login step, return the user
     who just passed your password check, e.g.
     ``user=lambda req: req.session.get('password_ok')``.
+
+    ``silent_sign_in`` (default off): when on, a new attempt whose browser
+    sent its device-bound key proof (``X-TouchQue-Browser``, added by
+    ``@touchque/web`` with ``browserKey: true``) first asks TouchQue whether
+    anything about it is new. If nothing is, your view runs at once with no
+    push (``request.touchque['assurance']['method'] == 'silent'``,
+    ``request.touchque['reasons']``). Otherwise, and on any error, the usual push
+    starts and its approval makes the browser known.
+    ``{'max_age_seconds': n}`` sets your own limit on how long ago the last
+    phone approval in that browser may be.
+
+    ``context``: for your TouchQue Actions only (``event.context``), e.g. the
+    user's roles. Never shown on the phone.
     """
     user_of = user or _default_user
     tq = client
@@ -1364,8 +1538,10 @@ def require_touchque(
                 c, uid, action,
                 details=details(request) if details else None,
                 reference_id=reference_id(request) if reference_id else None,
+                context=context(request) if context else None,
                 ip=request.META.get('REMOTE_ADDR'), user_agent=request.META.get('HTTP_USER_AGENT'),
                 **guard_input_from_headers(lambda name: request.headers.get(name)),
+                **silent_input_from_headers(silent_sign_in, lambda name: request.headers.get(name)),
             )
             if 'approved' in result:
                 request.touchque = result['approved']

@@ -128,6 +128,14 @@ type LoginRequestResponse struct {
 	ChallengeCode string `json:"challengeCode"`
 	Message       string `json:"message"`
 	ExpiresAt     string `json:"expiresAt"`
+	// CaseCode is the "Why?" case code of this decision (K7P-2QX). Show it to
+	// the user ("Tell your support team: K7P-2QX"); your team opens the whole
+	// decision (each check, the rule that matched, what would have let it
+	// through) by this code in the dashboard (Logs → Look up a case).
+	CaseCode string `json:"caseCode,omitempty"`
+	// Reasons say why number matching or a passkey is needed (a fixed list,
+	// never a score); empty for a plain push.
+	Reasons []RiskReason `json:"reasons,omitempty"`
 	// RequiresPasskey is true when a phishing-resistant policy demands a
 	// passkey approval — no push was sent for this request.
 	RequiresPasskey bool `json:"requiresPasskey,omitempty"`
@@ -136,6 +144,16 @@ type LoginRequestResponse struct {
 	// to your frontend to initialize the @touchque/web behavioral widget
 	// (tq.behavioral.attach(...)). There is no widget in this server SDK.
 	TelemetryToken string `json:"telemetryToken,omitempty"`
+	// Canary is the Mirror Alarm probe: the page that shows this sign-in loads
+	// its URL and sends a beacon to it (@touchque/web does both), so a
+	// real-time phishing proxy in front of your site gets the approval refused
+	// (webhook reason phishing_origin). Allow its host in your CSP.
+	Canary *Canary `json:"canary,omitempty"`
+}
+
+// Canary is the Mirror Alarm probe of one login request.
+type Canary struct {
+	URL string `json:"url"`
 }
 
 // GetUserResponse is the link status of a user (Auth.GetUser). used flips true
@@ -207,9 +225,26 @@ type LoginStatusResponse struct {
 	ReferenceID      string        `json:"referenceId,omitempty"`
 	Details          []LoginDetail `json:"details,omitempty"`
 	Consumed         bool          `json:"consumed,omitempty"`
-	RequiresPasskey  bool          `json:"requiresPasskey,omitempty"`
-	ConfirmedVia     string        `json:"confirmedVia,omitempty"`
-	Assurance        *Assurance    `json:"assurance,omitempty"`
+	// RequiresPasskey: only a passkey can approve it — a phishing-resistant
+	// policy, or the Vishing Shield moved it to a passkey at the phone tap
+	// because the user was on a call (it is still PENDING then).
+	RequiresPasskey bool       `json:"requiresPasskey,omitempty"`
+	ConfirmedVia    string     `json:"confirmedVia,omitempty"`
+	Assurance       *Assurance `json:"assurance,omitempty"`
+	ShieldFields
+}
+
+// ShieldFields are the Vishing Shield fields of an approval. Provisional: it
+// was given on the phone during a call; it stays CONFIRMED, but the user's
+// critical actions are refused (blocked / provisional) until the phone
+// re-confirms it after the call (ReconfirmedAt) or the user takes it back
+// (Revoked, RevokeReason "COACHED" or "UNDO"). End what was built on a
+// revoked approval.
+type ShieldFields struct {
+	Provisional   bool   `json:"provisional,omitempty"`
+	ReconfirmedAt string `json:"reconfirmedAt,omitempty"`
+	Revoked       bool   `json:"revoked,omitempty"`
+	RevokeReason  string `json:"revokeReason,omitempty"`
 }
 
 // VerifyResponse represents the response from verifying a login request.
@@ -220,6 +255,9 @@ type VerifyResponse struct {
 	ChallengeCode string     `json:"challengeCode,omitempty"`
 	Assurance     *Assurance `json:"assurance,omitempty"`
 	ConfirmedVia  string     `json:"confirmedVia,omitempty"`
+	// Provisional: approved during a call (Vishing Shield); critical actions
+	// wait until the phone re-confirms it.
+	Provisional bool `json:"provisional,omitempty"`
 }
 
 // Assurance describes how a request was approved. PhishingResistant is true
@@ -240,6 +278,7 @@ type ConsumeResponse struct {
 	ConfirmedVia     string        `json:"confirmedVia,omitempty"`
 	Assurance        *Assurance    `json:"assurance,omitempty"`
 	ApprovalProof    interface{}   `json:"approvalProof,omitempty"`
+	ShieldFields
 }
 
 // UnlinkSecretResponse represents the response from unlinking a device
@@ -273,7 +312,16 @@ type Client struct {
 	WebAuthn *WebAuthnResource
 	Webhook  *WebhookResource
 	Offline  *OfflineResource
-	Actions  *ActionsResource
+	// ActionTypes: what users approve (LOGIN, SEND_MONEY…). Was Actions before v4.
+	ActionTypes *ActionTypesResource
+	// Actions is TouchQue Actions: your own code in the approval pipeline.
+	Actions *ActionsResource
+	// Risk is silent sign-ins: should this sign-in ask the phone, and which
+	// browsers TouchQue knows.
+	Risk *RiskResource
+	// Recovery is Never Locked Out: move a user whose phone is gone to a new
+	// phone, with colleagues vouching.
+	Recovery *RecoveryResource
 
 	apiSecret string
 }
@@ -314,7 +362,10 @@ func newClient(config *Config) *Client {
 		WebAuthn:  newWebAuthnResource(httpWrapper),
 		Webhook:   newWebhookResource(config),
 		Offline:   newOfflineResource(httpWrapper),
-		Actions:   newActionsResource(httpWrapper),
+		ActionTypes: newActionTypesResource(httpWrapper),
+		Actions:     newActionsResource(httpWrapper),
+		Risk:      newRiskResource(httpWrapper),
+		Recovery:  newRecoveryResource(httpWrapper),
 		apiSecret: config.APISecret,
 	}
 }
@@ -354,20 +405,30 @@ const (
 // Step is what a headless approval currently looks like — safe to
 // json.Marshal and send to the browser. It never contains API secrets.
 type Step struct {
-	State      StepState     `json:"state"`
-	RequestID  string        `json:"requestId,omitempty"`
-	Number     string        `json:"number,omitempty"`
-	ExpiresAt  string        `json:"expiresAt,omitempty"`
-	Details    []LoginDetail `json:"details,omitempty"`
-	Enroll     *EnrollStep   `json:"enroll,omitempty"`
-	Offline    *OfflineStep  `json:"offline,omitempty"`
-	Reason     string        `json:"reason,omitempty"`
-	RetryAfter int           `json:"retryAfter,omitempty"`
-	Assurance  *Assurance    `json:"assurance,omitempty"`
+	State     StepState     `json:"state"`
+	RequestID string        `json:"requestId,omitempty"`
+	Number    string        `json:"number,omitempty"`
+	ExpiresAt string        `json:"expiresAt,omitempty"`
+	Details   []LoginDetail `json:"details,omitempty"`
+	Enroll    *EnrollStep   `json:"enroll,omitempty"`
+	Offline   *OfflineStep  `json:"offline,omitempty"`
+	Reason    string        `json:"reason,omitempty"`
+	// CaseCode is the "Why?" case code of this decision (K7P-2QX): show it
+	// with the step ("Tell your support team: K7P-2QX"). Safe for the browser.
+	CaseCode string `json:"caseCode,omitempty"`
+	// Reasons say why number matching, a passkey or a refusal (plain English,
+	// a fixed list, never a score).
+	Reasons    []RiskReason `json:"reasons,omitempty"`
+	RetryAfter int          `json:"retryAfter,omitempty"`
+	Assurance  *Assurance   `json:"assurance,omitempty"`
 	// TelemetryToken is set only when the workspace collects behavioural
 	// signals: it lets the browser post them for this one request
 	// (@touchque/web does it when given `telemetry`). Not a credential.
 	TelemetryToken string `json:"telemetryToken,omitempty"`
+	// Canary (Mirror Alarm): the page showing this step loads it and beacons to
+	// it (@touchque/web does it), so a phishing proxy in front of your site is
+	// caught. Only on the first waiting step.
+	Canary *Canary `json:"canary,omitempty"`
 }
 
 // EnrollStep is shown when the user has not linked a phone yet.
@@ -397,6 +458,15 @@ type Approval struct {
 	Assurance     *Assurance  `json:"assurance,omitempty"`
 	ConfirmedVia  string      `json:"confirmedVia,omitempty"`
 	ApprovalProof interface{} `json:"approvalProof,omitempty"`
+	// Vishing Shield: Provisional means approved during a call. Let the user
+	// in, but treat the session as limited: TouchQue refuses their critical
+	// actions until the phone re-confirms (EventApprovalReconfirmed), and
+	// EventApprovalRevoked means end it.
+	ShieldFields
+	// Reasons is set on silent sign-ins only (Assurance.Method "silent",
+	// ConfirmedVia "SILENT", RequestID "silent"): nothing was sent to the
+	// phone, and these say why TouchQue let this known browser in.
+	Reasons []RiskReason `json:"reasons,omitempty"`
 }
 
 // StartOptions configures Start.
@@ -411,6 +481,12 @@ type StartOptions struct {
 	// NoEnroll: set true to get StepEnroll{} (no QR) instead of issuing one,
 	// when the user has no linked phone.
 	NoEnroll bool
+	// BrowserProof (silent sign-ins): the browser's device-bound key proof
+	// (X-TouchQue-Browser), passed through untouched. Once the user approves,
+	// TouchQue knows this browser.
+	BrowserProof string
+	// Context is for your TouchQue Actions only (event.context). Never shown on the phone.
+	Context map[string]interface{}
 }
 
 // normalizeDetails matches the API's own normalization: nil in, nil out.
@@ -446,13 +522,20 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 	norm := normalizeDetails(opts.Details)
 	res, err := c.Login.RequestWithOptions(LoginRequestOptions{
 		ExternalUsername: user, Type: action, ReferenceID: opts.ReferenceID,
-		ClientIP: opts.IP, UserAgent: opts.UserAgent, Details: norm,
+		ClientIP: opts.IP, UserAgent: opts.UserAgent, Details: norm, BrowserProof: opts.BrowserProof,
+		Context: opts.Context,
 	})
 	if err == nil {
-		if res.RequiresPasskey {
-			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm}, nil
+		var canary *Canary
+		if res.Canary != nil && res.Canary.URL != "" {
+			canary = &Canary{URL: res.Canary.URL}
 		}
-		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken}, nil
+		if res.RequiresPasskey {
+			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm, Canary: canary,
+				CaseCode: res.CaseCode, Reasons: res.Reasons}, nil
+		}
+		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken, Canary: canary,
+			CaseCode: res.CaseCode, Reasons: res.Reasons}, nil
 	}
 
 	apiErr, ok := err.(*APIError)
@@ -466,11 +549,11 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		}
 		return enrollStep(c, user)
 	case apiErr.StatusCode == 423:
-		return &Step{State: StepFrozen, RetryAfter: apiErr.RetryAfter}, nil
+		return &Step{State: StepFrozen, RetryAfter: apiErr.RetryAfter, CaseCode: apiErr.CaseCode}, nil
 	case apiErr.StatusCode == 429:
-		return &Step{State: StepRateLimited, RetryAfter: apiErr.RetryAfter}, nil
+		return &Step{State: StepRateLimited, RetryAfter: apiErr.RetryAfter, CaseCode: apiErr.CaseCode}, nil
 	case apiErr.StatusCode == 400 && (apiErr.Code == "unknown_action" || strings.Contains(strings.ToLower(apiErr.Message), "invalid action type")):
-		return nil, &ConfigError{Message: "touchque: unknown action \"" + action + "\". Create it once with client.Actions.Define(\"" + action + "\", ...) or in the Dashboard (Action Types)."}
+		return nil, &ConfigError{Message: "touchque: unknown action \"" + action + "\". Create it once with client.ActionTypes.Define(\"" + action + "\", ...) or in the Dashboard (Action Types)."}
 	case apiErr.StatusCode == 403:
 		reason := apiErr.Reason
 		if reason == "" && (apiErr.Code == "passkey_not_registered" || dataError(apiErr) == "phishing_resistant_required") {
@@ -485,7 +568,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		if reason == "" {
 			reason = "blocked"
 		}
-		return &Step{State: StepBlocked, Reason: reason}, nil
+		return &Step{State: StepBlocked, Reason: reason, CaseCode: apiErr.CaseCode}, nil
 	}
 	return nil, err
 }
@@ -569,6 +652,7 @@ func (c *Client) Complete(requestID, user, action string, expect CompleteExpect)
 	return &Approval{
 		RequestID: requestID, User: res.ExternalUsername, Action: res.Type,
 		Assurance: res.Assurance, ConfirmedVia: res.ConfirmedVia, ApprovalProof: res.ApprovalProof,
+		ShieldFields: res.ShieldFields,
 	}, nil
 }
 
@@ -586,6 +670,7 @@ type guardClaims struct {
 	Rid string `json:"rid,omitempty"`
 	N   string `json:"n,omitempty"`
 	Oc  string `json:"oc,omitempty"`
+	Cc  string `json:"cc,omitempty"` // "Why?" case code, shown while waiting
 	Exp int64  `json:"exp"`
 }
 
@@ -843,6 +928,7 @@ func (o *OfflineResource) notApprovedAsResult(call func() (map[string]interface{
 package touchque
 
 import (
+	"log"
 	"net/url"
 	"strconv"
 	"time"
@@ -880,6 +966,44 @@ type LoginRequestOptions struct {
 	// (never truncates) anything outside those limits. Build it from
 	// server-side state, never from browser input.
 	Details []LoginDetail
+	// BrowserProof (silent sign-ins): the browser's device-bound key proof,
+	// exactly as the browser sent it (the X-TouchQue-Browser header, made by
+	// @touchque/web). When the user approves this request on the phone (or
+	// with a passkey), TouchQue remembers the browser, so a later Risk.Check
+	// can let the same browser in without asking. Pass it through untouched;
+	// an invalid proof only means "a browser TouchQue does not know".
+	BrowserProof string
+	// Context is for your TouchQue Actions only (event.context): roles, plan,
+	// amount… Any JSON object up to 4 KB. Never shown on the phone.
+	Context map[string]interface{}
+	// OnChallenge (VerifyWithOptions only) is called once, right after the
+	// request is created and before any waiting: show ChallengeCode to the
+	// user now; with number matching the phone asks for it. Not called when
+	// only a passkey can approve. A panic in it is recovered and logged:
+	// VerifyWithOptions keeps waiting.
+	OnChallenge func(VerifyChallenge)
+}
+
+// VerifyChallenge is what OnChallenge receives as soon as the request exists.
+type VerifyChallenge struct {
+	RequestID string
+	// ChallengeCode is the number to show when number matching is on ("" otherwise).
+	ChallengeCode string
+	ExpiresAt     string
+	// Reasons say why number matching is needed (empty for a plain push).
+	Reasons []RiskReason
+	// CaseCode is the "Why?" case code of this decision.
+	CaseCode string
+}
+
+// callOnChallenge runs the caller's callback; its panic is logged and never stops the wait.
+func callOnChallenge(fn func(VerifyChallenge), c VerifyChallenge) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[TouchQue] OnChallenge failed: %v", r)
+		}
+	}()
+	fn(c)
 }
 
 // Request sends a 2FA login/approval request to the user's mobile device.
@@ -924,6 +1048,12 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if len(opts.Details) > 0 {
 		payload["details"] = opts.Details
 	}
+	if opts.BrowserProof != "" {
+		payload["browserProof"] = opts.BrowserProof
+	}
+	if len(opts.Context) > 0 {
+		payload["context"] = opts.Context
+	}
 	res, err := l.http.post("/login/request", payload)
 	if err != nil {
 		return nil, err
@@ -948,8 +1078,38 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if rp, ok := res["requiresPasskey"].(bool); ok {
 		resp.RequiresPasskey = rp
 	}
+	if canary, ok := res["canary"].(map[string]interface{}); ok {
+		if u, ok := canary["url"].(string); ok && u != "" {
+			resp.Canary = &Canary{URL: u}
+		}
+	}
+	// "Why?": the decision's case code and, for a step-up, its plain reasons.
+	if cc, ok := res["caseCode"].(string); ok {
+		resp.CaseCode = cc
+	}
+	if list, ok := res["reasons"].([]interface{}); ok {
+		for _, item := range list {
+			if m, ok := item.(map[string]interface{}); ok {
+				if code, ok := m["code"].(string); ok {
+					text, _ := m["text"].(string)
+					resp.Reasons = append(resp.Reasons, RiskReason{Code: code, Text: text})
+				}
+			}
+		}
+	}
 
 	return resp, nil
+}
+
+// parseShieldFields reads the Vishing Shield fields of a status or consume
+// answer (absent from servers before it: all zero).
+func parseShieldFields(res map[string]interface{}) ShieldFields {
+	var f ShieldFields
+	f.Provisional, _ = res["provisional"].(bool)
+	f.ReconfirmedAt, _ = res["reconfirmedAt"].(string)
+	f.Revoked, _ = res["revoked"].(bool)
+	f.RevokeReason, _ = res["revokeReason"].(string)
+	return f
 }
 
 func parseAssurance(res map[string]interface{}) *Assurance {
@@ -1021,6 +1181,7 @@ func (l *LoginResource) Status(requestID string) (*LoginStatusResponse, error) {
 		resp.ConfirmedVia = v
 	}
 	resp.Assurance = parseAssurance(res)
+	resp.ShieldFields = parseShieldFields(res)
 
 	return resp, nil
 }
@@ -1055,6 +1216,7 @@ func (l *LoginResource) Consume(requestID string) (*ConsumeResponse, error) {
 	}
 	resp.Assurance = parseAssurance(res)
 	resp.ApprovalProof = res["approvalProof"]
+	resp.ShieldFields = parseShieldFields(res)
 	return resp, nil
 }
 
@@ -1071,7 +1233,17 @@ func (l *LoginResource) Verify(externalUsername string, loginType string, refere
 	}, timeoutMs)
 }
 
-// VerifyWithOptions is Verify with every request option, including Details.
+// VerifyWithOptions is Verify with every request option, including Details
+// and OnChallenge. With number matching (your RequireNumberMatch, a workspace
+// policy or the risk engine can turn it on) the user must pick a number on
+// the phone: show it from OnChallenge, which runs before the wait.
+//
+//	client.Login.VerifyWithOptions(touchque.LoginRequestOptions{
+//		ExternalUsername: user, Type: "SEND_MONEY",
+//		OnChallenge: func(c touchque.VerifyChallenge) {
+//			if c.ChallengeCode != "" { show("Pick " + c.ChallengeCode + " on your phone") }
+//		},
+//	}, 30000)
 func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs int) (*VerifyResponse, error) {
 	reqResult, err := l.RequestWithOptions(opts)
 	if err != nil {
@@ -1084,6 +1256,13 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 	}
 	if reqResult.RequiresPasskey {
 		return nil, &PasskeyRequiredError{RequestID: reqID}
+	}
+	// The number to show, before waiting: the phone asks the user for it.
+	if opts.OnChallenge != nil {
+		callOnChallenge(opts.OnChallenge, VerifyChallenge{
+			RequestID: reqID, ChallengeCode: reqResult.ChallengeCode, ExpiresAt: reqResult.ExpiresAt,
+			Reasons: reqResult.Reasons, CaseCode: reqResult.CaseCode,
+		})
 	}
 
 	startTime := time.Now()
@@ -1104,7 +1283,14 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 				ChallengeCode: reqResult.ChallengeCode,
 				Assurance:     statusResult.Assurance,
 				ConfirmedVia:  statusResult.ConfirmedVia,
+				Provisional:   statusResult.Provisional,
 			}, nil
+		case "PENDING":
+			// Vishing Shield: tapped during a call, the request now waits for a
+			// passkey in the browser; polling would only run into the timeout.
+			if statusResult.RequiresPasskey {
+				return nil, &PasskeyRequiredError{RequestID: reqID, Reason: "step_up"}
+			}
 		case "REJECTED":
 			return nil, &RejectedError{Message: "Request " + reqID + " was rejected by the user."}
 		case "EXPIRED":
@@ -1233,6 +1419,20 @@ type RequireOptions struct {
 	// this explicitly behind a reverse proxy, from your trusted
 	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
 	IP func(*http.Request) string
+	// SilentSignIn (default off): a new attempt whose browser sent its
+	// device-bound key proof (X-TouchQue-Browser, added by @touchque/web with
+	// browserKey: true) first asks TouchQue whether anything about it is new.
+	// If nothing is, next runs at once with no push (the approval's
+	// Assurance.Method is "silent", with Reasons). Otherwise, and on any
+	// error, the usual push starts and its approval makes the browser known.
+	SilentSignIn bool
+	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
+	// phone approval in that browser may be (0 = always ask). nil leaves it
+	// to TouchQue, which never goes beyond its own limit (7 days).
+	SilentSignInMaxAgeSeconds *int
+	// Context is for your TouchQue Actions only (event.context): roles,
+	// plan, amount… Never shown on the phone.
+	Context func(*http.Request) map[string]interface{}
 }
 
 type approvalContextKey struct{}
@@ -1308,11 +1508,15 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 		}
 		token, offline, code, codeType := guardInputFromRequest(r)
 
-		result := runGuard(client, GuardInput{
+		in := withSilentSignIn(GuardInput{
 			User: userOf(r), Action: action, Details: details, ReferenceID: referenceID,
 			IP: ipOf(r), UserAgent: r.UserAgent(),
 			Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
-		})
+		}, r.Header.Get, opts.SilentSignIn, opts.SilentSignInMaxAgeSeconds)
+		if opts.Context != nil {
+			in.Context = opts.Context(r)
+		}
+		result := runGuardContext(r.Context(), client, in)
 
 		if result.Approved != nil {
 			ctx := context.WithValue(r.Context(), approvalContextKey{}, result.Approved)
@@ -1499,11 +1703,12 @@ import (
 //
 //	POST   /enroll/start                  (auth required) -> GenerateSecretResponse
 //	GET    /enroll/status                 (auth required) -> {"linked", "used", "deviceId"}
-//	POST   /login                         (pre-auth) -> 202 {"touchque": step, "token"} until approved (same contract as Require)
+//	POST   /login                         (pre-auth) -> 202 {"touchque": step, "token"} until approved (same contract as Require;
+//	                                      with SilentSignIn, a known browser is approved at once)
 //	POST   /offline/challenge             (pre-auth, body.externalUsername) -> QR for a phone with no internet
 //	POST   /offline/verify                (pre-auth, body.challengeId/code)
 //	POST   /offline/totp                  (pre-auth, body.externalUsername/code) -> time-based code fallback
-//	POST   /passkey/authenticate/options  (pre-auth, body.email)
+//	POST   /passkey/authenticate/options  (pre-auth, body.email; none = any passkey, for autofill)
 //	POST   /passkey/authenticate/verify   (pre-auth, body.attemptId/response)
 //	POST   /passkey/login/options         (pre-auth, body.requestId — approve a pending 2FA request)
 //	POST   /passkey/login/verify          (pre-auth, body.requestId/response)
@@ -1641,6 +1846,20 @@ type RelayOptions struct {
 	// explicitly behind a reverse proxy, from your trusted X-Forwarded-For
 	// hop).
 	IP func(*http.Request) string
+
+	// SilentSignIn for POST /login (default off): a new sign-in whose browser
+	// sent its device-bound key proof (X-TouchQue-Browser, added by
+	// @touchque/web with browserKey: true) first asks TouchQue whether
+	// anything about it is new. If nothing is, it succeeds at once with no
+	// push (OnAuthenticated gets Via ViaSilent; the answer's assurance.method
+	// is "silent"). Otherwise, and on any error, the usual push starts and its
+	// approval makes the browser known. Set LoginUser too: the user must have
+	// passed your password step.
+	SilentSignIn bool
+	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
+	// phone approval in that browser may be (0 = always ask). nil leaves it
+	// to TouchQue, which never goes beyond its own limit (7 days).
+	SilentSignInMaxAgeSeconds *int
 }
 
 // AuthenticatedVia says which relay route authenticated the user.
@@ -1651,6 +1870,9 @@ const (
 	ViaPasskey     AuthenticatedVia = "passkey"
 	ViaOffline     AuthenticatedVia = "offline"
 	ViaOfflineTotp AuthenticatedVia = "offline-totp"
+	// ViaSilent: a silent sign-in (RelayOptions.SilentSignIn) — a known
+	// browser, nothing sent to the phone; RequestID is "silent".
+	ViaSilent AuthenticatedVia = "silent"
 )
 
 // AuthenticatedInfo is passed to RelayOptions.OnAuthenticated.

@@ -70,7 +70,7 @@ const LANGUAGES = {
     frameworks: ["laravel", "other"],
   },
   go: {
-    label: "Go", package: "github.com/Touchque/touchque-go/v3", typesFile: "types.go", typesMime: "text/x-go",
+    label: "Go", package: "github.com/Touchque/touchque-go/v4", typesFile: "types.go", typesMime: "text/x-go",
     frameworks: ["net-http", "other"],
   },
 };
@@ -106,6 +106,7 @@ const VALIDATION_PATTERNS = {
     stepUpGuard: /requireTouchQue\s*\(|withTouchQue\s*\(|touchqueRouter\s*\(/,
     legacyGuard: /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/,
     syncVerify: /\.login\.verify\s*\(/,
+    oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.actionTypes.define(...)" },
     hardcodedSecret: /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
     envVar: /process\.env\.|env\[/,
     errorHandling: /catch|try\s*{|\.catch\s*\(/,
@@ -127,6 +128,7 @@ const VALIDATION_PATTERNS = {
     stepUpGuard: /@require_touchque\s*\(|RequireTouchQue\s*\(|touchque_relay_(?:blueprint|router|view|urls)\s*\(|\bRelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /\.login\.verify\s*\(/,
+    oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
     hardcodedSecret: /api_secret\s*=\s*['"][a-zA-Z0-9]{10,}['"]|api_key\s*=\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
     envVar: /os\.environ|os\.getenv\s*\(/,
     errorHandling: /try\s*:|except\b/,
@@ -151,6 +153,7 @@ const VALIDATION_PATTERNS = {
     stepUpGuard: /->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware|TouchQueRelay::routes\s*\(|new\s+\\?(?:TouchQue\\Laravel\\)?TouchQueRelay\s*\(|new\s+\\?(?:TouchQue\\Relay\\)?RelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /->login->verify\s*\(/,
+    oldActionTypes: { re: /->actions\s*->\s*define\s*\(/, now: "$tq->actionTypes->define(...)" },
     hardcodedSecret: /new\s+Config\s*\(\s*['"]tq_[a-zA-Z0-9]{6,}['"]\s*,\s*['"][a-zA-Z0-9]{10,}['"]/,
     envVar: /getenv\s*\(|\$_ENV\[/,
     errorHandling: /try\s*{|catch\s*\(/,
@@ -170,6 +173,7 @@ const VALIDATION_PATTERNS = {
     stepUpGuard: /touchque\.Require\s*\(|touchque\.NewRelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /\.Login\.Verify\s*\(/,
+    oldActionTypes: { re: /\.Actions\s*\.\s*Define\s*\(/, now: "client.ActionTypes.Define(...)" },
     hardcodedSecret: /APIKey:\s*"tq_[a-zA-Z0-9]{6,}"|APISecret:\s*"[a-zA-Z0-9]{10,}"/,
     envVar: /os\.Getenv\s*\(/,
     errorHandling: /if\s+err\s*!=\s*nil/,
@@ -317,7 +321,9 @@ this automatically — only hand-written offline routes need to pass it.
 
 BEFORE YOU WRITE CODE: every action type (e.g. "SEND_MONEY") MUST already
 exist — either created in the Dashboard, or defined from code with
-tq.actions.define('SEND_MONEY', { critical: true }). Skip this and the
+tq.actionTypes.define('SEND_MONEY', { critical: true }) (SDK 4.0; Python
+tq.action_types, PHP $tq->actionTypes, Go client.ActionTypes — before 4.0 this
+was tq.actions.define, and tq.actions is now TouchQue Actions). Skip this and the
 first real request 400s with "unknown_action" — this is the most common
 first-run failure and it looks like a bug in the integration, not a
 missing setup step. Always ask whether the action should be "critical"
@@ -364,6 +370,36 @@ NEW IN SDK 3.3.0 (Node, Python, PHP, Go, @touchque/web 1.2.0):
   - Relay status polls no longer count against the push rate limit.
   - telemetryToken (only when the workspace collects behavioural signals):
     pass it to @touchque/web's telemetry option.
+
+NEW IN SDK 4.0.0 (Node, Python, PHP, Go; @touchque/web 1.5.0, @touchque/react
+1.1.0 — 3.4 to 3.7 ship inside it):
+  - BREAKING: action types moved to tq.actionTypes (see above). tq.actions is
+    now TouchQue Actions: the workspace's own sandboxed code at points of the
+    approval pipeline (deploy, test, dryRun, logs, metrics, rollback; a version
+    that loosens security waits for an admin's phone approval). The Go module
+    path is github.com/Touchque/touchque-go/v4.
+  - context (roles, amount, plan…) on login.request, risk.check, start and
+    every guard: for the workspace's Actions only, never shown on the phone.
+  - Number matching with the BLOCKING login.verify(): pass onChallenge
+    (Python on_challenge, PHP $onChallenge — the 11th argument, Go
+    LoginRequestOptions.OnChallenge with Login.VerifyWithOptions) and show
+    challengeCode to the user before the wait; the phone asks for it. Only for
+    jobs, CLIs, bots and sockets — in a web route use the step-up guard or the
+    relay, whose first answer already carries the number.
+  - "Why?" case codes: every decision names a short caseCode (K7P-2QX) and
+    plain reasons (never a score). Show the code with refusals so support can
+    look the decision up in the dashboard.
+  - Silent sign-ins: risk.check plus @touchque/web's browserKey let a known
+    browser skip the push when nothing is new.
+  - Never Locked Out: tq.recovery (setVouchers, start, status) moves a user to
+    a new phone after colleagues vouch, with a cooling-off period.
+  - Vishing Shield: an approval given during a phone call is provisional (or
+    revoked if the user says they were coached); critical actions wait for the
+    phone to re-confirm. The guards handle it; hand-written code checks
+    provisional / revoked on the approval.
+  - Browser (@touchque/web / @touchque/react, not bundled here): a drop-in
+    <touchque-approval> element and <TouchQueApproval> dialog (number, passkey,
+    offline QR, errors with the case code) and passkeys.autofill().
 
 If your client supports MCP prompts, four ready-made instruction sets are
 also available: integrate_touchque (step-by-step wizard, push/passkey),
@@ -538,7 +574,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const hasSynchronousVerify = patterns.syncVerify.test(code);
       checks.push({
         id: "no_synchronous_verify",
-        label: "Not using the old synchronous login.verify() inside a route handler (it can't show a matching number/QR before approval — use the step-up guard instead)",
+        label: "Not using the old synchronous login.verify() inside a route handler (the browser can't see the matching number/QR until it returns — use the step-up guard; for jobs, CLIs or sockets pass onChallenge to show the number before the wait)",
         pass: !hasSynchronousVerify,
       });
 
@@ -607,6 +643,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // id: nextjs_no_client_ip
         advisories.push(
           "ℹ️ withTouchQue sends no end-user address unless you say where it comes from (SDK 3.3.0), so the risk checks that need one (Tor, location, impossible travel) are skipped. Pass ip: ipFromVercel on Vercel, ip: ipFromCloudflare when only Cloudflare reaches your origin, trustedProxyHops: 1 behind one proxy of yours, or your own function."
+        );
+      }
+      if (patterns.oldActionTypes.re.test(code)) {
+        // id: action_types_renamed
+        advisories.push(
+          `⚠️ SDK 4.0 moved action types: define them with ${patterns.oldActionTypes.now}. The old call on the actions resource fails on 4.x, because that resource is now TouchQue Actions (the workspace's own code in the approval pipeline). On 3.x it still works — upgrade and rename together.`
+        );
+      }
+      const goModule = language === "go" && code.match(/["']github\.com\/Touchque\/touchque-go(\/v\d+)?\/touchque["']/);
+      if (goModule && goModule[1] !== "/v4") {
+        // id: go_module_not_v4
+        advisories.push(
+          `ℹ️ This imports ${goModule[0]}; the current SDK is github.com/Touchque/touchque-go/v4/touchque (go get github.com/Touchque/touchque-go/v4). 4.0 moved action types to client.ActionTypes and added case codes, OnChallenge and TouchQue Actions.`
         );
       }
       const advisoryText = advisories.length ? `\n\n${advisories.join("\n")}` : "";
@@ -744,7 +793,7 @@ STEP 4 — ACTION TYPE & POLICY CHECK (skip this and the integration WILL fail o
     before you use it — either created in the Dashboard, or defined from
     code at startup:
     \`\`\`javascript
-    await tq.actions.define('SEND_MONEY', { name: 'Send money', critical: true });
+    await tq.actionTypes.define('SEND_MONEY', { name: 'Send money', critical: true }); // SDK 4.0 (was tq.actions.define)
     \`\`\`
   → Ask the user which they'd rather do. If they're not sure it exists yet,
     tell them plainly: an undefined action type returns "400 unknown_action"
@@ -1037,7 +1086,7 @@ You will review:
   5. Approval consumption (is req.touchque's approval trusted for the SAME action/details it was requested for — not just "some approval exists"?)
   6. Fallback behavior (what happens when TouchQue API is unreachable?)
   7. Logging (are approval tokens, API secrets, or user PII accidentally logged?)
-  8. Dependency hygiene (SDK version — @touchque/node, touchque-authenticator, touchque-authenticator/php-sdk or touchque-go; 3.2.0+ ships the relay routers, device-proof verification and fraud reports in every language, and Go below 3.1.1 falls back to a client-sent user header when RequireOptions.User is nil; known CVEs)
+  8. Dependency hygiene (SDK version — @touchque/node, touchque-authenticator, touchque-authenticator/php-sdk or touchque-go; 4.0.0 is current (action types under actionTypes, Go module /v4, case codes, onChallenge for the blocking verify); 3.2.0+ ships the relay routers, device-proof verification and fraud reports in every language, and Go below 3.1.1 falls back to a client-sent user header when RequireOptions.User is nil; known CVEs)
   9. Offline fallback (if the app offers an offline QR/code: is it LINKED to the push via requestId so a phone-side REJECT kills it, does the page stop showing the QR and reset on request_rejected, and is challengeCode printed under the QR when number matching applies? An offline path that can finish a REJECTED sign-in is a HIGH finding.)
   10. Device proof (for money movement / high-value actions: is approvalProof verified with verifyApprovalProof / verify_approval_proof / ApprovalProof::verify / touchque.VerifyApprovalProof against the SAME requestId, type, details and challengeCode? Is the device key PINNED (expectedPublicKey / expected_public_key / ExpectedPublicKey)? allowUnpinnedKey / allow_unpinned_key=True / 'allowUnpinnedKey' => true / AllowUnpinnedKey: true outside a one-time trust-on-first-use step that then stores and pins the key is a MEDIUM finding; not verifying at all on a high-value action is LOW/INFO.)
   11. Fraud feedback (when a chargeback, dispute or account-takeover is confirmed, does the app call tq.login.reportFraud(requestId, { reason }) / report_fraud / ->reportFraud / Login.ReportFraud with reason chargeback | account_takeover | social_engineering | other? It is the strongest signal the risk engine learns from; missing it is an INFO finding with a concrete hook point, e.g. the chargeback webhook or support tooling.)
@@ -1118,7 +1167,9 @@ When a user reports a problem, work through this tree in order:
 3. "unknown_action" (400 from TouchQue) — NOT an SDK bug
    → This means the action type (e.g. "SEND_MONEY") was never defined.
    → Fix: either create it in the Dashboard, or call
-     tq.actions.define('SEND_MONEY', { critical: true }) once at startup.
+     tq.actionTypes.define('SEND_MONEY', { critical: true }) once at startup
+     (SDK 4.0; before 4.0 it was tq.actions.define — on 4.x that call fails,
+     because tq.actions is now TouchQue Actions).
    → This is the single most common first-run failure — check this BEFORE
      digging into SDK internals or network issues.
 

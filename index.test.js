@@ -162,7 +162,7 @@ test("integrate_touchque prompt requires defining the action type first (unknown
   await withClient(async (client) => {
     const result = await client.getPrompt({ name: "integrate_touchque" });
     const text = result.messages[0].content.text;
-    assert.match(text, /tq\.actions\.define\(/);
+    assert.match(text, /tq\.actionTypes\.define\(/);
     assert.match(text, /unknown_action/);
   });
 });
@@ -389,20 +389,25 @@ test("validate_integration warns (unscored) when an offline QR is issued without
   });
 });
 
-test("validate_integration recognizes the versioned Go module path (…/touchque-go/v3/touchque)", async () => {
+test("validate_integration recognizes the versioned Go module path (…/touchque-go/v4/touchque)", async () => {
   await withClient(async (client) => {
-    const code = `package main
+    const code = (major) => `package main
 import (
   "os"
-  "github.com/Touchque/touchque-go/v3/touchque"
+  "github.com/Touchque/touchque-go/${major}/touchque"
 )
 func main() {
   _ = os.Getenv("TQ_API_KEY")
   h := touchque.Require(tq, "SEND_MONEY", handler, opts)
   if err := serve(h); err != nil { panic(err) }
 }`;
-    const text = (await client.callTool({ name: "validate_integration", arguments: { code, framework: "net-http", language: "go" } })).content[0].text;
-    assert.match(text, /✅ github\.com\/Touchque\/touchque-go\/v3 SDK is imported/);
+    const v4 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v4"), framework: "net-http", language: "go" } })).content[0].text;
+    assert.match(v4, /✅ github\.com\/Touchque\/touchque-go\/v4 SDK is imported/);
+    assert.doesNotMatch(v4, /the current SDK is github\.com\/Touchque\/touchque-go\/v4/);
+    // An older major still counts as the SDK, with an unscored hint to move to /v4.
+    const v3 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v3"), framework: "net-http", language: "go" } })).content[0].text;
+    assert.match(v3, /✅ github\.com\/Touchque\/touchque-go\/v4 SDK is imported/);
+    assert.match(v3, /the current SDK is github\.com\/Touchque\/touchque-go\/v4\/touchque/);
   });
 });
 
@@ -470,7 +475,7 @@ test("validate_integration accepts the relay router as the guard in Python, PHP 
         code: `package main
           import (
             "os"
-            "github.com/Touchque/touchque-go/v3/touchque"
+            "github.com/Touchque/touchque-go/v4/touchque"
           )
           func main() {
             _ = os.Getenv("TQ_API_KEY")
@@ -534,7 +539,7 @@ test("validate_integration fails the Go check when RequireOptions has no User or
     const wrap = (body) => `package main
 import (
   "os"
-  "github.com/Touchque/touchque-go/v3/touchque"
+  "github.com/Touchque/touchque-go/v4/touchque"
 )
 func main() {
   _ = os.Getenv("TQ_API_KEY")
@@ -566,7 +571,7 @@ test("validate_integration does not flag Go options that set User / UserID (no f
     const code = `package main
 import (
   "os"
-  "github.com/Touchque/touchque-go/v3/touchque"
+  "github.com/Touchque/touchque-go/v4/touchque"
 )
 func main() {
   _ = os.Getenv("TQ_API_KEY")
@@ -707,5 +712,40 @@ test("validate_integration hints (unscored) when Next.js withTouchQue sends no e
     assert.doesNotMatch(withIp, /sends no end-user address/);
     const hops = (await client.callTool({ name: "validate_integration", arguments: { code: route(", trustedProxyHops: 1"), framework: "nextjs" } })).content[0].text;
     assert.doesNotMatch(hops, /sends no end-user address/);
+  });
+});
+
+// ── SDK 4.0.0: action types renamed, TouchQue Actions, onChallenge, Go /v4 ─────────────────────────
+
+test("touchque_help and the prompts teach SDK 4.0.0", async () => {
+  await withClient(async (client) => {
+    const text = (await client.callTool({ name: "touchque_help", arguments: {} })).content[0].text;
+    assert.match(text, /NEW IN SDK 4\.0\.0/);
+    assert.match(text, /tq\.actionTypes\.define\('SEND_MONEY'/);
+    assert.match(text, /onChallenge/);
+    assert.match(text, /github\.com\/Touchque\/touchque-go\/v4/);
+    assert.match(text, /caseCode/);
+    const prompt = await client.getPrompt({ name: "integrate_touchque" });
+    const body = prompt.messages.map((m) => m.content.text).join("\n");
+    assert.match(body, /tq\.actionTypes\.define\('SEND_MONEY'/);
+    assert.doesNotMatch(body, /await tq\.actions\.define\(/);
+  });
+});
+
+test("validate_integration warns (unscored) about the pre-4.0 action types call in every language", async () => {
+  await withClient(async (client) => {
+    const snippets = {
+      node: ["await tq.actions.define('SEND_MONEY', { critical: true });", "await tq.actionTypes.define('SEND_MONEY', { critical: true });", /tq\.actionTypes\.define/],
+      python: ["tq.actions.define('SEND_MONEY', critical=True)", "tq.action_types.define('SEND_MONEY', critical=True)", /tq\.action_types\.define/],
+      php: ["$tq->actions->define('SEND_MONEY', ['critical' => true]);", "$tq->actionTypes->define('SEND_MONEY', ['critical' => true]);", /\$tq->actionTypes->define/],
+      go: ['client.Actions.Define("SEND_MONEY", touchque.ActionTypeOptions{Critical: true})', 'client.ActionTypes.Define("SEND_MONEY", touchque.ActionTypeOptions{Critical: true})', /client\.ActionTypes\.Define/],
+    };
+    for (const [language, [old, current, fix]] of Object.entries(snippets)) {
+      const flagged = (await client.callTool({ name: "validate_integration", arguments: { code: old, language } })).content[0].text;
+      assert.match(flagged, /SDK 4\.0 moved action types/, language);
+      assert.match(flagged, fix, language);
+      const ok = (await client.callTool({ name: "validate_integration", arguments: { code: current, language } })).content[0].text;
+      assert.doesNotMatch(ok, /SDK 4\.0 moved action types/, language);
+    }
   });
 });

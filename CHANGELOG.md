@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.4.0
+
+Updated for the TouchQue 4.0.0 server SDKs, `@touchque/web` 1.5.0 and
+`@touchque/react` 1.1.0 (3.4 to 3.7 ship inside 4.0.0).
+
+- Bundled docs and types regenerated from the 4.0.0 SDKs: TouchQue Actions,
+  action types under `actionTypes`, `context`, `onChallenge` on the blocking
+  `verify()`, "Why?" case codes, silent sign-ins, Never Locked Out recovery
+  and the Vishing Shield.
+- The Go package is `github.com/Touchque/touchque-go/v4`.
+- `touchque_help`, the server instructions and the prompts define action
+  types with `tq.actionTypes.define` and list what is new in 4.0.0.
+- `validate_integration`:
+  - The blocking-`verify()` check says how to show the number first
+    (`onChallenge`) for jobs, CLIs and sockets.
+  - New unscored advisories: `action_types_renamed` (a pre-4.0
+    `actions.define` call in any language, which fails on 4.x) and
+    `go_module_not_v4` (a Go import of an older major).
+
 ## 2.3.0
 
 Updated for the TouchQue 3.3.0 server SDKs and `@touchque/web` 1.2.0.

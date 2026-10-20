@@ -43,7 +43,7 @@ and pass it, rather than assuming Node.
 | Node | `@touchque/node` | `requireTouchQue('ACTION', opts)` | `touchqueRouter(tq, { getUserId, getLoginUser })` |
 | Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` | `touchque_relay_blueprint` (Flask), `touchque_relay_router` (FastAPI), `touchque_relay_view` / `touchque_relay_urls` (Django), `RelayHandler` |
 | PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` | `TouchQueRelay::routes($router, 'touchque')` (Laravel), `TouchQue\Relay\RelayHandler` |
-| Go | `github.com/Touchque/touchque-go` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
+| Go | `github.com/Touchque/touchque-go/v4` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
 
 The docs, types, prompts and validator cover the SDK 3.2.0 API: the relay
 routers above, device-proof verification (`verifyApprovalProof` /
@@ -53,7 +53,12 @@ routers above, device-proof verification (`verifyApprovalProof` /
 `RequireOptions.User` (3.1.1), plus the 3.3.0 changes: only a trusted
 end-user address goes to the risk engine (Next.js `ip` / `trustedProxyHops`,
 Go `RequireOptions.IP`), the `PASSKEY_ENROLL` approval before adding a
-passkey, and relay polls outside the push rate limit.
+passkey, and relay polls outside the push rate limit. They are current for
+SDK 4.0.0: action types under `tq.actionTypes` (Python `action_types`, PHP
+`actionTypes`, Go `ActionTypes`) now that `tq.actions` is TouchQue Actions,
+the Go module path `/v4`, `context` for Actions, `onChallenge` for the
+blocking `verify()`, "Why?" case codes, silent sign-ins, Never Locked Out
+recovery and the Vishing Shield.
 
 ## What it gives an assistant
 
@@ -102,7 +107,9 @@ others:
   `client_ip_from_leftmost_xff` (the end user's address read from the
   client-controlled leftmost `X-Forwarded-For` hop) and
   `nextjs_no_client_ip` (a Next.js `withTouchQue` with neither `ip` nor
-  `trustedProxyHops`, so the address-based risk checks are skipped).
+  `trustedProxyHops`, so the address-based risk checks are skipped),
+  `action_types_renamed` (a pre-4.0 `actions.define` call, which fails on
+  4.x) and `go_module_not_v4` (a Go import of an older major).
 
 **Resources** (for clients that browse resources, e.g. as an alternative to
 tools):

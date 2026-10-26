@@ -1,18 +1,21 @@
 {
   "name": "@touchque/mcp-server",
-  "version": "2.4.0",
-  "description": "MCP server for TouchQue — gives AI coding assistants (Claude, Cursor, …) accurate, up-to-date TouchQue SDK docs, types and an integration validator so they don't guess at the API.",
+  "version": "3.0.0",
+  "description": "MCP server for TouchQue — gives AI coding assistants accurate, up-to-date TouchQue SDK docs, types and an integration validator, and lets an AI agent with its own TouchQue identity ask a person to approve an action on their phone.",
   "main": "index.js",
   "bin": {
     "touchque-mcp-server": "index.js"
   },
   "files": [
     "index.js",
-    "bundled"
+    "agent.js",
+    "bundled",
+    "manifest.json"
   ],
   "scripts": {
     "start": "node index.js",
-    "test": "node --test index.test.js"
+    "test": "node --test index.test.js",
+    "pack:mcpb": "node scripts/pack-mcpb.js"
   },
   "keywords": [
     "mcp",
@@ -20,7 +23,9 @@
     "touchque",
     "2fa",
     "claude",
-    "ai-agent"
+    "ai-agent",
+    "human-in-the-loop",
+    "approval"
   ],
   "author": "TouchQue",
   "license": "MIT",
@@ -37,5 +42,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2"
   }
 }

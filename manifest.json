@@ -1,0 +1,66 @@
+{
+  "manifest_version": "0.3",
+  "name": "touchque-mcp-server",
+  "display_name": "TouchQue",
+  "version": "3.0.0",
+  "description": "TouchQue for AI assistants and agents: accurate SDK docs and an integration validator, and, with an agent identity, phone approvals before an agent acts.",
+  "long_description": "Gives AI coding assistants the current TouchQue SDK docs, types and an integration validator (no account, no network needed). With an AI agent's own TouchQue identity (TQ_AGENT_ID and its private key), the agent can ask a person to approve an action on their TouchQue phone, read the answer and hand the single-use approval token to the service that executes. The agent never approves anything itself.",
+  "author": { "name": "TouchQue", "url": "https://touchque.com" },
+  "homepage": "https://touchque.com",
+  "documentation": "https://touchque.com/docs/agents",
+  "repository": { "type": "git", "url": "https://github.com/Touchque/touchque-mcp-server" },
+  "license": "MIT",
+  "keywords": ["touchque", "2fa", "approval", "ai-agent", "human-in-the-loop", "mcp"],
+  "server": {
+    "type": "node",
+    "entry_point": "index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/index.js"],
+      "env": {
+        "TQ_AGENT_ID": "${user_config.agent_id}",
+        "TQ_AGENT_KEY": "${user_config.agent_key}",
+        "TQ_API_URL": "${user_config.api_url}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "touchque_help", "description": "Start here: what this server does and which tool to call next." },
+    { "name": "get_touchque_docs", "description": "The official TouchQue SDK README for Node, Python, PHP or Go." },
+    { "name": "get_sdk_types", "description": "The TouchQue SDK's type and class reference." },
+    { "name": "ping_touchque_api", "description": "Checks that a TouchQue backend answers." },
+    { "name": "validate_integration", "description": "Checks a snippet against the current step-up model and security practice." },
+    { "name": "touchque_agent_whoami", "description": "Who this AI agent is in TouchQue and what it may ask for (agent identity needed)." },
+    { "name": "touchque_request_approval", "description": "Asks a person to approve an action on their TouchQue phone (agent identity needed)." },
+    { "name": "touchque_get_approval", "description": "The person's answer, with the single-use approval token once approved (agent identity needed)." },
+    { "name": "touchque_request_mandate", "description": "Asks a person to approve a series of requests at once (agent identity needed)." },
+    { "name": "touchque_get_mandate", "description": "A mandate's state and what is left (agent identity needed)." }
+  ],
+  "tools_generated": false,
+  "user_config": {
+    "agent_id": {
+      "type": "string",
+      "title": "Agent ID",
+      "description": "The agent's agt_… id from TouchQue (Developers → AI agents). Leave empty for the docs tools only.",
+      "required": false
+    },
+    "agent_key": {
+      "type": "string",
+      "title": "Agent private key",
+      "description": "The agent's private key (JWK or PEM, or the path of a file holding it). Never a tq_ API key.",
+      "required": false,
+      "sensitive": true
+    },
+    "api_url": {
+      "type": "string",
+      "title": "TouchQue API",
+      "description": "Only for a self-hosted or local TouchQue.",
+      "default": "https://api.touchque.com",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=18.0.0" }
+  }
+}

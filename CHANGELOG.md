@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.0
+
+TouchQue as a tool for AI agents.
+
+- With an agent's own TouchQue identity (`TQ_AGENT_ID` + `TQ_AGENT_KEY`, the
+  agent's private key; never a `tq_` API key) the server adds five tools:
+  `touchque_agent_whoami`, `touchque_request_approval`,
+  `touchque_get_approval` (waits up to 60 s; the single-use approval token
+  once approved), `touchque_request_mandate`, `touchque_get_mandate`. Calls
+  sign in with private_key_jwt and carry a DPoP proof, like `@touchque/node`'s
+  `TouchQueAgent`. The person approves on their phone; the tools tell the
+  agent to say the number and never to approve anything itself.
+- A misconfigured identity no longer matters to the docs tools: the agent
+  tools answer with what is wrong.
+- MCP Bundle: `npm run pack:mcpb` builds `dist/touchque-mcp-server-<version>.mcpb`
+  (runtime dependencies only, `manifest.json` with the agent settings) and
+  signs it when `MCPB_SIGN_CERT` / `MCPB_SIGN_KEY` are set; the release
+  workflow attaches it to the GitHub release.
+- Published with npm provenance from GitHub Actions.
+- `@modelcontextprotocol/sdk` 1.32.2 and its dependencies updated (fixes the
+  advisories `npm audit` reported for the runtime dependencies).
+
 ## 2.4.0
 
 Updated for the TouchQue 4.0.0 server SDKs, `@touchque/web` 1.5.0 and

@@ -650,7 +650,7 @@ test("touchque_help mentions the 3.2.0 features", async () => {
 test("server reports the package version", async () => {
   await withClient(async (client) => {
     assert.equal(client.getServerVersion().version, require("./package.json").version);
-    assert.equal(require("./package.json").version, "2.4.0");
+    assert.equal(require("./package.json").version, "3.0.0");
   });
 });
 
@@ -747,5 +747,103 @@ test("validate_integration warns (unscored) about the pre-4.0 action types call 
       const ok = (await client.callTool({ name: "validate_integration", arguments: { code: current, language } })).content[0].text;
       assert.doesNotMatch(ok, /SDK 4\.0 moved action types/, language);
     }
+  });
+});
+
+// ── As an AI agent's tool (agent.js): a stub TouchQue API checks the agent's
+// private_key_jwt assertion and DPoP proofs with its public key, like the real one.
+const crypto = require("node:crypto");
+const http = require("node:http");
+
+function verifyJws(jws, publicKey) {
+  const [h, p, s] = jws.split(".");
+  const header = JSON.parse(Buffer.from(h, "base64url"));
+  const ok = header.alg === "ES256"
+    ? crypto.verify("sha256", Buffer.from(`${h}.${p}`), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(s, "base64url"))
+    : crypto.verify(null, Buffer.from(`${h}.${p}`), publicKey, Buffer.from(s, "base64url"));
+  return ok ? { header, payload: JSON.parse(Buffer.from(p, "base64url")) } : null;
+}
+
+async function stubApi(publicKey) {
+  const approvals = new Map();
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => { raw += c; });
+    req.on("end", () => {
+      const send = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const proof = req.headers.dpop && verifyJws(req.headers.dpop, publicKey);
+      if (!proof || proof.payload.htm !== req.method || proof.payload.htu !== `${base}${req.url.split("?")[0]}`) return send(401, { code: "invalid_dpop_proof" });
+      if (req.url === "/agents/token") {
+        const form = Object.fromEntries(new URLSearchParams(raw));
+        const a = verifyJws(form.client_assertion, publicKey);
+        if (!a || a.payload.iss !== "agt_abcdefghijkmnpqrstuv" || a.payload.aud !== `${base}/agents/token`) return send(401, { error: "invalid_client" });
+        return send(200, { access_token: "tqat_stub", token_type: "DPoP", expires_in: 600 });
+      }
+      if (req.headers.authorization !== "DPoP tqat_stub" || !proof.payload.ath) return send(401, { code: "invalid_token" });
+      const body = raw ? JSON.parse(raw) : {};
+      seen.push({ method: req.method, url: req.url, body });
+      if (req.url === "/agents/me") return send(200, { id: "agt_abcdefghijkmnpqrstuv", name: "Invoice bot", allowedTypes: ["PAY_INVOICE"] });
+      if (req.method === "POST" && req.url === "/agents/approvals") {
+        if (body.type !== "PAY_INVOICE") return send(403, { code: "type_not_allowed", error: "This agent may not ask approvals for that", caseCode: "K7Q2ZP" });
+        const s = { approvalId: crypto.randomUUID(), status: "pending", presence: "interactive", challengeCode: "47", expiresAt: new Date(Date.now() + 300000).toISOString() };
+        approvals.set(s.approvalId, s);
+        return send(201, s);
+      }
+      const m = /^\/agents\/approvals\/([0-9a-f-]+)$/.exec(req.url);
+      if (m && approvals.has(m[1])) {
+        const s = approvals.get(m[1]);
+        return send(200, s.status === "approved" ? { ...s, challengeCode: undefined, approvalToken: "eyJ.approval.token" } : s);
+      }
+      return send(404, { code: "not_found" });
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { server, base: `http://127.0.0.1:${server.address().port}`, approvals, seen };
+}
+
+async function withAgentClient(env, fn) {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(__dirname, "index.js")], env: { ...process.env, ...env } });
+  const client = new Client({ name: "touchque-mcp-server-tests", version: "1.0.0" });
+  await client.connect(transport);
+  try {
+    await fn(client);
+  } finally {
+    await client.close();
+  }
+}
+
+test("with the agent's identity, the agent tools ask the phone and hand back the approval token; without it they are not there", async () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const api = await stubApi(publicKey);
+  try {
+    await withAgentClient({ TQ_AGENT_ID: "agt_abcdefghijkmnpqrstuv", TQ_AGENT_KEY: JSON.stringify(privateKey.export({ format: "jwk" })), TQ_API_URL: api.base }, async (client) => {
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      assert.ok(names.includes("touchque_request_approval") && names.includes("touchque_get_approval") && names.includes("touchque_agent_whoami"));
+      assert.match((await client.callTool({ name: "touchque_agent_whoami", arguments: {} })).content[0].text, /Invoice bot/);
+
+      const asked = await client.callTool({ name: "touchque_request_approval", arguments: { user: "jane@example.com", type: "PAY_INVOICE", authorizationDetails: [{ type: "payment_initiation", instructedAmount: { currency: "TRY", amount: "500.00" } }], reason: "October rent" } });
+      assert.match(asked.content[0].text, /Type 47 in the TouchQue app/);
+      assert.match(asked.content[0].text, /Never type or approve it yourself/);
+      assert.equal(api.seen.at(-1).body.externalUsername, "jane@example.com");
+      const id = [...api.approvals.keys()][0];
+      const pending = await client.callTool({ name: "touchque_get_approval", arguments: { approvalId: id, waitSeconds: 0 } });
+      assert.match(pending.content[0].text, /pending/);
+      api.approvals.get(id).status = "approved";
+      const approved = await client.callTool({ name: "touchque_get_approval", arguments: { approvalId: id, waitSeconds: 0 } });
+      assert.match(approved.content[0].text, /used once/);
+      assert.match(approved.content[0].text, /eyJ\.approval\.token/);
+
+      const refused = await client.callTool({ name: "touchque_request_approval", arguments: { user: "jane@example.com", type: "SEND_MONEY", authorizationDetails: [] } });
+      assert.equal(refused.isError, true);
+      assert.match(refused.content[0].text, /type_not_allowed.*Case code: K7Q2ZP/);
+    });
+  } finally {
+    api.server.close();
+  }
+  // Without the agent's identity: the docs server only.
+  await withClient(async (client) => {
+    assert.ok(!(await client.listTools()).tools.some((t) => t.name.startsWith("touchque_request")));
   });
 });

@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write   # attach the MCP bundle to the GitHub release
+  id-token: write   # npm provenance (who built it, from which commit)
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -16,14 +20,43 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm test
-      # This package needs 2FA on npm, so it is usually published by hand
-      # (npm publish --auth-type=web); the tag then only marks that release.
+      # Published from here, the package carries npm provenance (signed by GitHub
+      # Actions, checkable with `npm audit signatures`). A version published by
+      # hand first (npm publish --auth-type=web) has none: the tag then only
+      # marks that release.
       - run: |
           v=$(node -p "require('./package.json').version")
           if npm view "@touchque/mcp-server@$v" version >/dev/null 2>&1; then
             echo "@touchque/mcp-server@$v is already on npm; nothing to publish."
             exit 0
           fi
-          npm publish --access public
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # The MCP bundle (.mcpb) for one-click install, signed when the signing
+      # certificate is set (MCPB_SIGN_CERT_PEM / MCPB_SIGN_KEY_PEM, a code-signing
+      # certificate the operating systems trust; intermediates in MCPB_SIGN_CHAIN_PEM).
+      - name: MCP bundle
+        env:
+          MCPB_SIGN_CERT_PEM: ${{ secrets.MCPB_SIGN_CERT_PEM }}
+          MCPB_SIGN_KEY_PEM: ${{ secrets.MCPB_SIGN_KEY_PEM }}
+          MCPB_SIGN_CHAIN_PEM: ${{ secrets.MCPB_SIGN_CHAIN_PEM }}
+        run: |
+          if [ -n "$MCPB_SIGN_CERT_PEM" ] && [ -n "$MCPB_SIGN_KEY_PEM" ]; then
+            umask 077
+            printf '%s\n' "$MCPB_SIGN_CERT_PEM" > "$RUNNER_TEMP/cert.pem"
+            printf '%s\n' "$MCPB_SIGN_KEY_PEM" > "$RUNNER_TEMP/key.pem"
+            export MCPB_SIGN_CERT="$RUNNER_TEMP/cert.pem" MCPB_SIGN_KEY="$RUNNER_TEMP/key.pem"
+            if [ -n "$MCPB_SIGN_CHAIN_PEM" ]; then
+              printf '%s\n' "$MCPB_SIGN_CHAIN_PEM" > "$RUNNER_TEMP/chain.pem"
+              export MCPB_SIGN_INTERMEDIATE="$RUNNER_TEMP/chain.pem"
+            fi
+          fi
+          npm run pack:mcpb
+          rm -f "$RUNNER_TEMP/key.pem"
+      - name: Attach the bundle to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md."
+          gh release upload "$GITHUB_REF_NAME" dist/*.mcpb --clobber

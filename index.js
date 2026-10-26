@@ -40,6 +40,22 @@ const {
 // resort for the least-capable client.
 
 const { version: PACKAGE_VERSION } = require("./package.json");
+const { agentFromEnv, approvalAfter, describeApproval } = require("./agent");
+
+// TouchQue as a tool for an AI agent (agent.js): with TQ_AGENT_ID and
+// TQ_AGENT_KEY set (the agent's own identity from tq.agents.create, never a
+// tq_ API key), the agent can ask a person to approve an action on their
+// phone, check the answer and ask for a mandate. Without them this stays the
+// read-only docs server it always was.
+// A wrong identity does not stop the docs tools: the agent tools then say what is wrong.
+let AGENT = null;
+let AGENT_CONFIG_ERROR = null;
+try {
+  AGENT = agentFromEnv();
+} catch (err) {
+  AGENT_CONFIG_ERROR = err.message;
+  console.error(`⚠️ TouchQue agent tools are off: ${err.message}`);
+}
 
 const DOCS_DIR = path.join(__dirname, "bundled");
 
@@ -410,7 +426,15 @@ call get_touchque_docs and follow it directly — nothing here requires
 prompts to work; the Offline Sign flow is documented in there too.
 
 This server is read-only dev tooling: no API key, no account access, no
-required network calls (docs/types are bundled, not fetched).`;
+required network calls (docs/types are bundled, not fetched).
+
+As an AI agent's tool (TQ_AGENT_ID + TQ_AGENT_KEY set: the agent's own
+identity, never an API key): touchque_request_approval asks a person to
+approve an action on their TouchQue phone (tell them the number it returns;
+never approve anything yourself), touchque_get_approval checks the answer
+and hands back the single-use approval token for the service that executes,
+touchque_request_mandate / touchque_get_mandate cover a series of requests,
+and touchque_agent_whoami says what this agent may ask for.`;
 
 const server = new Server({
   name: "touchque-mcp-server",
@@ -430,6 +454,93 @@ const server = new Server({
 // ==========================================
 // TOOLS
 // ==========================================
+
+// The agent's tools (only with TQ_AGENT_ID + TQ_AGENT_KEY). The person decides on
+// their phone; these only ask and read the answer.
+const AGENT_TOOLS = [
+  {
+    name: "touchque_agent_whoami",
+    description: "Who this AI agent is in TouchQue: its name, the action types it may ask a person to approve, its owner, review date and workspace.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "touchque_request_approval",
+    description: "Asks a person to approve an action on their TouchQue phone before you do it (a payment, a deletion, a message sent for them…). Returns a number: tell the person to type it in the TouchQue app. You never approve it yourself. Then call touchque_get_approval for the answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        user: { type: "string", description: "The person you act for (their e-mail or the id the service knows them by)." },
+        type: { type: "string", description: "One of your allowed action types (see touchque_agent_whoami)." },
+        authorizationDetails: {
+          type: "array", items: { type: "object" },
+          description: "Exactly what to approve, as RFC 9396 authorization details: TouchQue draws the phone's rows from them, e.g. [{\"type\":\"payment_initiation\",\"instructedAmount\":{\"currency\":\"TRY\",\"amount\":\"500.00\"},\"creditorAccount\":{\"iban\":\"TR…\"}}].",
+        },
+        reason: { type: "string", description: "One short sentence in your own words; the phone shows it marked unverified." },
+        presence: { type: "string", enum: ["interactive", "background"], description: "interactive (default): the person is in this conversation and types the number." },
+        mandateId: { type: "string", description: "Approve within an active mandate (no push)." },
+      },
+      required: ["user", "type", "authorizationDetails"],
+    },
+  },
+  {
+    name: "touchque_get_approval",
+    description: "The answer to an approval request: pending, approved (with the single-use approvalToken for the service that executes), rejected, expired… Waits up to waitSeconds for the person.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        approvalId: { type: "string" },
+        waitSeconds: { type: "number", description: "How long to wait for the person's answer (0–60, default 30)." },
+      },
+      required: ["approvalId"],
+    },
+  },
+  {
+    name: "touchque_request_mandate",
+    description: "Asks a person to approve a series of requests at once on their phone (how many, how much in total and per request, to whom, until when). Returns a number to tell them. Requests within an active mandate need no push.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        user: { type: "string" },
+        type: { type: "string" },
+        maxCount: { type: "number", description: "At most this many requests (1–100)." },
+        maxTotal: { type: "object", properties: { currency: { type: "string" }, amount: { type: "string" } }, required: ["currency", "amount"] },
+        perRequest: { type: "string", description: "At most this much per request, same currency." },
+        recipients: { type: "array", items: { type: "string" }, description: "IBANs or account numbers it may pay." },
+        validFor: { type: "number", description: "Seconds it lasts (300–604800)." },
+        reason: { type: "string" },
+      },
+      required: ["user", "type", "maxCount", "maxTotal"],
+    },
+  },
+  {
+    name: "touchque_get_mandate",
+    description: "A mandate's state and what is left of it.",
+    inputSchema: { type: "object", properties: { mandateId: { type: "string" } }, required: ["mandateId"] },
+  },
+];
+
+const json = (v) => JSON.stringify(v, null, 2);
+
+async function callAgentTool(name, args) {
+  if (name === "touchque_agent_whoami") return json(await AGENT.me());
+  if (name === "touchque_request_approval") {
+    const s = await AGENT.requestApproval({
+      externalUsername: args.user, type: args.type, authorizationDetails: args.authorizationDetails,
+      ...(args.reason && { reason: args.reason }), ...(args.presence && { presence: args.presence }), ...(args.mandateId && { mandateId: args.mandateId }),
+    });
+    return `${describeApproval(s)}\n\n${json(s)}`;
+  }
+  if (name === "touchque_get_approval") {
+    const s = await approvalAfter(AGENT, String(args.approvalId || ""), args.waitSeconds === undefined ? 30 : args.waitSeconds);
+    return `${describeApproval(s)}\n\n${json(s)}`;
+  }
+  if (name === "touchque_request_mandate") {
+    const m = await AGENT.requestMandate({ externalUsername: args.user, ...Object.fromEntries(Object.entries(args).filter(([k]) => k !== "user")) });
+    return `${m.challengeCode ? `Tell the person: "Type ${m.challengeCode} in the TouchQue app on your phone to approve the mandate." Never approve it yourself.\n\n` : ""}${json(m)}`;
+  }
+  if (name === "touchque_get_mandate") return json(await AGENT.getMandate(String(args.mandateId || "")));
+  return null;
+}
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -505,7 +616,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["code", "framework"]
         }
-      }
+      },
+      ...(AGENT || AGENT_CONFIG_ERROR ? AGENT_TOOLS : []),
     ]
   };
 });
@@ -666,6 +778,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text: `TouchQue Integration Validation Report\nLanguage: ${LANGUAGES[language].label}\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}${advisoryText}`
         }]
       };
+    }
+
+    if (AGENT_CONFIG_ERROR && AGENT_TOOLS.some((t) => t.name === name)) {
+      return { isError: true, content: [{ type: "text", text: `The TouchQue agent identity is not set up correctly: ${AGENT_CONFIG_ERROR}` }] };
+    }
+    if (AGENT && AGENT_TOOLS.some((t) => t.name === name)) {
+      try {
+        return { content: [{ type: "text", text: await callAgentTool(name, args || {}) }] };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: `TouchQue refused it (${err.code || err.status || "error"}): ${err.message}${err.caseCode ? ` Case code: ${err.caseCode}.` : ""}` }] };
+      }
     }
 
     throw new Error(`Unknown tool: ${name}`);

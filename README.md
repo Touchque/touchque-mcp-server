@@ -12,6 +12,10 @@ docs/types tools (they're bundled with the package). The only network calls
 it makes are ones you explicitly ask for (`ping_touchque_api`, pointed at a
 URL you pass in).
 
+Since 3.0 it is also **a tool for AI agents**: given an agent's own TouchQue
+identity (never an API key), the agent can ask a person to approve an action
+on their TouchQue phone before it acts. See [As an AI agent's tool](#as-an-ai-agents-tool).
+
 ## What this server does NOT do
 
 **This server has no file system access of its own.** It cannot open,
@@ -134,6 +138,46 @@ above directly instead):
   `User`/`UserID`, device-proof pinning, fraud feedback via `reportFraud`).
 - `troubleshoot_touchque` — a triage decision tree for a broken integration.
 
+## As an AI agent's tool
+
+Register the agent in TouchQue (Developers → AI agents, or `tq.agents.create`
+with the agent's **public** key) and give the server the agent's id and
+**private** key. The workspace's `tq_` API key never goes here.
+
+```json
+{
+  "mcpServers": {
+    "touchque": {
+      "command": "npx",
+      "args": ["-y", "@touchque/mcp-server"],
+      "env": { "TQ_AGENT_ID": "agt_…", "TQ_AGENT_KEY": "/path/to/agent-key.jwk" }
+    }
+  }
+}
+```
+
+`TQ_AGENT_KEY` is the private key as a JWK, a PEM, or the path of a file
+holding either; `TQ_API_URL` only for a self-hosted or local TouchQue. Then the
+agent has five more tools:
+
+| Tool | What it does |
+|---|---|
+| `touchque_agent_whoami` | The agent as TouchQue sees it: the action types it may ask for, its owner, its review date |
+| `touchque_request_approval` | Asks a person to approve an action on their phone; returns the number to tell them |
+| `touchque_get_approval` | The answer (waits up to 60 s); once approved, the single-use approval token for the service that executes |
+| `touchque_request_mandate` | Asks for a series of requests at once (how many, how much, to whom, until when) |
+| `touchque_get_mandate` | A mandate's state and what is left |
+
+Nothing here can approve anything: the person approves on their phone, with
+Face ID and the number the conversation shows, and an approval given during
+a phone call doesn't count. Every call is signed with the agent's key and a
+DPoP proof; the agent's token lives 10 minutes. A wrong identity doesn't stop
+the docs tools: the agent tools then say what is wrong.
+
+The same server ships as an **MCP Bundle** (`touchque-mcp-server-<version>.mcpb`,
+attached to each GitHub release, signed) for one-click install in Claude
+Desktop; it asks for the agent id and key in its settings.
+
 ## Install
 
 ### Claude Desktop / Claude Code
@@ -253,12 +297,19 @@ every language.
 
 ## Security
 
-This server is read-only dev tooling: it never touches a real TouchQue
-account, never sees an API key, and never calls a TouchQue backend except a
-URL you explicitly pass to `ping_touchque_api`. There is intentionally no
-authentication on the server itself — it needs none. If that ever changes
-(e.g. a future tool that reads real account data), auth must be added before
-that tool ships.
+Without an agent identity this server is read-only dev tooling: it never
+touches a real TouchQue account, never sees an API key, and never calls a
+TouchQue backend except a URL you explicitly pass to `ping_touchque_api`.
+
+With an agent identity (`TQ_AGENT_ID` + `TQ_AGENT_KEY`) it calls TouchQue as
+that agent and nothing more: private_key_jwt sign-in, a DPoP proof on every
+call, only what the agent's own scopes allow (asking for approvals and
+mandates, reading itself). It never holds a `tq_` key and cannot approve,
+redeem or change anything; a person approves on their phone.
+
+Releases are published from GitHub Actions with npm provenance
+(`npm audit signatures` checks it), and the `.mcpb` bundle is signed with
+TouchQue's code-signing certificate (`mcpb verify`).
 
 ## License
 

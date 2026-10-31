@@ -56,19 +56,25 @@ test("server advertises MCP-native instructions on connect (works even without a
   });
 });
 
-test("lists the bundled docs as MCP resources for all 4 languages and can read them", async () => {
+test("lists the bundled docs as MCP resources for all 7 languages and can read them", async () => {
   await withClient(async (client) => {
     const { resources } = await client.listResources();
     const uris = resources.map((r) => r.uri).sort();
     assert.deepEqual(uris, [
+      "touchque://docs/dotnet/sdk-documentation.md",
+      "touchque://docs/dotnet/types.cs",
       "touchque://docs/go/sdk-documentation.md",
       "touchque://docs/go/types.go",
+      "touchque://docs/java/sdk-documentation.md",
+      "touchque://docs/java/types.java",
       "touchque://docs/node/sdk-documentation.md",
       "touchque://docs/node/types.ts",
       "touchque://docs/php/sdk-documentation.md",
       "touchque://docs/php/types.php",
       "touchque://docs/python/sdk-documentation.md",
       "touchque://docs/python/types.py",
+      "touchque://docs/ruby/sdk-documentation.md",
+      "touchque://docs/ruby/types.rb",
     ]);
 
     const read = await client.readResource({ uri: "touchque://docs/node/sdk-documentation.md" });
@@ -124,12 +130,15 @@ test("get_sdk_types returns the bundled type definitions", async () => {
   });
 });
 
-test("get_touchque_docs and get_sdk_types support all 4 languages via the language argument", async () => {
+test("get_touchque_docs and get_sdk_types support all 7 languages via the language argument", async () => {
   await withClient(async (client) => {
     const expected = {
       python: { docs: /touchque-authenticator/, types: /class TouchQue/ },
       php: { docs: /touchque-authenticator\/php-sdk/, types: /class TouchQue/ },
       go: { docs: /touchque-go/, types: /package touchque/ },
+      dotnet: { docs: /TouchQue\.AspNetCore/, types: /public sealed class TouchQueClient/ },
+      ruby: { docs: /gem "touchque"/, types: /module TouchQue/ },
+      java: { docs: /touchque-spring-boot-starter/, types: /public @interface RequireTouchQue/ },
     };
     for (const [language, { docs, types }] of Object.entries(expected)) {
       const docsResult = await client.callTool({ name: "get_touchque_docs", arguments: { language } });
@@ -143,7 +152,7 @@ test("get_touchque_docs and get_sdk_types support all 4 languages via the langua
 
 test("get_touchque_docs rejects an unknown language instead of silently falling back to Node", async () => {
   await withClient(async (client) => {
-    const result = await client.callTool({ name: "get_touchque_docs", arguments: { language: "ruby" } });
+    const result = await client.callTool({ name: "get_touchque_docs", arguments: { language: "cobol" } });
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /Unknown language/);
   });
@@ -217,7 +226,7 @@ test("validate_integration scores a current-API snippet as fully passing", async
   });
 });
 
-test("validate_integration recognizes the correct guard per language (Python/PHP/Go), not just Node", async () => {
+test("validate_integration recognizes the correct guard per language (Python/PHP/Go/.NET/Ruby/Java), not just Node", async () => {
   await withClient(async (client) => {
     const cases = [
       {
@@ -255,6 +264,32 @@ test("validate_integration recognizes the correct guard per language (Python/PHP
                   return
               }
           }
+        `,
+      },
+      {
+        framework: "aspnetcore",
+        code: `
+          using TouchQue.AspNetCore;
+          builder.Services.AddTouchQue();
+          app.MapPost("/transfer", Transfer).RequireAuthorization().RequireTouchQue("SEND_MONEY");
+        `,
+      },
+      {
+        framework: "rails",
+        code: `
+          class TransfersController < ApplicationController
+            include TouchQue::Rails::Guard
+            require_touchque "SEND_MONEY", only: :create
+          end
+        `,
+      },
+      {
+        framework: "spring-boot",
+        code: `
+          import com.touchque.spring.RequireTouchQue;
+          @PostMapping("/transfer")
+          @RequireTouchQue("SEND_MONEY")
+          Receipt transfer(@RequestBody Transfer t, Approval approval) { return payments.send(t); }
         `,
       },
     ];
@@ -336,7 +371,7 @@ test("touchque_help explains linking an offline QR to its push", async () => {
   });
 });
 
-test("bundled docs and types carry requestId / challengeCode for the offline QR in all 4 languages", async () => {
+test("bundled docs and types carry requestId / challengeCode for the offline QR in the Node, Python, PHP and Go bundles", async () => {
   await withClient(async (client) => {
     const expectations = {
       node: /requestId\?: string[\s\S]*challengeCode\?: string/,

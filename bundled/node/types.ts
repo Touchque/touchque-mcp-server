@@ -92,6 +92,56 @@ export interface ResetSecretResponse {
   recoveryCodes?: string[];
 }
 
+/**
+ * What the TouchQue app last reported about the phone it runs on, for device trust.
+ * Self-reported by the app; `signed` says the phone's hardware approval key signed the latest report.
+ *
+ * `state`: `compromised` (jailbroken/rooted or tampered), `unknown` (no report, or one older than
+ * 14 days), `at_risk` (no screen lock, approval keys destroyed, no hardware key, debugger or developer
+ * mode), otherwise `healthy`. `issues` lists the reasons behind the state.
+ */
+export interface DevicePosture {
+  platform: 'ios' | 'android' | null;
+  /** Hardware model, e.g. `iPhone15,3` or `Pixel 8`. */
+  model?: string | null;
+  /** e.g. `18.1` or `15`. */
+  osVersion: string | null;
+  /** Android security patch level (`YYYY-MM-DD`); null on iOS. */
+  securityPatch?: string | null;
+  appVersion: string | null;
+  /** A passcode, PIN, pattern or password is set. */
+  screenLock: boolean | null;
+  biometrics?: 'face' | 'touch' | 'fingerprint' | 'iris' | 'none' | null;
+  /** Jailbroken or rooted, by the app's checks. */
+  jailbroken: boolean;
+  /** Jailbroken/rooted or tampered; sticky until the phone reports clean for a cool-down. */
+  compromised: boolean;
+  /** Approvals are signed by a Secure Enclave / Keystore key that still works. */
+  hardwareKey: boolean;
+  /** How the hardware key was proven genuine; null when it was not attested. */
+  attestation: 'apple-appattest' | 'android-key' | null;
+  /** The latest report was signed by the phone's hardware key. */
+  signed: boolean;
+  /** ISO date-time of the latest report. */
+  reportedAt: string | null;
+  lastSeenAt: string | null;
+  linkedAt?: string | null;
+  state: 'healthy' | 'at_risk' | 'compromised' | 'unknown';
+  issues: DevicePostureIssue[];
+}
+
+export type DevicePostureIssue =
+  | 'jailbroken'
+  | 'tampered'
+  | 'integrity_failed'
+  | 'no_report'
+  | 'stale_report'
+  | 'no_screen_lock'
+  | 'keys_lost'
+  | 'no_hardware_key'
+  | 'debugger'
+  | 'developer_mode';
+
 export interface GetUserResponse {
   externalUsername: string;
   /** Set once the mobile app has linked (scanned) the secret. */
@@ -101,6 +151,8 @@ export interface GetUserResponse {
   frozen: boolean;
   createdAt: string;
   expireAt: string | null;
+  /** The linked phone's posture, or null before a phone is linked. See {@link DevicePosture}. */
+  device: DevicePosture | null;
 }
 
 // ─── Offline Sign ────────────────────────────────────────────────
@@ -167,6 +219,35 @@ export interface OfflineTotpVerifyOptions {
   requestId?: string;
 }
 
+export interface OfflineTotpVerifiersOptions {
+  /** Up to 1,000 users; users x steps at most 24,000 a call. */
+  externalUsernames: string[];
+  /** First 30-second step (default: the current one). */
+  fromStep?: number;
+  /** How many steps, 1-480 (default 480: 4 hours). */
+  steps?: number;
+}
+
+export interface OfflineTotpVerifierUser {
+  externalUsername: string;
+  /** This user's first step (later than asked when earlier steps were used). */
+  fromStep: number;
+  /** Base64, 16 bytes. */
+  salt: string;
+  /** Base64: kdf.length bytes per digest, two per step from fromStep (the anchored and the unanchored code). */
+  digests: string;
+}
+
+export interface OfflineTotpVerifiersResult {
+  stepSeconds: number;
+  fromStep: number;
+  steps: number;
+  notAfterStep: number;
+  kdf: { name: 'pbkdf2-sha256'; iterations: number; length: number };
+  /** Only users who can use time-based codes now. */
+  users: OfflineTotpVerifierUser[];
+}
+
 export interface OfflineVerifyResult {
   approved: boolean;
   /** When not approved: invalid_code | locked | expired | used | unknown_challenge | request_rejected | too_many_failures | frozen | … */
@@ -227,6 +308,24 @@ export interface LoginRequestOptions {
    */
   requireNumberMatch?: boolean;
   /**
+   * Digits of the matching number when one is shown: `3` for 100–999.
+   * The longer of this and your workspace policy wins: a request can
+   * lengthen the number, never shorten it.
+   */
+  challengeDigits?: 2 | 3;
+  /**
+   * How long the push waits for the person, in seconds: 30 (default) to 300.
+   * Longer suits a request the person has to read first, such as an AI agent
+   * asking on their behalf.
+   */
+  expiresIn?: number;
+  /**
+   * A browser pairing by QR code (`tq.qrPairings`): the pairing id, scanned and
+   * confirmed on the phone. Only the phone that scanned it is asked, once, with
+   * number matching, for the user it scanned for. Not with `reply`.
+   */
+  qrPairing?: string;
+  /**
    * Silent sign-ins: the browser's device-bound key proof, exactly as the
    * browser sent it (`X-TouchQue-Browser` header, made by `@touchque/web`).
    * When the user approves this request on the phone (or with a passkey),
@@ -236,10 +335,78 @@ export interface LoginRequestOptions {
    */
   browserProof?: string;
   /**
+   * The end user's page check from \`@touchque/web\` (\`startClientSignals().encode()\`),
+   * passed through untouched: a browser driven by software (automation, an
+   * AI browser agent) is never silent and asks with number matching, or is
+   * refused where the workspace blocks it (403 \`automated_client\`).
+   */
+  clientSignals?: string;
+  /**
+   * The page's device report from \`@touchque/web\` (\`deviceRisk.collect({ purpose })\`),
+   * passed through untouched. Used only when your workspace turned Device risk
+   * on: its signals only ever ask for more (never silent, number matching or a
+   * passkey), and a device your admin marked "step up always" asks at once.
+   * Collect it only on sign-in, sign-up, password-reset and approval pages,
+   * and name it in your privacy notice.
+   */
+  deviceRisk?: string;
+  /**
+   * The page's identification from \`@touchque/web\` (\`deviceRisk.identify()\`'s
+   * requestId): preferred over \`deviceRisk\`. Usable for this account only.
+   */
+  deviceRiskRequestId?: string;
+  /**
    * For your TouchQue Actions only (`event.context`): roles, plan, amount…
    * Any JSON object up to 4 KB. Never shown on the phone.
    */
   context?: Record<string, unknown>;
+  /**
+   * When the user's sign-in security last changed in YOUR system (a password
+   * reset, a new email…). TouchQue adds what it saw itself (the phone linked,
+   * moved or recovered, passkeys added or removed) and gives access rules and
+   * Actions the minutes since each: `minutesSince.mfaChange`, `.deviceChange`,
+   * `.passwordChange`, `.emailChange`, `.phoneChange`, `.anyChange`.
+   * Example rule: refuse `PAYOUT_CHANGE` within 24 hours of a 2FA change.
+   */
+  securityChanges?: SecurityChanges;
+  /**
+   * Where the action sends money or value. The phone shows it in full, first
+   * and in groups of four, with a warning above it when it looks like one the
+   * user used before but is not the same. Do not repeat it in `details`.
+   */
+  destination?: Destination;
+  /** Language of the rows TouchQue adds (the destination and its warning). Default `'tr'`. */
+  locale?: 'tr' | 'en';
+}
+
+export type SecurityChangeKind = 'password' | 'mfa' | 'device' | 'email' | 'phone';
+
+/** When each kind last changed: an ISO 8601 time, epoch milliseconds or a Date. */
+export type SecurityChanges = Partial<Record<SecurityChangeKind, string | number | Date>>;
+
+export type DestinationKind = 'iban' | 'account' | 'wallet' | 'address' | 'payee';
+
+export interface Destination {
+  kind: DestinationKind;
+  /** The IBAN, account number, wallet address, delivery address or payee name. An IBAN must pass its check digits. */
+  value: string;
+  /** Destinations of this kind the user already uses in your system (saved payees, addresses); at most 50. */
+  known?: string[];
+}
+
+export interface DestinationLookalike {
+  field: string;
+  reason: 'same_start_and_end' | 'confusable' | 'near_miss' | 'mixed_script';
+  /** The known destination it resembles, masked (`TR33…1326`). */
+  similarTo?: string;
+}
+
+/** What TouchQue made of the request's `destination` (also shown on the phone). */
+export interface DestinationCheck {
+  /** The user approved it before, or it is in `known`. */
+  known: boolean;
+  /** Earlier destinations it looks like without being the same; empty when none. */
+  lookalike: DestinationLookalike[];
 }
 
 export interface LoginRequestResponse {
@@ -279,6 +446,8 @@ export interface LoginRequestResponse {
    * `img-src` and `connect-src`.
    */
   canary?: { url: string };
+  /** Only with a `destination`: whether the user used it before and what it looks like. */
+  destination?: DestinationCheck;
 }
 
 /** How an approved request was confirmed, and whether that is phishing-resistant. */
@@ -379,6 +548,12 @@ export interface RiskCheckOptions {
   userAgent?: string;
   /** The browser's device-bound key proof (`X-TouchQue-Browser`), passed through untouched. */
   browserProof?: string;
+  /** The end user's page check from `@touchque/web` (`startClientSignals().encode()`): software driving the browser is never silent. */
+  clientSignals?: string;
+  /** The page's device report from `@touchque/web` (`deviceRisk.collect({ purpose: 'sign_in' })`): a device signal is never silent. */
+  deviceRisk?: string;
+  /** The page's identification (`deviceRisk.identify()`'s requestId), preferred over `deviceRisk`. */
+  deviceRiskRequestId?: string;
   /**
    * Your own limit on how long ago the last phone approval in this browser
    * may be, in seconds (integer, 0 = always ask). TouchQue never goes beyond
@@ -638,6 +813,8 @@ export const WebhookReasons = {
   USER_REPORTED_FRAUD: 'user_reported_fraud',
   /** The user said someone on the phone told them to approve: 2FA is frozen; treat it as a takeover in progress. */
   USER_REPORTED_COACHED: 'user_reported_coached',
+  /** An AI agent's request: the user said no and blocked the agent from asking them again (no 2FA freeze). */
+  USER_BLOCKED_AGENT: 'user_blocked_agent',
   /** Approved, then refused by the risk engine on evidence seen at the tap. */
   RISK_REVERSED: 'risk_reversed',
   /** Refused for now; the user's next request asks for number matching. */
@@ -661,10 +838,53 @@ export const WebhookEvents = {
   DEVICE_UNLINKED: 'DEVICE_UNLINKED',
   PASSKEY_REGISTERED: 'PASSKEY_REGISTERED',
   PASSKEY_DELETED: 'PASSKEY_DELETED',
+  /** Device risk: an identification or a deviceRisk.check raised a signal that asks for more (enforced or in shadow). Never a trait. */
+  DEVICE_RISK_SIGNAL: 'DEVICE_RISK_SIGNAL',
+  /** Device risk: an alert rule of the workspace went off (a sign-up burst, many accounts, a tampered-browser spike). */
+  DEVICE_RISK_ALERT: 'DEVICE_RISK_ALERT',
   /** After the call, the user confirmed a provisional approval was theirs: critical actions are allowed again. */
   APPROVAL_RECONFIRMED: 'APPROVAL_RECONFIRMED',
   /** The user took an approval back (`reason`: `COACHED` or `UNDO`): end the session or stop the action built on it. */
   APPROVAL_REVOKED: 'APPROVAL_REVOKED',
+  // AI agents (tq.agents): changes partners may act on, and what TouchQue noticed.
+  /** An AI agent was registered. */
+  AGENT_CREATED: 'AGENT_CREATED',
+  /** An AI agent was suspended (through the API or the dashboard): its tokens stopped working. */
+  AGENT_SUSPENDED: 'AGENT_SUSPENDED',
+  /** An AI agent may act again. */
+  AGENT_RESUMED: 'AGENT_RESUMED',
+  /** An AI agent was revoked for good. */
+  AGENT_REVOKED: 'AGENT_REVOKED',
+  /** A key was added to an AI agent. */
+  AGENT_KEY_ADDED: 'AGENT_KEY_ADDED',
+  /** A key was removed from an AI agent; tokens bound to it stopped working. */
+  AGENT_KEY_REMOVED: 'AGENT_KEY_REMOVED',
+  /** The kill switch stopped every AI agent of the workspace. */
+  AGENTS_PAUSED: 'AGENTS_PAUSED',
+  /** The kill switch was turned off. */
+  AGENTS_RESUMED: 'AGENTS_RESUMED',
+  /** An AI agent's policy changed. */
+  AGENT_POLICY_CHANGED: 'AGENT_POLICY_CHANGED',
+  /** The workspace's agent policy (every agent's floor) changed. */
+  AGENT_WORKSPACE_POLICY_CHANGED: 'AGENT_WORKSPACE_POLICY_CHANGED',
+  /** An approval token was used. */
+  AGENT_APPROVAL_REDEEMED: 'AGENT_APPROVAL_REDEEMED',
+  /** A person stopped an AI agent from asking them ("this wasn't me", coached, or three rejections). */
+  AGENT_BLOCKED_BY_PERSON: 'AGENT_BLOCKED_BY_PERSON',
+  /** An admin let an AI agent ask a person again. */
+  AGENT_UNBLOCKED_FOR_PERSON: 'AGENT_UNBLOCKED_FOR_PERSON',
+  /** An AI agent sent the same request to the same person three times in 10 minutes. */
+  AGENT_LOOP_DETECTED: 'AGENT_LOOP_DETECTED',
+  /** An AI agent asked a person for a mandate. */
+  AGENT_MANDATE_REQUESTED: 'AGENT_MANDATE_REQUESTED',
+  /** A mandate was ended. */
+  AGENT_MANDATE_REVOKED: 'AGENT_MANDATE_REVOKED',
+  /** An AI agent's text carried an instruction to the model or a link that carries data; the request was refused. */
+  AGENT_INJECTION_SUSPECTED: 'AGENT_INJECTION_SUSPECTED',
+  /** An approval came back sooner than a person can answer; it is never usable. */
+  AGENT_INHUMAN_APPROVAL: 'AGENT_INHUMAN_APPROVAL',
+  /** A new or renamed AI agent's name read like another agent's; it was refused. */
+  AGENT_LOOKALIKE_NAME: 'AGENT_LOOKALIKE_NAME',
 } as const;
 
 // ─── Protect Wrapper ─────────────────────────────────────────────
@@ -702,6 +922,250 @@ export interface TouchQueErrorData {
   /** Seconds to wait before retrying (429 / 423). */
   retryAfter?: number;
   /** "Why?" case code of a refusal (`K7P-2QX`), to show the user. */
+  caseCode?: string;
+  /** Where to send the user instead, e.g. `never_locked_out` on a help-desk check with no phone. */
+  route?: string;
+  /** The feature a `feature_not_in_plan` / `feature_read_only` / `feature_off` refusal is about (`device_risk`…). */
+  feature?: string;
+}
+
+// ─── Help desk (assist sessions) ─────────────────────────────────
+
+export interface OpenAssistOptions {
+  /** The person IT is helping. */
+  externalUsername: string;
+  /** The signed-in agent: `name` (and `title`) are shown on the person's phone; `ref` is your id for them (default `name`). */
+  agent: { name: string; title?: string; ref?: string };
+  /** A ticket or a few words, for the log. */
+  reason?: string;
+  /** 5–120. Default 30. */
+  ttlMinutes?: number;
+  /** Send the person's phone the calm notice. Default true. */
+  notify?: boolean;
+}
+
+export type AssistCheckOutcome = 'pending' | 'verified' | 'wrong_number' | 'not_me' | 'coached' | 'declined' | 'expired';
+
+export interface AssistCheck {
+  requestId: string;
+  action: string;
+  actionText: string;
+  outcome: AssistCheckOutcome;
+  createdAt: string;
+  spentAt: string | null;
+  expiresAt: string | null;
+}
+
+export interface AssistSession {
+  id: string;
+  externalUsername: string;
+  status: 'OPEN' | 'ENDED';
+  agent: { ref: string; name: string; title: string | null };
+  reason: string | null;
+  notified: boolean;
+  openedAt: string;
+  expiresAt: string;
+  endedAt: string | null;
+  /** `ended`, `expired`, `replaced`, or yours. */
+  endedReason: string | null;
+  /** The person has a working TouchQue phone to check on; false: Never Locked Out. */
+  phone: boolean;
+  frozen: boolean;
+  checks: AssistCheck[];
+}
+
+export interface VerifyAssistOptions {
+  /** `reset_2fa`, `reset_password`, `activation_link`, `recovery_link`, `unlock`, `new_phone`, `remove_passkey`, or your own (lowercase, digits, underscores). */
+  action: string;
+  /** Shown on the phone: "IT (<agent>) is about to <actionText>". */
+  actionText?: string;
+  /** Your own lines for the phone instead of the default. */
+  details?: Array<{ label: string; value: string }>;
+}
+
+export interface AssistCheckStarted {
+  requestId: string;
+  /** Show it to the agent only: they read it to the person, who types it on the phone. */
+  challengeCode: string;
+  expiresAt: string;
+  action: string;
+}
+
+// ── QR pairing (tq.qrPairings) ──
+
+/** Where a browser pairing stands. */
+export type QrPairingState = 'waiting' | 'scanned' | 'confirmed' | 'requested' | 'approved' | 'refused' | 'reported' | 'expired';
+
+export interface CreateQrPairingOptions {
+  /** RFC 7638 thumbprint of the browser's key, base64url (`@touchque/web` `browserKey.thumbprint()`). */
+  keyThumbprint: string;
+  /** The end user's IP: the phone is told where the browser is and whether it is on the same network. */
+  clientIp?: string;
+  /** The end user's User-Agent. */
+  userAgent?: string;
+  /** A short name the phone shows, e.g. "Chrome 155". */
+  browser?: string;
+  /** E.g. "macOS 15". */
+  os?: string;
+  /** How long the QR code can be scanned: 30 to 300 seconds (default 120). */
+  ttlSeconds?: number;
+}
+
+export interface CreatedQrPairing {
+  pairingId: string;
+  expiresAt: string;
+  /** The one-time nonce in the QR code (TouchQue keeps only its SHA-256). */
+  nonce: string;
+  /** What the QR code says: `touchque://pair-browser?v=1&p=…&n=…&k=…`. */
+  uri: string;
+}
+
+export interface QrPairingProximity {
+  sameNetwork: boolean | null;
+  sameCountry: boolean | null;
+  /** `different_country`, `different_network`. */
+  warnings: string[];
+}
+
+export interface QrPairing {
+  pairingId: string;
+  state: QrPairingState;
+  keyThumbprint: string;
+  expiresAt: string;
+  /** The login request made with this pairing, once asked. */
+  requestId?: string | null;
+  /** Present once scanned: the user whose account is on the phone that scanned. */
+  externalUsername?: string;
+  scannedAt?: string;
+  confirmedAt?: string | null;
+  phone?: { country: string | null; location: string | null };
+  browser?: { country: string | null; location: string | null };
+  proximity?: QrPairingProximity;
+  /** Why it was refused (by you, or declined on the phone). */
+  outcome?: { reason: string; message: string; caseCode: string | null; deviceCode: string | null; at: string };
+  /** The person said someone told them to scan it: their 2FA is frozen. */
+  reportedAt?: string;
+}
+
+export interface RefuseQrPairingOptions {
+  reason: 'policy' | 'device_not_approved' | 'too_many_browsers' | 'rate_limited' | 'no_account' | 'other';
+  /** What the phone shows, up to 300 characters of plain text. */
+  message: string;
+  /** A "Why?" case code for your support team (`ABC-123`). */
+  caseCode?: string;
+  /** Your code for the computer (`ABC-123`), shown on the phone. */
+  deviceCode?: string;
+}
+
+// ── Device risk ─────────────────────────────────────────────────────────────
+
+/** The page a device report comes from. Device risk is for these pages only. */
+export type DeviceRiskEvent = 'sign_in' | 'sign_up' | 'password_reset' | 'approval';
+
+/** `deviceRisk.check(requestId, options)`: everything but the page's requestId. */
+export interface DeviceRiskCheckRequest {
+  /** Instead of a requestId: the page's report (`deviceRisk.collect()`), relayed untouched. */
+  deviceRisk?: string | null;
+  /** What the page is (default `'sign_in'`). */
+  event?: DeviceRiskEvent;
+  /** The account the page is for, when there is one (accounts per visitor). One account per identification. */
+  externalUsername?: string;
+  /** The end user's address; default: the address the browser identified from. */
+  clientIp?: string;
+}
+
+export interface DeviceRiskCheckOptions {
+  /**
+   * The page's identification: the `touchque_request_id` form field the
+   * script tag fills, or `deviceRisk.identify()` in `@touchque/web`. As it
+   * came: missing or empty is answered `report: 'missing'`.
+   */
+  requestId?: string | null;
+  /** Or the page's report (`deviceRisk.collect()`), relayed untouched. */
+  deviceRisk?: string | null;
+  /** What the page is (default `'sign_in'`). */
+  event?: DeviceRiskEvent;
+  /** The account the page is for, when there is one (accounts per visitor). One account per identification. */
+  externalUsername?: string;
+  /** The end user's address; default: the address the browser identified from. */
+  clientIp?: string;
+}
+
+/** A device signal. Each one only ever asks for more; none blocks. */
+export interface DeviceRiskSignal {
+  /**
+   * `device_tampered`, `device_virtual`, `device_geo_mismatch`, `device_many_accounts`,
+   * `device_signup_burst`, `device_id_resets`, `device_many_countries`, `device_wrong_site`,
+   * `device_report_replayed`, `device_private_window` (context only), `device_step_up_by_admin`,
+   * `device_identification_missing` (the page sent no identification, or one that does not verify).
+   * New codes are added in minor versions.
+   */
+  code: string;
+  text: string;
+  /** What a step-up for it should be; `none`: context only. */
+  strength: 'number_match' | 'passkey' | 'none';
+  /** Scored now; false: reported only (shadow) until TouchQue enforces it. */
+  enforced?: boolean;
+  evidence?: Record<string, unknown>;
+}
+
+/** The visitor as the API shows it: coarse labels only. */
+export interface DeviceRiskVisitor {
+  firstSeenAt: string;
+  lastSeenAt: string;
+  seenCount: number;
+  /** Your admin's mark. */
+  status: 'none' | 'trusted' | 'step_up';
+  labels: Record<string, unknown>;
+  matchedBy?: 'key' | 'sid' | 'traits' | 'new';
+  sealed?: boolean;
+}
+
+/** An identification as TouchQue saw it (GET /device-risk/events/:requestId): trust this, never the page's copy. */
+export interface DeviceRiskEventResult {
+  requestId: string;
+  /** `tqv_…`: this browser in your workspace only. */
+  visitorId: string;
+  confidence: number;
+  matchedBy: 'key' | 'sid' | 'traits' | 'new';
+  sealed: boolean;
+  purpose: DeviceRiskEvent;
+  origin: string | null;
+  country: string | null;
+  createdAt: string;
+  usedAt: string | null;
+  externalUsername: string | null;
+  visitor: DeviceRiskVisitor;
+  facts: { codes: string[]; evidence: Record<string, unknown>; reset: boolean; twins: boolean; privateWindow: boolean };
+  /** The risk engine's verdict (null before the engine answered). */
+  verdict: { stepUp: boolean; wouldStepUp: boolean; requires: string; mode: string; signals: DeviceRiskSignal[]; caseCode: string | null } | null;
+}
+
+export interface DeviceRiskCheckResult {
+  /**
+   * What the page had sent: `ok`; `replayed` (another account, or sent twice);
+   * or no usable identification, which raises `device_identification_missing`:
+   * `missing` (none or empty: the tag removed or blocked), `unknown` (made up,
+   * or another workspace's), `expired` (over 15 minutes old), `invalid` (a
+   * relayed report that cannot be read).
+   */
+  report: 'ok' | 'replayed' | 'missing' | 'unknown' | 'expired' | 'invalid';
+  requestId: string | null;
+  /** `tqv_…`: this browser in your workspace only. */
+  visitorId: string | null;
+  confidence: number | null;
+  visitor: DeviceRiskVisitor | null;
+  /** The risk engine's counts for this visitor. */
+  counts: Record<string, number> | null;
+  signals: DeviceRiskSignal[];
+  /** Ask for more on this page (an emailed code, a passkey, a number-matched approval). Never a reason to refuse. */
+  stepUp: boolean;
+  /** A signal that asks was raised, enforced or not. */
+  wouldStepUp: boolean;
+  requires: 'none' | 'number_match' | 'passkey';
+  /** `enforce` when at least one raised signal is enforced. */
+  mode: 'shadow' | 'enforce';
+  /** "Why?": the decision record, opened by this code in the dashboard. */
   caseCode?: string;
 }
 
@@ -1161,8 +1625,18 @@ import {
   WaitForApprovalResult,
   VerifyOptions,
   VerifyChallenge,
+  SecurityChanges,
 } from '../types';
 import { TouchQueTimeoutError, TouchQueRejectedError, TouchQuePasskeyRequiredError } from '../errors';
+
+/** Dates go out as ISO 8601; strings and epoch milliseconds as given. */
+function securityChangesBody(changes: SecurityChanges): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [kind, at] of Object.entries(changes)) {
+    if (at !== undefined && at !== null) out[kind] = at instanceof Date ? at.toISOString() : at;
+  }
+  return out;
+}
 
 export class Login {
   constructor(private readonly http: HttpClient) {}
@@ -1204,6 +1678,17 @@ export class Login {
    * });
    *
    * @example
+   * // A payout to an IBAN: shown in full on the phone, flagged when it imitates
+   * // one the user used before; rules can refuse it within 24 h of a 2FA change
+   * const response = await tq.login.request({
+   *   externalUsername: 'user@company.com',
+   *   type: 'PAYOUT',
+   *   destination: { kind: 'iban', value: 'TR33 0006 1005 1978 6457 8413 26', known: savedIbans },
+   *   securityChanges: { password: user.passwordChangedAt },
+   * });
+   * if (response.destination?.lookalike.length) logSuspiciousPayee(response);
+   *
+   * @example
    * // Silent sign-ins: once approved, this browser is known (see `risk.check`)
    * const response = await tq.login.request({
    *   externalUsername: 'user@company.com',
@@ -1221,8 +1706,17 @@ export class Login {
       ...(options.details && { details: options.details }),
       ...(options.requireBiometric && { requireBiometric: options.requireBiometric }),
       ...(options.requireNumberMatch && { requireNumberMatch: options.requireNumberMatch }),
+      ...((options.challengeDigits === 2 || options.challengeDigits === 3) && { challengeDigits: options.challengeDigits }),
+      ...(options.expiresIn !== undefined && { expiresIn: options.expiresIn }),
+      ...(options.qrPairing && { qrPairing: options.qrPairing }),
       ...(options.browserProof && { browserProof: options.browserProof }),
+      ...(options.clientSignals && { clientSignals: options.clientSignals }),
+      ...(options.deviceRisk && { deviceRisk: options.deviceRisk }),
+      ...(options.deviceRiskRequestId && { deviceRiskRequestId: options.deviceRiskRequestId }),
       ...(options.context && { context: options.context }),
+      ...(options.securityChanges && { securityChanges: securityChangesBody(options.securityChanges) }),
+      ...(options.destination && { destination: options.destination }),
+      ...(options.locale && { locale: options.locale }),
     });
   }
 

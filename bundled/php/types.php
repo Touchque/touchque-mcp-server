@@ -96,12 +96,18 @@ namespace TouchQue;
 
 use TouchQue\Http\HttpClient;
 use TouchQue\Resources\Actions;
+use TouchQue\Resources\Agents;
+use TouchQue\Resources\Identity;
+use TouchQue\Resources\Mobile;
+use TouchQue\Resources\QrPairings;
+use TouchQue\Resources\DeviceRisk;
 use TouchQue\Resources\ActionTypes;
 use TouchQue\Resources\Auth;
 use TouchQue\Resources\Login;
 use TouchQue\Resources\Offline;
 use TouchQue\Resources\Risk;
 use TouchQue\Resources\Recovery;
+use TouchQue\Resources\Assist;
 use TouchQue\Resources\WebAuthn;
 use TouchQue\Resources\Webhook;
 
@@ -130,6 +136,18 @@ class TouchQue
     public Risk $risk;
     /** Never Locked Out: move a user whose phone is gone to a new phone, with colleagues vouching. */
     public Recovery $recovery;
+    /** Help desk: IT working on a person's account in the open, and checks on their phone before sensitive actions. */
+    public Assist $assist;
+    /** AI agents as identities of their own: register (public key), suspend, revoke, kill switch. The agent itself uses TouchQueAgent. */
+    public Agents $agents;
+    /** TouchQue Login: your customers' accounts, roles, organizations, apps, connections (Management API). */
+    public Identity $identity;
+    /** Mobile SDK: your own iOS/Android app approves for your users (enrollment tokens, devices, settings). */
+    public Mobile $mobile;
+    /** Pairing a browser by QR code: the phone that scans it is the one asked to approve. */
+    public QrPairings $qrPairings;
+    /** Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on). */
+    public DeviceRisk $deviceRisk;
 
     private Config $config;
 
@@ -147,6 +165,12 @@ class TouchQue
         $this->actions = new Actions($httpClient);
         $this->risk = new Risk($httpClient);
         $this->recovery = new Recovery($httpClient);
+        $this->assist = new Assist($httpClient);
+        $this->agents = new Agents($httpClient);
+        $this->identity = new Identity($httpClient);
+        $this->mobile = new Mobile($httpClient);
+        $this->qrPairings = new QrPairings($httpClient);
+        $this->deviceRisk = new DeviceRisk($httpClient);
     }
 
     /** @internal used by Guard/Steps to sign/verify the browser-facing token. */
@@ -634,6 +658,20 @@ class Login
      * browser, so a later `$tq->risk->check()` can let the same browser in
      * without asking. Pass it through untouched; an invalid proof only means
      * "a browser TouchQue does not know".
+     *
+     * `$securityChanges`: when the user's sign-in security last changed in your
+     * system, ['password' | 'mfa' | 'device' | 'email' | 'phone' => DateTimeInterface,
+     * ISO 8601 string or epoch milliseconds]. TouchQue adds what it saw itself;
+     * access rules and Actions read the minutes since each
+     * (`minutesSince.mfaChange`, `.deviceChange`, ...), e.g. refuse
+     * `PAYOUT_CHANGE` within 24 hours of a 2FA change.
+     *
+     * `$destination`: where the action sends money or value,
+     * ['kind' => 'iban' | 'account' | 'wallet' | 'address' | 'payee', 'value' => ..., 'known' => [...]].
+     * The phone shows it in full in groups of four, with a warning when it
+     * looks like one the user used before but is not the same; the answer's
+     * `destination` is ['known' => bool, 'lookalike' => [...]]. Do not repeat
+     * it in `$details`. `$locale` ('tr' default, or 'en') is the language of those rows.
      */
     public function request(
         string $externalUsername,
@@ -645,7 +683,16 @@ class Login
         bool $requireNumberMatch = false,
         ?array $details = null,
         ?string $browserProof = null,
-        ?array $context = null
+        ?array $context = null,
+        ?int $challengeDigits = null,
+        ?int $expiresIn = null,
+        ?string $clientSignals = null,
+        ?array $securityChanges = null,
+        ?array $destination = null,
+        ?string $locale = null,
+        ?string $qrPairing = null,
+        ?string $deviceRisk = null,
+        ?string $deviceRiskRequestId = null
     ): array {
         $payload = [
             'externalUsername' => $externalUsername,
@@ -667,6 +714,30 @@ class Login
         if ($requireNumberMatch) {
             $payload['requireNumberMatch'] = true;
         }
+        if ($challengeDigits === 2 || $challengeDigits === 3) {
+            $payload['challengeDigits'] = $challengeDigits;
+        }
+        // How long the push waits for the person: 30 (default) to 300 seconds.
+        if ($expiresIn !== null) {
+            $payload['expiresIn'] = $expiresIn;
+        }
+        // A browser pairing by QR code ($tq->qrPairings), confirmed on the phone: only that phone is asked, once.
+        if ($qrPairing !== null && $qrPairing !== '') {
+            $payload['qrPairing'] = $qrPairing;
+        }
+        // The end user's page check from @touchque/web: a browser driven by software asks with number matching.
+        if ($clientSignals !== null && $clientSignals !== '') {
+            $payload['clientSignals'] = $clientSignals;
+        }
+        // The page's device report from @touchque/web (deviceRisk.collect), when the workspace turned Device risk on:
+        // its signals only ever ask for more.
+        if ($deviceRisk !== null && $deviceRisk !== '') {
+            $payload['deviceRisk'] = $deviceRisk;
+        }
+        // Or the page's identification (deviceRisk.identify), for this account only.
+        if ($deviceRiskRequestId !== null && $deviceRiskRequestId !== '') {
+            $payload['deviceRiskRequestId'] = $deviceRiskRequestId;
+        }
         if ($details !== null && count($details) > 0) {
             $payload['details'] = $details;
         }
@@ -677,8 +748,30 @@ class Login
         if ($context !== null && count($context) > 0) {
             $payload['context'] = $context;
         }
+        if ($securityChanges !== null && count($securityChanges) > 0) {
+            $payload['securityChanges'] = self::securityChangesBody($securityChanges);
+        }
+        if ($destination !== null && count($destination) > 0) {
+            $payload['destination'] = $destination;
+        }
+        if ($locale !== null && $locale !== '') {
+            $payload['locale'] = $locale;
+        }
 
         return $this->http->post('/login/request', $payload);
+    }
+
+    /** Dates go out as ISO 8601; strings and epoch milliseconds as given. */
+    private static function securityChangesBody(array $changes): array
+    {
+        $out = [];
+        foreach ($changes as $kind => $at) {
+            if ($at === null) {
+                continue;
+            }
+            $out[$kind] = $at instanceof \DateTimeInterface ? $at->format(\DateTimeInterface::ATOM) : $at;
+        }
+        return $out;
     }
 
     /**
@@ -722,9 +815,13 @@ class Login
         ?array $details = null,
         ?string $browserProof = null,
         ?callable $onChallenge = null,
-        ?array $context = null
+        ?array $context = null,
+        ?int $challengeDigits = null,
+        ?array $securityChanges = null,
+        ?array $destination = null,
+        ?string $locale = null
     ): array {
-        $requestResult = $this->request($externalUsername, $type, $referenceId, $clientIp, $userAgent, $requireBiometric, $requireNumberMatch, $details, $browserProof, $context);
+        $requestResult = $this->request($externalUsername, $type, $referenceId, $clientIp, $userAgent, $requireBiometric, $requireNumberMatch, $details, $browserProof, $context, $challengeDigits, null, null, $securityChanges, $destination, $locale);
         $requestId = $requestResult['requestId'];
         if (!empty($requestResult['requiresPasskey'])) {
             throw new TouchQuePasskeyRequiredError($requestId);
@@ -937,6 +1034,65 @@ class Offline
             $body['requestId'] = $requestId;
         }
         return $this->notApprovedAsResult(fn () => $this->http->post('/offline/totp/verify', $body));
+    }
+
+    /**
+     * For checking typed time-based codes while your server cannot reach TouchQue (an outage):
+     * salted, slow digests of each user's next codes, never a key. Up to 1,000 users and 24,000 user-steps a call; `$steps` 1-480
+     * (default 480, four hours) from `$fromStep` (default: the current 30-second step). Returns
+     * `{ stepSeconds, fromStep, steps, notAfterStep, kdf, users: [{ externalUsername, fromStep, salt, digests }] }`
+     * with only the users who can use time-based codes now. Check a typed code with
+     * `matchTotpVerifier()`. Requires the workspace policies `offlineTotpEnabled` and
+     * `outageVerifiersEnabled`. Fetch again every few minutes: removed and frozen users fall out.
+     */
+    public function totpVerifiers(array $externalUsernames, ?int $fromStep = null, ?int $steps = null): array
+    {
+        $body = ['externalUsernames' => array_values($externalUsernames)];
+        if ($fromStep !== null) {
+            $body['fromStep'] = $fromStep;
+        }
+        if ($steps !== null) {
+            $body['steps'] = $steps;
+        }
+        return $this->http->post('/offline/totp/verifiers', $body);
+    }
+
+    /**
+     * Checks a typed code against one user's digests from `totpVerifiers()` without calling
+     * TouchQue. Returns the step the code belongs to (the current one or one either side), or
+     * null. Accept each step once: remember the step you accepted for the user and refuse codes
+     * for it or an older one. `$at`: Unix time (default now).
+     */
+    public static function matchTotpVerifier(array $verifiers, array $user, string $code, ?int $at = null): ?int
+    {
+        $given = str_replace([' ', '-', "\t"], '', strtoupper($code));
+        if (strlen($given) !== 7 || strspn($given, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789') !== 7) {
+            return null;
+        }
+        $now = intdiv($at ?? time(), (int) $verifiers['stepSeconds']);
+        $salt = base64_decode($user['salt'], true);
+        if ($salt === false) {
+            return null;
+        }
+        $digests = base64_decode($user['digests'], true);
+        $length = (int) $verifiers['kdf']['length'];
+        if ($digests === false || $length <= 0) {
+            return null;
+        }
+        foreach ([$now, $now - 1, $now + 1] as $step) {
+            if ($step < $user['fromStep'] || $step > $verifiers['notAfterStep']) {
+                continue;
+            }
+            $i = ($step - $user['fromStep']) * 2 * $length;
+            if ($i + 2 * $length > strlen($digests)) {
+                continue;
+            }
+            $got = hash_pbkdf2('sha256', $given, $salt . ':' . $step, (int) $verifiers['kdf']['iterations'], $length, true);
+            if (hash_equals(substr($digests, $i, $length), $got) || hash_equals(substr($digests, $i + $length, $length), $got)) {
+                return $step;
+            }
+        }
+        return null;
     }
 
     private function notApprovedAsResult(callable $call): array

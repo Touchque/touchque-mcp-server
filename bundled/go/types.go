@@ -99,6 +99,8 @@ func (c *Config) sanitize() {
 
 package touchque
 
+import "time"
+
 // GenerateSecretResponse represents the response from generating a new secret
 type GenerateSecretResponse struct {
 	Secret           string `json:"secret"`
@@ -149,6 +151,51 @@ type LoginRequestResponse struct {
 	// real-time phishing proxy in front of your site gets the approval refused
 	// (webhook reason phishing_origin). Allow its host in your CSP.
 	Canary *Canary `json:"canary,omitempty"`
+	// Destination is set only when the request had one: whether the user used
+	// it before and the earlier destinations it looks like.
+	Destination *DestinationCheck `json:"destination,omitempty"`
+}
+
+// SecurityChanges says when the user's sign-in security last changed in your
+// own system. A zero time is left out. TouchQue adds what it saw itself;
+// access rules and Actions read the minutes since each
+// (minutesSince.mfaChange, .deviceChange, ...), e.g. refuse PAYOUT_CHANGE
+// within 24 hours of a 2FA change.
+type SecurityChanges struct {
+	Password time.Time
+	MFA      time.Time
+	Device   time.Time
+	Email    time.Time
+	Phone    time.Time
+}
+
+// Destination is where an action sends money or value. The phone shows it in
+// full in groups of four, with a warning when it looks like one the user used
+// before but is not the same. Do not repeat it in Details.
+type Destination struct {
+	// Kind is iban, account, wallet, address or payee.
+	Kind string `json:"kind"`
+	// Value is the IBAN (its check digits must pass), account number, wallet
+	// address, delivery address or payee name.
+	Value string `json:"value"`
+	// Known lists destinations of this kind the user already uses in your
+	// system (saved payees, addresses); at most 50.
+	Known []string `json:"known,omitempty"`
+}
+
+// DestinationLookalike is an earlier destination the request's one resembles.
+type DestinationLookalike struct {
+	Field string `json:"field"`
+	// Reason is same_start_and_end, confusable, near_miss or mixed_script.
+	Reason string `json:"reason"`
+	// SimilarTo is the known destination, masked (TR33…1326).
+	SimilarTo string `json:"similarTo,omitempty"`
+}
+
+// DestinationCheck is what TouchQue made of a request's Destination.
+type DestinationCheck struct {
+	Known     bool                   `json:"known"`
+	Lookalike []DestinationLookalike `json:"lookalike"`
 }
 
 // Canary is the Mirror Alarm probe of one login request.
@@ -165,6 +212,55 @@ type GetUserResponse struct {
 	Frozen           bool   `json:"frozen"`
 	CreatedAt        string `json:"createdAt"`
 	ExpireAt         string `json:"expireAt,omitempty"`
+	// Device is the linked phone's posture, or nil before a phone is linked.
+	Device *DevicePosture `json:"device"`
+}
+
+// DevicePosture is what the TouchQue app last reported about the phone it runs
+// on, for device trust (GetUserResponse.Device). It is self-reported by the
+// app; Signed says the phone's hardware approval key signed the latest report.
+// An empty string means "not reported" (the API sends null).
+//
+// State is "compromised" (jailbroken/rooted or tampered), "unknown" (no report,
+// or one older than 14 days), "at_risk" (no screen lock, approval keys
+// destroyed, no hardware key, debugger or developer mode) or "healthy". Issues
+// lists the reasons: jailbroken, tampered, integrity_failed, no_report,
+// stale_report, no_screen_lock, keys_lost, no_hardware_key, debugger,
+// developer_mode.
+type DevicePosture struct {
+	// Platform is "ios" or "android".
+	Platform string `json:"platform,omitempty"`
+	// Model is the hardware model, e.g. "iPhone15,3" or "Pixel 8".
+	Model string `json:"model,omitempty"`
+	// OSVersion is e.g. "18.1" or "15".
+	OSVersion string `json:"osVersion,omitempty"`
+	// SecurityPatch is the Android security patch level (YYYY-MM-DD); empty on iOS.
+	SecurityPatch string `json:"securityPatch,omitempty"`
+	AppVersion    string `json:"appVersion,omitempty"`
+	// ScreenLock is nil when the phone did not say whether a passcode, PIN,
+	// pattern or password is set.
+	ScreenLock *bool `json:"screenLock"`
+	// Biometrics is "face", "touch", "fingerprint", "iris" or "none".
+	Biometrics string `json:"biometrics,omitempty"`
+	// Jailbroken: jailbroken or rooted, by the app's checks.
+	Jailbroken bool `json:"jailbroken"`
+	// Compromised: jailbroken/rooted or tampered; sticky until the phone
+	// reports clean for a cool-down.
+	Compromised bool `json:"compromised"`
+	// HardwareKey: approvals are signed by a Secure Enclave / Keystore key that
+	// still works.
+	HardwareKey bool `json:"hardwareKey"`
+	// Attestation is "apple-appattest" or "android-key", how the hardware key
+	// was proven genuine; empty when it was not attested.
+	Attestation string `json:"attestation,omitempty"`
+	// Signed: the latest report was signed by the phone's hardware key.
+	Signed bool `json:"signed"`
+	// ReportedAt is the ISO date-time of the latest report.
+	ReportedAt string   `json:"reportedAt,omitempty"`
+	LastSeenAt string   `json:"lastSeenAt,omitempty"`
+	LinkedAt   string   `json:"linkedAt,omitempty"`
+	State      string   `json:"state"`
+	Issues     []string `json:"issues"`
 }
 
 // WebAuthnRegisterVerifyResponse is returned by WebAuthn.RegisterVerify.
@@ -322,6 +418,24 @@ type Client struct {
 	// Recovery is Never Locked Out: move a user whose phone is gone to a new
 	// phone, with colleagues vouching.
 	Recovery *RecoveryResource
+	// Assist is the help desk: IT working on a person's account in the open,
+	// and checks on their phone before sensitive actions.
+	Assist *AssistResource
+	// Agents manages AI agents as identities of their own: register (public
+	// key), suspend, revoke, kill switch. The agent itself uses NewAgent.
+	Agents *AgentsResource
+	// Identity is the TouchQue Login Management API: your customers' accounts,
+	// roles, organizations, apps and connections.
+	Identity *IdentityResource
+	// Mobile is the Mobile SDK: your own iOS/Android app approves for your
+	// users (enrollment tokens, devices, settings).
+	Mobile *MobileResource
+	// QRPairings pairs a browser by QR code: the phone that scans it is the
+	// one asked to approve.
+	QRPairings *QRPairingsResource
+	// DeviceRisk is Device risk: the device on your sign-up, reset, sign-in
+	// or approval page (a paid add-on).
+	DeviceRisk *DeviceRiskResource
 
 	apiSecret string
 }
@@ -357,16 +471,22 @@ func newClient(config *Config) *Client {
 	httpWrapper := newHTTPClient(config)
 
 	return &Client{
-		Auth:      newAuthResource(httpWrapper),
-		Login:     newLoginResource(httpWrapper),
-		WebAuthn:  newWebAuthnResource(httpWrapper),
-		Webhook:   newWebhookResource(config),
-		Offline:   newOfflineResource(httpWrapper),
+		Auth:        newAuthResource(httpWrapper),
+		Login:       newLoginResource(httpWrapper),
+		WebAuthn:    newWebAuthnResource(httpWrapper),
+		Webhook:     newWebhookResource(config),
+		Offline:     newOfflineResource(httpWrapper),
 		ActionTypes: newActionTypesResource(httpWrapper),
 		Actions:     newActionsResource(httpWrapper),
-		Risk:      newRiskResource(httpWrapper),
-		Recovery:  newRecoveryResource(httpWrapper),
-		apiSecret: config.APISecret,
+		Risk:        newRiskResource(httpWrapper),
+		Recovery:    newRecoveryResource(httpWrapper),
+		Assist:      newAssistResource(httpWrapper),
+		Agents:      newAgentsResource(httpWrapper),
+		Identity:    newIdentityResource(httpWrapper),
+		Mobile:      newMobileResource(httpWrapper),
+		QRPairings:  newQRPairingsResource(httpWrapper),
+		DeviceRisk:  newDeviceRiskResource(httpWrapper),
+		apiSecret:   config.APISecret,
 	}
 }
 
@@ -961,6 +1081,31 @@ type LoginRequestOptions struct {
 	UserAgent          string // end user's User-Agent: shown as browser + device
 	RequireBiometric   bool
 	RequireNumberMatch bool
+	// ChallengeDigits: digits of the matching number when one is shown, 3
+	// for 100-999 (0 leaves it to the workspace policy). The longer of this
+	// and the workspace policy wins: a request can lengthen the number,
+	// never shorten it.
+	ChallengeDigits int
+	// ExpiresIn: how long the push waits for the person, in seconds: 30
+	// (default when 0) to 300. Longer suits a request the person has to read
+	// first, such as an AI agent asking on their behalf.
+	ExpiresIn int
+	// QRPairing: a browser pairing by QR code (Client.QRPairings), scanned and
+	// confirmed on the phone. Only the phone that scanned it is asked, once,
+	// with number matching, for the user it scanned for.
+	QRPairing string
+	// ClientSignals: the end user's page check from @touchque/web
+	// (startClientSignals().encode()), passed through untouched. A browser
+	// driven by software asks with number matching, or is refused where the
+	// workspace blocks it (403 automated_client).
+	ClientSignals string
+	// DeviceRisk: the page's device report from @touchque/web
+	// (deviceRisk.collect({ purpose })), passed through untouched. Used only
+	// when your workspace turned Device risk on: its signals only ever ask
+	// for more, and a device your admin marked "step up always" asks at once.
+	DeviceRisk string
+	// DeviceRiskRequestID: the page's identification (deviceRisk.identify()), preferred over DeviceRisk.
+	DeviceRiskRequestID string
 	// Details: transaction context for the approval screen. At most 8
 	// entries, labels <= 40 and values <= 120 characters; the API rejects
 	// (never truncates) anything outside those limits. Build it from
@@ -976,6 +1121,12 @@ type LoginRequestOptions struct {
 	// Context is for your TouchQue Actions only (event.context): roles, plan,
 	// amount… Any JSON object up to 4 KB. Never shown on the phone.
 	Context map[string]interface{}
+	// SecurityChanges: when the user's sign-in security last changed in your system.
+	SecurityChanges *SecurityChanges
+	// Destination: where the action sends money or value (shown in full on the phone).
+	Destination *Destination
+	// Locale: "tr" (default) or "en", the language of the rows TouchQue adds.
+	Locale string
 	// OnChallenge (VerifyWithOptions only) is called once, right after the
 	// request is created and before any waiting: show ChallengeCode to the
 	// user now; with number matching the phone asks for it. Not called when
@@ -1004,6 +1155,20 @@ func callOnChallenge(fn func(VerifyChallenge), c VerifyChallenge) {
 		}
 	}()
 	fn(c)
+}
+
+// securityChangesBody sends each known change as RFC 3339 UTC.
+func securityChangesBody(c *SecurityChanges) map[string]string {
+	out := map[string]string{}
+	if c == nil {
+		return out
+	}
+	for kind, at := range map[string]time.Time{"password": c.Password, "mfa": c.MFA, "device": c.Device, "email": c.Email, "phone": c.Phone} {
+		if !at.IsZero() {
+			out[kind] = at.UTC().Format(time.RFC3339)
+		}
+	}
+	return out
 }
 
 // Request sends a 2FA login/approval request to the user's mobile device.
@@ -1045,14 +1210,41 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if opts.RequireNumberMatch {
 		payload["requireNumberMatch"] = true
 	}
+	if opts.ChallengeDigits == 2 || opts.ChallengeDigits == 3 {
+		payload["challengeDigits"] = opts.ChallengeDigits
+	}
+	if opts.ExpiresIn != 0 {
+		payload["expiresIn"] = opts.ExpiresIn
+	}
+	if opts.QRPairing != "" {
+		payload["qrPairing"] = opts.QRPairing
+	}
 	if len(opts.Details) > 0 {
 		payload["details"] = opts.Details
 	}
 	if opts.BrowserProof != "" {
 		payload["browserProof"] = opts.BrowserProof
 	}
+	if opts.ClientSignals != "" {
+		payload["clientSignals"] = opts.ClientSignals
+	}
+	if opts.DeviceRisk != "" {
+		payload["deviceRisk"] = opts.DeviceRisk
+	}
+	if opts.DeviceRiskRequestID != "" {
+		payload["deviceRiskRequestId"] = opts.DeviceRiskRequestID
+	}
 	if len(opts.Context) > 0 {
 		payload["context"] = opts.Context
+	}
+	if changes := securityChangesBody(opts.SecurityChanges); len(changes) > 0 {
+		payload["securityChanges"] = changes
+	}
+	if opts.Destination != nil {
+		payload["destination"] = opts.Destination
+	}
+	if opts.Locale != "" {
+		payload["locale"] = opts.Locale
 	}
 	res, err := l.http.post("/login/request", payload)
 	if err != nil {
@@ -1086,6 +1278,12 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	// "Why?": the decision's case code and, for a step-up, its plain reasons.
 	if cc, ok := res["caseCode"].(string); ok {
 		resp.CaseCode = cc
+	}
+	if d, ok := res["destination"].(map[string]interface{}); ok {
+		check := &DestinationCheck{}
+		if decodeInto(d, check) == nil {
+			resp.Destination = check
+		}
 	}
 	if list, ok := res["reasons"].([]interface{}); ok {
 		for _, item := range list {

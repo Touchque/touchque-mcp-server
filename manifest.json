@@ -26,7 +26,7 @@
   },
   "tools": [
     { "name": "touchque_help", "description": "Start here: what this server does and which tool to call next." },
-    { "name": "get_touchque_docs", "description": "The official TouchQue SDK README for Node, Python, PHP or Go." },
+    { "name": "get_touchque_docs", "description": "The official TouchQue SDK README for Node, Python, PHP, Go, .NET, Ruby or Java." },
     { "name": "get_sdk_types", "description": "The TouchQue SDK's type and class reference." },
     { "name": "ping_touchque_api", "description": "Checks that a TouchQue backend answers." },
     { "name": "validate_integration", "description": "Checks a snippet against the current step-up model and security practice." },

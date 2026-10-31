@@ -213,6 +213,61 @@ Give Actions what only your server knows with the middleware's `context` option
 shown on the phone. Loosening calls need a capability an admin approves on their
 phone. Action types moved to `$tq->actionTypes` in 4.0.
 
+## AI agents (an identity per agent, never your API key)
+
+Register each agent with its **public** key; the private key stays where the agent runs. The agent signs in
+with its own key and gets a 10-minute token bound to that key (DPoP).
+
+```php
+use TouchQue\AgentKeys;
+use TouchQue\TouchQueAgent;
+
+$keys = AgentKeys::generate();                        // or where the agent runs
+$agent = $tq->agents->create('Invoice bot', ['PAY_INVOICE'], [
+    'publicKey' => $keys['publicJwk'],
+    'ownerEmail' => 'ada@acme.com',                   // accountable; the agent stops if they leave
+]);
+// store $agent['id'] and $keys['privateJwk'] in the agent's secrets (TQ_AGENT_ID, TQ_AGENT_KEY)
+
+$me = (new TouchQueAgent())->me();                    // in the agent
+```
+
+`$tq->agents->suspend($id)` stops one agent at once, `$tq->agents->setKillSwitch(true)` every agent.
+
+```php
+$ask = $agent->requestApproval('jane@example.com', 'PAY_INVOICE', [[
+    'type' => 'payment_initiation', 'instructedAmount' => ['currency' => 'TRY', 'amount' => '500.00'],
+    'creditorName' => 'Jane Doe', 'creditorAccount' => ['iban' => 'TR330006100519786457841326'],
+]], ['reason' => 'October rent']);
+$token = $agent->waitForApproval($ask['approvalId'])['approvalToken'];
+
+// in your executor, right before paying: used once, only for what you are about to do
+$approval = $tq->agents->redeemApproval($token, ['user' => 'jane@example.com', 'type' => 'PAY_INVOICE',
+    'authorizationDetails' => ['type' => 'payment_initiation', 'instructedAmount' => ['currency' => 'TRY', 'amount' => '500.00']]]);
+```
+
+
+### Cross App Access (ID-JAG) and A2A agent cards
+
+An organization's identity provider (TouchQue SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
+
+```php
+use TouchQue\AgentCard;
+use TouchQue\CrossAppAccess;
+use TouchQue\IdJagVerifier;
+
+$jag = CrossAppAccess::requestIdJag(['issuer' => 'https://sso.touchque.com', 'clientId' => $clientId, 'clientSecret' => $secret,
+    'idToken' => $idToken, 'audience' => 'https://auth.files.example']);
+$tokens = CrossAppAccess::redeemIdJag(['tokenEndpoint' => 'https://auth.files.example/token', 'clientId' => 'acme',
+    'clientSecret' => $filesSecret, 'assertion' => $jag['assertion']]);
+
+// Your own authorization server (jwt-bearer grant):
+$claims = (new IdJagVerifier(['issuer' => 'https://sso.touchque.com', 'audience' => 'https://auth.files.example']))
+    ->verify($_POST['assertion'], $authenticatedClientId);
+
+AgentCard::verify($cardJson, ['cardUrl' => 'https://agent.example/.well-known/agent-card.json']);
+```
+
 ## Silent sign-ins (stop asking when nothing is new)
 
 A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
@@ -377,11 +432,30 @@ $tq->login->reportFraud($requestId, 'chargeback', 'Disputed by card holder');
 // reason: 'chargeback' | 'account_takeover' | 'social_engineering' | 'other'
 ```
 
+## Pairing a browser by QR code
+
+Your page shows a QR code, the person scans it with the TouchQue app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (TouchQue keeps its hash).
+
+```php
+$p = $tq->qrPairings->create($keyThumbprint, ['clientIp' => $request->ip(), 'userAgent' => $request->userAgent()]);
+// show $p['uri'] (touchque://pair-browser?...) as a QR code; poll:
+$now = $tq->qrPairings->get($p['pairingId']);       // waiting -> scanned -> confirmed
+if ($now['state'] === 'confirmed') {
+    // the 17th argument (PHP 8: qrPairing: $p['pairingId'])
+    $tq->login->request($now['externalUsername'], 'LOGIN', null, null, null, false, false, null, null, null, null, null, null, null, null, null, $p['pairingId']);
+}
+// or: $tq->qrPairings->refuse($p['pairingId'], 'device_not_approved', 'Ask IT to approve this computer.');
+```
+
+`get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
+
 ## Errors
 
 All SDK exceptions extend `TouchQueException`: `TouchQueAPIException`,
 `TouchQueNetworkException`, `TouchQueConfigException`,
 `TouchQuePasskeyRequiredError`.
+
+A feature your organization cannot use here throws a `TouchQueFeatureException` (still a `TouchQueAPIException`, status 403) with `getFeature()` (`device_risk`, `ai_agents`…) and `getFeatureReason()`: `TouchQueFeatureNotInPlanException`, `TouchQueFeatureReadOnlyException` or `TouchQueFeatureOffException` — not in its plan (an owner or admin adds it in the TouchQue dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this TouchQue deployment.
 
 ## Security
 
@@ -402,3 +476,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## License
 
 MIT © [TouchQue](https://touchque.com)
+
+## TouchQue Login (hosted sign-in)
+
+Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [HOSTED_LOGIN.md](../HOSTED_LOGIN.md) for this SDK's client and a quickstart.

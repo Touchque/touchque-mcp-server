@@ -235,6 +235,79 @@ phone): `@require_touchque('SEND_MONEY', context=lambda: {'amount': request.json
 Loosening calls need a capability an admin approves on their phone. Action types
 moved to `tq.action_types` in 4.0.
 
+## AI agents (an identity per agent, never your API key)
+
+Register each agent with its **public** key; the private key stays where the agent runs. The agent signs in
+with its own key and gets a 10-minute token bound to that key (DPoP). `pip install "touchque-authenticator[agent]"`.
+
+```python
+from touchque import TouchQue, TouchQueAgent, generate_agent_key
+
+keys = generate_agent_key()                      # or where the agent runs
+agent = client.agents.create('Invoice bot', ['PAY_INVOICE'], public_key=keys['public_jwk'],
+                             owner_email='ada@acme.com', platform='langchain')
+# store agent['id'] and keys['private_jwk'] in the agent's secrets (TQ_AGENT_ID, TQ_AGENT_KEY)
+
+me = TouchQueAgent().me()                        # in the agent
+```
+
+`client.agents.suspend(agent_id)` stops one agent at once, `client.agents.set_kill_switch(True)` every agent.
+
+```python
+ask = agent.request_approval('jane@example.com', 'PAY_INVOICE', [{
+    'type': 'payment_initiation', 'instructedAmount': {'currency': 'TRY', 'amount': '500.00'},
+    'creditorName': 'Jane Doe', 'creditorAccount': {'iban': 'TR330006100519786457841326'}}], reason='October rent')
+reply(f"Type {ask['challengeCode']} in the TouchQue app to approve.")
+token = agent.wait_for_approval(ask['approvalId'])['approvalToken']
+
+# in your executor, right before paying: used once, only for what you are about to do
+approval = client.agents.redeem_approval(token, user='jane@example.com', type='PAY_INVOICE',
+    authorization_details={'type': 'payment_initiation', 'instructedAmount': {'currency': 'TRY', 'amount': '500.00'}})
+```
+
+In an agent framework, a policy says who approves which tool calls and what their
+phone shows; the tool runs only after the person approved, `current_approval()`
+holds the approval token inside it, and the function keeps its signature (LangChain
+`@tool`, LlamaIndex `FunctionTool.from_defaults`, OpenAI Agents SDK `@function_tool`):
+
+```python
+from touchque import ApprovalPolicy, with_touchque_approval, current_approval, approve_interruptions_with_touchque, touchque_can_use_tool, guard_mcp_session
+
+policy = ApprovalPolicy(agent, user='jane@example.com', type='PAY_INVOICE',
+    details=lambda a, tool: [{'type': 'payment_initiation', 'instructedAmount': {'currency': 'TRY', 'amount': a['amount']}, 'creditorAccount': {'iban': a['iban']}}],
+    on_challenge=lambda s, tool: reply(f"Type {s['challengeCode']} in the TouchQue app to approve."))
+
+@tool
+@with_touchque_approval(policy)
+def pay_invoice(iban: str, amount: str) -> str:
+    return bank.pay(iban, amount, current_approval()['approvalToken'])
+
+state = approve_interruptions_with_touchque(result, {'pay_invoice': policy})       # OpenAI Agents SDK
+options = ClaudeAgentOptions(can_use_tool=touchque_can_use_tool({'pay_invoice': policy}))  # Claude Agent SDK
+session = guard_mcp_session(session, {'pay_invoice': policy})                      # an MCP ClientSession
+```
+
+Agents also stop when their review date passes and when their owner leaves the organization.
+
+### Cross App Access (ID-JAG) and A2A agent cards
+
+An organization's identity provider (TouchQue SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
+
+```python
+from touchque import request_id_jag, redeem_id_jag, IdJagVerifier, verify_agent_card
+
+jag = request_id_jag(issuer='https://sso.touchque.com', client_id=client_id, client_secret=secret,
+                     id_token=id_token, audience='https://auth.files.example')
+tokens = redeem_id_jag(token_endpoint='https://auth.files.example/token', client_id='acme',
+                       client_secret=files_secret, assertion=jag['assertion'])
+
+# Your own authorization server (jwt-bearer grant):
+claims = IdJagVerifier(issuer='https://sso.touchque.com', audience='https://auth.files.example') \
+    .verify(form['assertion'], client_id=authenticated_client_id)
+
+verify_agent_card(card, card_url='https://agent.example/.well-known/agent-card.json')
+```
+
 ## Silent sign-ins (stop asking when nothing is new)
 
 A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
@@ -386,12 +459,29 @@ tq.login.report_fraud(request_id, reason='chargeback', note='Disputed by card ho
 # reason: 'chargeback' | 'account_takeover' | 'social_engineering' | 'other'
 ```
 
+## Pairing a browser by QR code
+
+Your page shows a QR code, the person scans it with the TouchQue app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (TouchQue keeps its hash).
+
+```python
+p = client.qr_pairings.create(key_thumbprint, client_ip=ip, user_agent=ua)
+# show p['uri'] (touchque://pair-browser?...) as a QR code; poll:
+now = client.qr_pairings.get(p['pairingId'])          # waiting -> scanned -> confirmed
+if now['state'] == 'confirmed':
+    client.login.request(now['externalUsername'], qr_pairing=p['pairingId'])
+# or: client.qr_pairings.refuse(p['pairingId'], 'device_not_approved', 'Ask IT to approve this computer.')
+```
+
+`get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
+
 ## Errors
 
 All SDK errors extend `TouchQueException`: `TouchQueAPIException`,
 `TouchQueNetworkException`, `TouchQueRejectedException`,
 `TouchQueTimeoutException`, `TouchQueWebhookSignatureException`,
 `TouchQueConfigException`.
+
+A feature your organization cannot use here raises a `TouchQueFeatureException` (still a `TouchQueAPIException`, status 403) with `feature` (`device_risk`, `ai_agents`…) and `feature_reason`: `TouchQueFeatureNotInPlanException`, `TouchQueFeatureReadOnlyException` or `TouchQueFeatureOffException` — not in its plan (an owner or admin adds it in the TouchQue dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this TouchQue deployment.
 
 ## Security
 
@@ -411,3 +501,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## License
 
 MIT © [TouchQue](https://touchque.com)
+
+## TouchQue Login (hosted sign-in)
+
+Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [HOSTED_LOGIN.md](../HOSTED_LOGIN.md) for this SDK's client and a quickstart.

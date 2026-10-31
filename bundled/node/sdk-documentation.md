@@ -242,6 +242,95 @@ Give Actions what only your server knows with `context` (never shown on the phon
 Loosening calls (`skipNumberMatch`, `overrideBlock`, `allowSilent`) need a capability an
 admin approves on their phone. Action types moved to `tq.actionTypes` in 4.0.
 
+## AI agents (an identity per agent, never your API key)
+
+Register each agent with its **public** key; the private key stays where the agent runs. The agent then signs in
+with its own key and gets a 10-minute token bound to that key (DPoP), so a leaked token is useless on its own.
+
+```ts
+import { TouchQue, TouchQueAgent, generateAgentKey } from '@touchque/node';
+
+// Once, from your server (needs an API key with the agents:write scope):
+const { privateJwk, publicJwk } = generateAgentKey();           // or generate it where the agent runs
+const agent = await tq.agents.create({
+  name: 'Invoice bot',
+  allowedTypes: ['PAY_INVOICE'],         // the only approvals it may ask for
+  publicKey: publicJwk,
+  ownerEmail: 'ada@acme.com',            // accountable person; the agent stops if they leave
+  platform: 'openai-agents',
+});
+// Store agent.id and privateJwk in the agent's secret store (TQ_AGENT_ID, TQ_AGENT_KEY).
+
+// In the agent:
+const me = await new TouchQueAgent().me();   // reads TQ_AGENT_ID / TQ_AGENT_KEY
+```
+
+Stop an agent at once with `tq.agents.suspend(id)` or every agent with `tq.agents.setKillSwitch(true)`; its
+tokens stop working immediately.
+
+### The agent asks, the person approves on the phone, your server executes once
+
+```ts
+// In the agent: structured details, never free text; TouchQue draws the phone's rows.
+const ask = await agent.requestApproval({
+  user: 'jane@example.com', type: 'PAY_INVOICE', reason: 'October rent',
+  authorizationDetails: [{ type: 'payment_initiation', instructedAmount: { currency: 'TRY', amount: '500.00' },
+    creditorName: 'Jane Doe', creditorAccount: { iban: 'TR33 0006 1005 1978 6457 8413 26' } }],
+});
+reply(`Type ${ask.challengeCode} in the TouchQue app to approve.`);
+const { approvalToken } = await agent.waitForApproval(ask.approvalId);
+
+// In your executor, right before paying: used once, and only for what you are about to do.
+const approval = await tq.agents.redeemApproval(approvalToken, {
+  user: 'jane@example.com', type: 'PAY_INVOICE',
+  authorizationDetails: { type: 'payment_initiation', instructedAmount: { currency: 'TRY', amount: '500.00' }, creditorAccount: { iban } },
+});
+```
+
+### In your agent framework
+
+A policy says who approves which tool calls and what their phone shows; the tool
+runs only after the person approved, and `currentApproval()` holds the approval
+token inside it. The wrapped function keeps its arguments, so it drops into
+LangChain's `tool()`, the Vercel AI SDK's `execute`, LlamaIndex's `FunctionTool`
+and the OpenAI Agents SDK's `tool({ execute })`.
+
+```ts
+import { withTouchQueApproval, currentApproval, approveInterruptionsWithTouchQue, touchqueCanUseTool, guardMcpClient } from '@touchque/node';
+
+const policy = {
+  agent, user: 'jane@example.com', type: 'PAY_INVOICE',
+  details: ({ iban, amount }) => [{ type: 'payment_initiation', instructedAmount: { currency: 'TRY', amount }, creditorAccount: { iban } }],
+  onChallenge: (s) => reply(`Type ${s.challengeCode} in the TouchQue app to approve.`),
+};
+const payInvoice = tool(withTouchQueApproval(async ({ iban, amount }) => bank.pay(iban, amount, currentApproval().approvalToken), policy), { name: 'pay_invoice', schema });
+
+// OpenAI Agents SDK (tools with needsApproval): ask the phone for each interruption, then resume.
+const state = await approveInterruptionsWithTouchQue(result, { pay_invoice: policy });
+// Claude Agent SDK: query({ prompt, options: { canUseTool: touchqueCanUseTool({ pay_invoice: policy }) } })
+// Any MCP client: the token reaches the server in _meta['touchque/approvalToken'].
+const guarded = guardMcpClient(mcpClient, { pay_invoice: policy });
+```
+ Agents also stop when their review date passes (`update(id, { reviewInDays })`
+renews it) and when their owner leaves the organization.
+
+### Cross App Access (ID-JAG) and A2A agent cards
+
+An organization's identity provider (TouchQue SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
+
+```ts
+import { requestIdJag, redeemIdJag, IdJagVerifier, verifyAgentCard } from '@touchque/node';
+
+const { assertion } = await requestIdJag({ issuer: 'https://sso.touchque.com', clientId, clientSecret, idToken, audience: 'https://auth.files.example' });
+const tokens = await redeemIdJag({ tokenEndpoint: 'https://auth.files.example/token', clientId: 'acme', clientSecret: filesSecret, assertion });
+
+// Your own authorization server (jwt-bearer grant):
+const idJag = new IdJagVerifier({ issuer: 'https://sso.touchque.com', audience: 'https://auth.files.example' });
+const claims = await idJag.verify(form.assertion, { clientId: authenticatedClientId });
+
+await verifyAgentCard(card, { cardUrl: 'https://agent.example/.well-known/agent-card.json' });
+```
+
 ## Silent sign-ins (stop asking when nothing is new)
 
 A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
@@ -393,11 +482,27 @@ await tq.login.reportFraud(requestId, { reason: 'chargeback', note: 'Disputed by
 // reason: 'chargeback' | 'account_takeover' | 'social_engineering' | 'other'
 ```
 
+## Pairing a browser by QR code
+
+Your page shows a QR code, the person scans it with the TouchQue app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (TouchQue keeps its hash).
+
+```ts
+const p = await tq.qrPairings.create({ keyThumbprint, clientIp: req.ip, userAgent: req.get('user-agent') });
+// show p.uri (touchque://pair-browser?…) as a QR code; poll:
+const now = await tq.qrPairings.get(p.pairingId);   // waiting → scanned → confirmed
+if (now.state === 'confirmed') await tq.login.request({ externalUsername: now.externalUsername!, type: 'LOGIN', qrPairing: p.pairingId });
+// or: await tq.qrPairings.refuse(p.pairingId, { reason: 'device_not_approved', message: 'Ask IT to approve this computer.' });
+```
+
+`get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
+
 ## Errors
 
 All SDK errors extend `TouchQueError`: `TouchQueAPIError`, `TouchQueNetworkError`,
 `TouchQueRejectedError`, `TouchQueTimeoutError`, `TouchQueWebhookSignatureError`,
 `TouchQueConfigError`, `TouchQuePasskeyRequiredError`.
+
+A feature your organization cannot use here answers 403 as a `TouchQueFeatureError` (still a `TouchQueAPIError`) with `feature` (`device_risk`, `ai_agents`…) and `reason`: `TouchQueFeatureNotInPlanError`, `TouchQueFeatureReadOnlyError` or `TouchQueFeatureOffError` — not in its plan (an owner or admin adds it in the TouchQue dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this TouchQue deployment.
 
 ## Security
 
@@ -418,3 +523,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## License
 
 MIT © [TouchQue](https://touchque.com)
+
+## TouchQue Login (hosted sign-in)
+
+Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [HOSTED_LOGIN.md](../HOSTED_LOGIN.md) for this SDK's client and a quickstart.

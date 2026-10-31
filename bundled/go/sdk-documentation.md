@@ -223,6 +223,55 @@ Give Actions what only your server knows with `RequireOptions.Context` (never
 shown on the phone). Loosening calls need a capability an admin approves on
 their phone. Action types moved to `client.ActionTypes` in v4.
 
+## AI agents (an identity per agent, never your API key)
+
+Register each agent with its **public** key; the private key stays where the agent runs. The agent signs in
+with its own key and gets a 10-minute token bound to that key (DPoP).
+
+```go
+keys, _ := touchque.GenerateAgentKey("ES256") // or where the agent runs
+agent, err := client.Agents.Create(touchque.CreateAgentParams{
+	Name: "Invoice bot", AllowedTypes: []string{"PAY_INVOICE"}, PublicKey: keys.PublicJWK,
+	OwnerEmail: "ada@acme.com", // accountable; the agent stops if they leave
+})
+// store agent.ID and keys.PrivateJWK in the agent's secrets (TQ_AGENT_ID, TQ_AGENT_KEY)
+
+a, _ := touchque.NewAgent(touchque.AgentConfig{}) // in the agent
+me, err := a.Me()
+```
+
+`client.Agents.Suspend(id, reason)` stops one agent at once, `client.Agents.SetKillSwitch(true, reason)` every agent.
+
+```go
+ask, _ := a.RequestApproval(touchque.AgentApprovalParams{User: "jane@example.com", Type: "PAY_INVOICE", Reason: "October rent",
+	AuthorizationDetails: []map[string]interface{}{{"type": "payment_initiation",
+		"instructedAmount": map[string]interface{}{"currency": "TRY", "amount": "500.00"},
+		"creditorName": "Jane Doe", "creditorAccount": map[string]interface{}{"iban": "TR330006100519786457841326"}}}})
+done, err := a.WaitForApproval(ctx, ask.ApprovalID, 0, 0)
+
+// in your executor, right before paying: used once, only for what you are about to do
+approval, err := client.Agents.RedeemApproval(done.ApprovalToken, touchque.ApprovalExpectation{User: "jane@example.com", Type: "PAY_INVOICE",
+	AuthorizationDetails: map[string]interface{}{"type": "payment_initiation", "instructedAmount": map[string]interface{}{"currency": "TRY", "amount": "500.00"}}})
+```
+
+
+### Cross App Access (ID-JAG) and A2A agent cards
+
+An organization's identity provider (TouchQue SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
+
+```go
+jag, err := touchque.RequestIDJAG(ctx, touchque.RequestIDJAGParams{Issuer: "https://sso.touchque.com",
+	ClientID: clientID, ClientSecret: secret, IDToken: idToken, Audience: "https://auth.files.example"})
+tokens, err := touchque.RedeemIDJAG(ctx, touchque.RedeemIDJAGParams{TokenEndpoint: "https://auth.files.example/token",
+	ClientID: "acme", ClientSecret: filesSecret, Assertion: jag.Assertion})
+
+// Your own authorization server (jwt-bearer grant):
+v, _ := touchque.NewIDJAGVerifier(touchque.IDJAGVerifierConfig{Issuer: "https://sso.touchque.com", Audience: "https://auth.files.example"})
+claims, err := v.Verify(ctx, r.PostFormValue("assertion"), authenticatedClientID)
+
+res, err := touchque.VerifyAgentCard(ctx, cardJSON, touchque.VerifyAgentCardOptions{CardURL: "https://agent.example/.well-known/agent-card.json"})
+```
+
 ## Silent sign-ins (stop asking when nothing is new)
 
 A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
@@ -377,10 +426,52 @@ TouchQue's risk engine learns from, and it stays in your audit log:
 _, err := tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: touchque.FraudChargeback})
 ```
 
+## VPN and other RADIUS clients (`RadiusClient`)
+
+The TouchQue RADIUS proxy (a program your company runs next to its VPN) asks
+TouchQue SSO for the second factor of a VPN sign-in through `RadiusClient`. You
+only need it to build your own RADIUS server. The key and secret are a VPN app's
+proxy credential (dashboard: Organization → VPN & RADIUS); requests are signed
+like every TouchQue API call.
+
+```go
+rc, err := touchque.NewRadiusClient(&touchque.Config{APIKey: "tq_rad_…", APISecret: secret})
+app, err := rc.Config(ctx, touchque.RadiusProxyInfo{Version: "1.0.0", Clients: 1})
+d, err := rc.Authenticate(ctx, touchque.RadiusAuthRequest{
+    Username: "jdoe", PrimaryVerified: true, // your directory checked the password
+    NAS: touchque.RadiusNAS{IP: "10.0.0.1"}, Client: touchque.RadiusEndUser{IP: "85.105.10.20"},
+})
+switch d.Decision {
+case "challenge": // show d.Number in an Access-Challenge; when the user presses OK:
+    d, err = rc.Wait(ctx, d.TransactionID, 20*time.Second) // or rc.Passcode(ctx, d.TransactionID, code)
+case "pending": // a plain push
+    d, err = rc.Wait(ctx, d.TransactionID, 20*time.Second)
+}
+// "accept", "reject" (d.Reason, d.CaseCode), or "pending" after Wait: ask again.
+```
+
+## Pairing a browser by QR code
+
+Your page shows a QR code, the person scans it with the TouchQue app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (TouchQue keeps its hash).
+
+```go
+p, err := client.QRPairings.Create(ctx, touchque.CreateQRPairingOptions{KeyThumbprint: thumb, ClientIP: ip, UserAgent: r.UserAgent()})
+// show p.URI (touchque://pair-browser?...) as a QR code; poll:
+now, err := client.QRPairings.Get(ctx, p.PairingID) // waiting -> scanned -> confirmed
+if now.State == "confirmed" {
+	_, err = client.Login.RequestWithOptions(touchque.LoginRequestOptions{ExternalUsername: now.ExternalUsername, Type: "LOGIN", QRPairing: p.PairingID})
+}
+// or: client.QRPairings.Refuse(ctx, p.PairingID, touchque.RefuseQRPairingOptions{Reason: "device_not_approved", Message: "Ask IT to approve this computer."})
+```
+
+`get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
+
 ## Errors
 
 `APIError`, `NetworkError`, `RejectedError`, `TimeoutError`,
 `WebhookSignatureError`, `ConfigError` — check with `errors.As`.
+
+A feature your organization cannot use here comes back as a 403 `*APIError` with `Feature` set (`device_risk`, `ai_agents`…); match it with `errors.Is(err, touchque.ErrFeatureNotInPlan)`, `ErrFeatureReadOnly` or `ErrFeatureOff` (`ErrFeature` for any of them) — not in its plan (an owner or admin adds it in the TouchQue dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this TouchQue deployment.
 
 ## Security
 
@@ -400,3 +491,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## License
 
 MIT © [TouchQue](https://touchque.com)
+
+## TouchQue Login (hosted sign-in)
+
+Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [HOSTED_LOGIN.md](../HOSTED_LOGIN.md) for this SDK's client and a quickstart.

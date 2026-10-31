@@ -35,12 +35,13 @@ assistant to ask for exact file paths rather than guess.
 
 ## Language support
 
-All 4 official server SDKs — **Node, Python, PHP, Go** — share the exact
-same step-up model (`start`/`check`/`complete`, a one-line framework guard),
-just with per-language naming. Every relevant tool below takes an optional
-`language` argument (`"node"` | `"python"` | `"php"` | `"go"`, default
-`"node"`) — the AI assistant should ask which language your backend is in
-and pass it, rather than assuming Node.
+All 7 official server SDKs — **Node, Python, PHP, Go, .NET, Ruby, Java** —
+share the exact same step-up model (`start`/`check`/`complete`, a one-line
+framework guard), just with per-language naming. Every relevant tool below
+takes an optional `language` argument (`"node"` | `"python"` | `"php"` |
+`"go"` | `"dotnet"` | `"ruby"` | `"java"`, default `"node"`) — the AI
+assistant should ask which language your backend is in and pass it, rather
+than assuming Node.
 
 | Language | Package | Guard | Relay router (routes `@touchque/web` calls) |
 |---|---|---|---|
@@ -48,6 +49,9 @@ and pass it, rather than assuming Node.
 | Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` | `touchque_relay_blueprint` (Flask), `touchque_relay_router` (FastAPI), `touchque_relay_view` / `touchque_relay_urls` (Django), `RelayHandler` |
 | PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` | `TouchQueRelay::routes($router, 'touchque')` (Laravel), `TouchQue\Relay\RelayHandler` |
 | Go | `github.com/Touchque/touchque-go/v4` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
+| .NET | `TouchQue.AspNetCore` | `.RequireTouchQue("ACTION")`, `[RequireTouchQue("ACTION")]` | `app.MapTouchQueRelay("/touchque", new RelayOptions<HttpContext> { GetUserId, GetLoginUser })` |
+| Ruby | `touchque` | `require_touchque "ACTION"` (Rails), `TouchQue::Guard.run` | `TouchQue::Rack::Relay.new(get_user_id:, get_login_user:)` |
+| Java | `com.touchque:touchque-spring-boot-starter` | `@RequireTouchQue("ACTION")` (Spring Boot), `Guard.run` | a `RelayOptions<HttpServletRequest>` bean, or `new RelayHandler<>(tq, options)` |
 
 The docs, types, prompts and validator cover the SDK 3.2.0 API: the relay
 routers above, device-proof verification (`verifyApprovalProof` /
@@ -279,6 +283,9 @@ node scripts/sync-bundled.js /path/to/sdks
 | `python/` | `sdks/touchque-python/README.md` + `touchque/{__init__.py,config.py,client.py,steps.py,approval_proof.py,resources/login.py,resources/offline.py,contrib/flask.py,contrib/fastapi.py,contrib/django.py}` + public part of `touchque/relay.py` |
 | `php/` | `sdks/touchque-php/README.md` + `src/{Config.php,TouchQue.php,Steps.php,ApprovalProof.php,Resources/Login.php,Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchQueMiddleware.php,Laravel/TouchQueRelay.php}` + public part of `src/Relay/RelayHandler.php` |
 | `go/` | `sdks/touchque-go/README.md` + `touchque/{config.go,types.go,client.go,steps.go,offline.go,login.go,http_middleware.go,approval_proof.go}` + public part of `touchque/relay.go` |
+| `dotnet/` | `sdks/touchque-dotnet/README.md` + `src/TouchQue/{TouchQueOptions.cs,TouchQueClient.cs,Flow/Steps.cs,Flow/Guard.cs,Crypto/ApprovalProof.cs,Resources/Login.cs}` + public part of `Relay/RelayHandler.cs` + `src/TouchQue.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchQue.cs,TouchQueRelayEndpoints.cs}` |
+| `ruby/` | `sdks/touchque-ruby/README.md` + `lib/touchque/{client.rb,errors.rb,flow.rb,approvals.rb,resources/login.rb,rails/guard.rb,rack/relay.rb}` + public part of `lib/touchque/relay.rb` |
+| `java/` | `sdks/touchque-java/README.md` + `touchque-java/src/main/java/com/touchque/{TouchQueOptions,TouchQueClient,flow/Step,flow/StartOptions,flow/CompleteExpectations,flow/Approval,crypto/ApprovalProof,resources/Login,resources/LoginRequestOptions,relay/RelayOptions}.java` + public parts of `flow/Guard.java` and `relay/RelayHandler.java` + the starter's `com/touchque/spring/{RequireTouchQue,TouchQueGuardOptions,TouchQueWebhookListener,TouchQueSpring}.java` |
 
 ## Testing
 

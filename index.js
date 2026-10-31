@@ -64,14 +64,14 @@ const DOCS_DIR = path.join(__dirname, "bundled");
 // users should never need to set this — the bundled copies below are
 // current as of this package's version and need no network access at all.
 // Only applies to the Node docs (the docs site doesn't serve the other
-// three languages' bundles under separate paths).
+// languages' bundles under separate paths).
 const DOCS_BASE_URL = process.env.DOCS_BASE_URL || null;
 
-// All 4 server SDKs share the same API (start/check/complete, the
+// All 7 server SDKs share the same API (start/check/complete, the
 // requireTouchQue-equivalent framework adapter, guard tokens) — this map is
 // what makes every doc/type/validation tool "language-aware" instead of
-// hardcoded to Node. Add a language here (and its bundled/<lang>/ files)
-// when a 5th SDK ships.
+// hardcoded to Node. Add a language here (and its bundled/<lang>/ files,
+// from scripts/sync-bundled.js) when another SDK ships.
 const LANGUAGES = {
   node: {
     label: "Node.js", package: "@touchque/node", typesFile: "types.ts", typesMime: "text/x-typescript",
@@ -88,6 +88,18 @@ const LANGUAGES = {
   go: {
     label: "Go", package: "github.com/Touchque/touchque-go/v4", typesFile: "types.go", typesMime: "text/x-go",
     frameworks: ["net-http", "other"],
+  },
+  dotnet: {
+    label: ".NET", package: "TouchQue.AspNetCore", typesFile: "types.cs", typesMime: "text/x-csharp",
+    frameworks: ["aspnetcore", "other"],
+  },
+  ruby: {
+    label: "Ruby", package: "touchque", typesFile: "types.rb", typesMime: "text/x-ruby",
+    frameworks: ["rails", "sinatra", "rack", "other"],
+  },
+  java: {
+    label: "Java", package: "com.touchque:touchque-spring-boot-starter", typesFile: "types.java", typesMime: "text/x-java",
+    frameworks: ["spring-boot", "other"],
   },
 };
 const DEFAULT_LANGUAGE = "node";
@@ -107,6 +119,9 @@ const FRAMEWORK_LANGUAGE = {
   flask: "python", django: "python", fastapi: "python",
   laravel: "php",
   "net-http": "go",
+  aspnetcore: "dotnet",
+  rails: "ruby", sinatra: "ruby", rack: "ruby",
+  "spring-boot": "java",
 };
 
 // Per-language static-analysis patterns for validate_integration. Every
@@ -200,6 +215,66 @@ const VALIDATION_PATTERNS = {
     proofNames: {
       verify: "touchque.VerifyApprovalProof(proof, touchque.VerifyApprovalProofOptions{RequestID, Type, Details, ChallengeCode, ExpectedPublicKey})",
       unpinned: "AllowUnpinnedKey: true", pin: "ExpectedPublicKey", storedKey: "the proof's PublicKey",
+    },
+  },
+  dotnet: {
+    guardName: ".RequireTouchQue(\"ACTION\") / [RequireTouchQue(\"ACTION\")] / MapTouchQueRelay",
+    import: /using\s+TouchQue(?:\.AspNetCore|\.Relay)?\s*;|\bAddTouchQue\s*\(/,
+    stepUpGuard: /\.RequireTouchQue\s*\(|\[RequireTouchQue\s*\(|\bMapTouchQueRelay\s*\(|\bnew\s+RelayHandler\s*</,
+    legacyGuard: null,
+    syncVerify: /\.Login\.VerifyAsync\s*\(/,
+    oldActionTypes: { re: /\.Actions\s*\.\s*DefineAsync\s*\(/, now: "tq.ActionTypes.DefineAsync(...)" },
+    hardcodedSecret: /ApiKey\s*=\s*"tq_[a-zA-Z0-9]{6,}"|ApiSecret\s*=\s*"[a-zA-Z0-9]{10,}"/,
+    // AddTouchQue() and new TouchQueClient() read TQ_API_KEY / TQ_API_SECRET themselves.
+    envVar: /Environment\.GetEnvironmentVariable\s*\(|Configuration\[|\bAddTouchQue\s*\(\s*\)|new\s+TouchQueClient\s*\(\s*\)/,
+    errorHandling: /try\s*{|catch\s*\(/,
+    offlineChallenge: /\.Offline\s*\.\s*ChallengeAsync\s*\(/,
+    offlineLinked: /\bRequestId\b/,
+    proofVerify: /\bApprovalProof\.Verify\s*\(/,
+    proofUnpinned: /\bAllowUnpinnedKey\s*=\s*true\b/,
+    proofNames: {
+      verify: "ApprovalProof.Verify(proof, new ApprovalProofOptions { RequestId, Type, Details, ChallengeCode, ExpectedPublicKey })",
+      unpinned: "AllowUnpinnedKey = true", pin: "ExpectedPublicKey", storedKey: "the proof's publicKey",
+    },
+  },
+  ruby: {
+    guardName: "require_touchque / TouchQue::Rack::Relay / TouchQue::Guard.run",
+    import: /require\s+['"]touchque|\bTouchQue::|gem\s+['"]touchque['"]|\binclude\s+TouchQue::/,
+    stepUpGuard: /\brequire_touchque\s+['"]|TouchQue::Rack::Relay\.new\s*\(|TouchQue::Guard\.run\s*\(|TouchQue::RelayHandler\.new\s*\(/,
+    legacyGuard: null,
+    syncVerify: /\.login\.verify\s*\(/,
+    oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
+    hardcodedSecret: /api_key:\s*['"]tq_[a-zA-Z0-9]{6,}['"]|api_secret:\s*['"][a-zA-Z0-9]{10,}['"]/,
+    // TouchQue.client reads config.touchque, credentials.touchque, then the environment.
+    envVar: /ENV\[|ENV\.fetch\s*\(|credentials|TouchQue\.client\b|\brequire_touchque\b/,
+    errorHandling: /\brescue\b/,
+    offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
+    offlineLinked: /\brequest_id\b/,
+    proofVerify: /\bApprovalProof\.verify\s*\(/,
+    proofUnpinned: /\ballow_unpinned_key:\s*true\b/,
+    proofNames: {
+      verify: "TouchQue::ApprovalProof.verify(proof, request_id: ..., type: ..., details: ..., challenge_code: ..., expected_public_key: ...)",
+      unpinned: "allow_unpinned_key: true", pin: "expected_public_key:", storedKey: "proof[\"publicKey\"]",
+    },
+  },
+  java: {
+    guardName: "@RequireTouchQue(\"ACTION\") / RelayOptions bean (Spring Boot starter) / Guard.run",
+    import: /import\s+com\.touchque\.|\bcom\.touchque\b/,
+    stepUpGuard: /@RequireTouchQue\s*\(|\bRelayOptions\s*<|\bGuard\.run\s*\(|\bnew\s+RelayHandler\s*</,
+    legacyGuard: null,
+    syncVerify: /\.login\(\)\s*\.\s*verify\s*\(/,
+    oldActionTypes: { re: /\.actions\(\)\s*\.\s*define\s*\(/, now: "tq.actionTypes().define(...)" },
+    hardcodedSecret: /\.apiKey\s*\(\s*"tq_[a-zA-Z0-9]{6,}"\s*\)|\.apiSecret\s*\(\s*"[a-zA-Z0-9]{10,}"\s*\)|touchque\.api-secret\s*=\s*[a-zA-Z0-9]{10,}/,
+    // The starter's bean and new TouchQueClient() read touchque.* / TQ_API_KEY / TQ_API_SECRET themselves.
+    envVar: /System\.getenv\s*\(|\$\{TQ_|@Value\s*\(|new\s+TouchQueClient\s*\(\s*\)|@RequireTouchQue\s*\(|\bTouchQueClient\s+\w+\s*[,)]/,
+    errorHandling: /try\s*{|catch\s*\(|@ExceptionHandler/,
+    offlineChallenge: /\.offline\(\)\s*\.\s*challenge\s*\(/,
+    offlineLinked: /\brequestId\b/,
+    proofVerify: /\bApprovalProof\.verify\s*\(/,
+    proofUnpinned: /\.allowUnpinnedKey\s*\(\s*true\s*\)/,
+    proofNames: {
+      verify: "ApprovalProof.verify(proof, new ApprovalProof.Options(requestId, type).details(...).challengeCode(...).expectedPublicKey(...))",
+      unpinned: ".allowUnpinnedKey(true)", pin: ".expectedPublicKey(...)", storedKey: "proof.get(\"publicKey\")",
     },
   },
 };
@@ -306,14 +381,16 @@ const HELP_TEXT = `TouchQue MCP Server — start here.
 This server helps you add TouchQue push-2FA/passkey step-up authentication
 to a codebase correctly, using the CURRENT API (requireTouchQue-equivalent
 guard / 202 + X-TouchQue-Token step-up — not the old synchronous
-.login.verify()). All 4 official server SDKs — Node, Python, PHP, Go —
-share this exact same model, just with per-language naming
-(requireTouchQue / @require_touchque / ->middleware('touchque:...') /
-touchque.Require).
+.login.verify()). All 7 official server SDKs — Node, Python, PHP, Go,
+.NET, Ruby, Java — share this exact same model, just with per-language
+naming (requireTouchQue / @require_touchque / ->middleware('touchque:...') /
+touchque.Require / .RequireTouchQue("ACTION") / require_touchque /
+@RequireTouchQue("ACTION") in Spring Boot).
 
 FIRST, if you don't already know: ask which language/framework the user's
 backend is in. Every tool below takes an optional "language" argument
-("node" | "python" | "php" | "go", defaults to "node") — pass the right
+("node" | "python" | "php" | "go" | "dotnet" | "ruby" | "java", defaults
+to "node") — pass the right
 one, don't assume Node.
 
 Call these tools, in this order, for a normal integration:
@@ -551,7 +628,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_touchque_docs",
-        description: "Returns the official TouchQue SDK README for the given language (install, the step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone. All 4 server SDKs (Node, Python, PHP, Go) share the same API shape.",
+        description: "Returns the official TouchQue SDK README for the given language (install, the step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone. All 7 server SDKs (Node, Python, PHP, Go, .NET, Ruby, Java) share the same API shape.",
         inputSchema: {
           type: "object",
           properties: {
@@ -885,16 +962,18 @@ IDENTITY & AUTHORITY
 MANDATORY PRE-FLIGHT SEQUENCE (follow in order)
 ═══════════════════════════════════════════════════
 STEP 1 — DISCOVERY
-  → Ask the user which BACKEND LANGUAGE this is (Node / Python / PHP / Go)
-    — do not assume Node. All 4 have the exact same step-up model, just
-    with different guard names (requireTouchQue / @require_touchque /
-    ->middleware('touchque:...') / touchque.Require). Once you know the
+  → Ask the user which BACKEND LANGUAGE this is (Node / Python / PHP / Go /
+    .NET / Ruby / Java) — do not assume Node. All 7 have the exact same
+    step-up model, just with different guard names (requireTouchQue /
+    @require_touchque / ->middleware('touchque:...') / touchque.Require /
+    .RequireTouchQue / require_touchque / @RequireTouchQue). Once you know the
     language, call get_touchque_docs({ language }) and
     get_sdk_types({ language }) for THAT language — the JS example below is
     a reference for the shape of the contract, not something to hand-
     translate into another language without checking the real signature.
   → Also ask: framework (Express/Fastify/NestJS/Next.js for Node; Flask/
-    Django/FastAPI for Python; Laravel for PHP; net/http for Go), and the
+    Django/FastAPI for Python; Laravel for PHP; net/http for Go; ASP.NET
+    Core for .NET; Rails/Sinatra/Rack for Ruby; Spring Boot for Java), and the
     file(s) where authentication currently lives.
   → Do NOT write any code yet.
 

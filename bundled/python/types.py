@@ -13,6 +13,10 @@ from .client import TouchQue, get_default_client
 from .exceptions import (
     TouchQueException,
     TouchQueAPIException,
+    TouchQueFeatureException,
+    TouchQueFeatureNotInPlanException,
+    TouchQueFeatureReadOnlyException,
+    TouchQueFeatureOffException,
     TouchQueNetworkException,
     TouchQueTimeoutException,
     TouchQueRejectedException,
@@ -20,6 +24,8 @@ from .exceptions import (
     TouchQueWebhookReplayException,
     TouchQueConfigException,
     TouchQuePasskeyRequiredError,
+    TouchQueApprovalError,
+    TouchQueApprovalMismatchError,
 )
 from .resources.webhook import ReplayCache, MemoryReplayCache, WebhookReasons, WebhookEvents
 from .steps import normalize_details, details_digest
@@ -27,8 +33,27 @@ from .approval_proof import verify_approval_proof
 from .guard import run_guard, guard_input_from_headers, silent_input_from_headers, BROWSER_HEADER
 from .resources.risk import parse_risk_check
 from .resources.recovery import is_recovery_open
+from .resources.mobile import is_mobile_push_expired, mobile_push_from_webhook
+from .resources.assist import is_assist_check_passed
+from .resources.qr_pairings import QR_PAIRING_REFUSAL_REASONS, qr_pairing_uri
+from .resources.device_risk import DEVICE_RISK_EVENTS, DEVICE_RISK_REPORTS, parse_device_risk_check
+from .resources.action_types import SECOND_THOUGHT_QUESTIONS
 from .relay import RelayHandler, RelayResponse, RELAY_ROUTES
 from .rate_limiter import FixedWindowLimiter
+from .agent import TouchQueAgent, generate_agent_key, jwk_thumbprint
+from .agent_frameworks import (
+    ApprovalPolicy, approve_interruptions_with_touchque, current_approval, guard_mcp_session, require_agent_approval,
+    touchque_can_use_tool, with_touchque_approval,
+)
+from .org_agent import TouchQueOrgAgent, file_token, github_actions_token
+from .mcp_auth import McpAuth, McpAuthError
+from .cross_app_access import (
+    ID_JAG_TOKEN_TYPE, IdJagError, IdJagVerifier, redeem_id_jag, request_id_jag,
+)
+from .agent_card import AgentCardError, canonical_json, sign_agent_card, verify_agent_card
+from .approval_token import matches_authorization_details, verify_approval_token_with
+from .hosted_login import HostedLogin, HostedLoginError, AuthorizationRequest, TokenSet, UserApprovalRequest, CONNECTION_TOKEN_TYPE
+from .my_account import MyAccount, MyAccountError
 
 __all__ = [
     'TouchQue',
@@ -36,6 +61,10 @@ __all__ = [
     'get_default_client',
     'TouchQueException',
     'TouchQueAPIException',
+    'TouchQueFeatureException',
+    'TouchQueFeatureNotInPlanException',
+    'TouchQueFeatureReadOnlyException',
+    'TouchQueFeatureOffException',
     'TouchQueNetworkException',
     'TouchQueTimeoutException',
     'TouchQueRejectedException',
@@ -56,10 +85,51 @@ __all__ = [
     'BROWSER_HEADER',
     'parse_risk_check',
     'is_recovery_open',
+    'is_mobile_push_expired',
+    'mobile_push_from_webhook',
+    'is_assist_check_passed',
+    'QR_PAIRING_REFUSAL_REASONS',
+    'qr_pairing_uri',
+    'DEVICE_RISK_EVENTS',
+    'DEVICE_RISK_REPORTS',
+    'parse_device_risk_check',
+    'SECOND_THOUGHT_QUESTIONS',
     'RelayHandler',
     'RelayResponse',
     'RELAY_ROUTES',
     'FixedWindowLimiter',
+    'TouchQueAgent',
+    'ApprovalPolicy',
+    'with_touchque_approval',
+    'current_approval',
+    'require_agent_approval',
+    'approve_interruptions_with_touchque',
+    'touchque_can_use_tool',
+    'guard_mcp_session',
+    'generate_agent_key',
+    'TouchQueOrgAgent',
+    'github_actions_token',
+    'file_token',
+    'McpAuth',
+    'McpAuthError',
+    'ID_JAG_TOKEN_TYPE',
+    'IdJagError',
+    'IdJagVerifier',
+    'request_id_jag',
+    'redeem_id_jag',
+    'AgentCardError',
+    'canonical_json',
+    'sign_agent_card',
+    'verify_agent_card',
+    'jwk_thumbprint',
+    'HostedLogin',
+    'CONNECTION_TOKEN_TYPE',
+    'HostedLoginError',
+    'UserApprovalRequest',
+    'MyAccount',
+    'MyAccountError',
+    'AuthorizationRequest',
+    'TokenSet',
 ]
 
 # ─────────────────────────────────────────────────────────────
@@ -133,11 +203,17 @@ from .config import Config
 from .http_client import HttpClient
 from .resources.action_types import ActionTypes
 from .resources.actions import Actions
+from .resources.agents import Agents
+from .resources.identity import Identity
 from .resources.auth import Auth
 from .resources.login import Login
 from .resources.offline import Offline
 from .resources.risk import Risk
 from .resources.recovery import Recovery
+from .resources.mobile import Mobile
+from .resources.qr_pairings import QrPairings
+from .resources.device_risk import DeviceRisk
+from .resources.assist import Assist
 from .resources.webauthn import WebAuthn
 from .resources.webhook import Webhook
 from .steps import LoginDetails, check as _check, complete as _complete, start as _start
@@ -174,6 +250,19 @@ class TouchQue:
         self.risk = Risk(http)
         #: Never Locked Out: move a user whose phone is gone to a new phone, with colleagues vouching.
         self.recovery = Recovery(http)
+        #: Help desk: IT working on a person's account in the open, and checks on their phone before sensitive actions.
+        self.assist = Assist(http)
+        #: AI agents as identities of their own: register (public key), suspend, revoke, kill switch.
+        #: The agent itself uses ``touchque.TouchQueAgent``.
+        self.agents = Agents(http)
+        # TouchQue Login Management API: customers' accounts, roles, organizations, apps
+        self.identity = Identity(http)
+        #: Mobile SDK: your own iOS/Android app approves for your users (enrollment tokens, devices, settings).
+        self.mobile = Mobile(http)
+        #: Pairing a browser by QR code: the phone that scans it is the one asked to approve.
+        self.qr_pairings = QrPairings(http)
+        #: Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on).
+        self.device_risk = DeviceRisk(http)
 
     # ── headless step-up (see touchque.steps / touchque.guard) ─────────────
 
@@ -567,6 +656,7 @@ def verify_approval_proof(
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Union
 
 # Label -> value, or an ordered list of {'label': ..., 'value': ...}.
@@ -577,12 +667,28 @@ from ..exceptions import TouchQueTimeoutException, TouchQueRejectedException, To
 
 logger = logging.getLogger('touchque')
 
+SECURITY_CHANGE_KINDS = ('password', 'mfa', 'device', 'email', 'phone')
+DESTINATION_KINDS = ('iban', 'account', 'wallet', 'address', 'payee')
+
+
+def _security_changes_body(changes: Dict[str, Any]) -> Dict[str, Any]:
+    """datetimes go out as ISO 8601 (a naive one is taken as UTC); strings and epoch milliseconds as given."""
+    out: Dict[str, Any] = {}
+    for kind, at in changes.items():
+        if at is None:
+            continue
+        if isinstance(at, datetime):
+            out[kind] = (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).isoformat()
+        else:
+            out[kind] = at
+    return out
+
 
 class Login:
     def __init__(self, http: HttpClient):
         self._http = http
 
-    def request(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def request(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, context: Optional[Dict[str, Any]] = None, challenge_digits: Optional[int] = None, expires_in: Optional[int] = None, client_signals: Optional[str] = None, security_changes: Optional[Dict[str, Any]] = None, destination: Optional[Dict[str, Any]] = None, locale: Optional[str] = None, qr_pairing: Optional[str] = None, device_risk: Optional[str] = None, device_risk_request_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Request a 2FA login/approval from the user's mobile device.
 
@@ -608,6 +714,40 @@ class Login:
 
         ``context``: for your TouchQue Actions only (``event.context``): roles,
         plan, amount… Any JSON object up to 4 KB. Never shown on the phone.
+
+        ``expires_in``: how long the push waits for the person, in seconds:
+        30 (default) to 300; longer suits a request the person has to read
+        first, such as an AI agent asking on their behalf.
+
+        ``qr_pairing``: a browser pairing by QR code (``client.qr_pairings``),
+        scanned and confirmed on the phone: only the phone that scanned it is
+        asked, once, with number matching, for the user it scanned for.
+
+        ``device_risk_request_id``: the page's identification from ``@touchque/web``
+        (``deviceRisk.identify()``), for this account only; or ``device_risk``,
+        the page's report (``deviceRisk.collect({ purpose })``), passed through untouched. Used
+        only when your workspace turned Device risk on: its signals only ever
+        ask for more, and a device your admin marked "step up always" asks at once.
+
+        ``client_signals``: the end user's page check from ``@touchque/web``
+        (``startClientSignals().encode()``), passed through untouched. A browser
+        driven by software asks with number matching, or is refused where the
+        workspace blocks it (403 ``automated_client``).
+
+        ``security_changes``: when the user's sign-in security last changed in
+        your system, ``{'password', 'mfa', 'device', 'email', 'phone'}`` each a
+        datetime, ISO 8601 string or epoch milliseconds. TouchQue adds what it
+        saw itself; access rules and Actions read the minutes since each
+        (``minutesSince.mfaChange``, ``.deviceChange``, ...), e.g. refuse
+        ``PAYOUT_CHANGE`` within 24 hours of a 2FA change.
+
+        ``destination``: where the action sends money or value,
+        ``{'kind': 'iban'|'account'|'wallet'|'address'|'payee', 'value': ..., 'known': [...]}``.
+        The phone shows it in full in groups of four, with a warning when it
+        looks like one the user used before but is not the same; the answer's
+        ``destination`` is ``{'known', 'lookalike'}``. Do not repeat it in ``details``.
+
+        ``locale``: ``'tr'`` (default) or ``'en'``, the language of those rows.
         """
         payload = {
             'externalUsername': external_username,
@@ -623,12 +763,30 @@ class Login:
             payload['requireBiometric'] = True
         if require_number_match:
             payload['requireNumberMatch'] = True
+        if challenge_digits in (2, 3):
+            payload['challengeDigits'] = challenge_digits
+        if expires_in is not None:
+            payload['expiresIn'] = expires_in
+        if qr_pairing:
+            payload['qrPairing'] = qr_pairing
+        if client_signals:
+            payload['clientSignals'] = client_signals
+        if device_risk:
+            payload['deviceRisk'] = device_risk
+        if device_risk_request_id:
+            payload['deviceRiskRequestId'] = device_risk_request_id
         if details:
             payload['details'] = details
         if browser_proof:
             payload['browserProof'] = browser_proof
         if context:
             payload['context'] = context
+        if security_changes:
+            payload['securityChanges'] = _security_changes_body(security_changes)
+        if destination:
+            payload['destination'] = destination
+        if locale:
+            payload['locale'] = locale
 
         return self._http.post('/login/request', payload)
 
@@ -636,7 +794,7 @@ class Login:
         """Check the current status of a login request."""
         return self._http.get(f"/login/status/{quote(request_id, safe='')}")
 
-    def verify(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, timeout_ms: int = 30000, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, on_challenge: Optional[Callable[[Dict[str, Any]], Any]] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def verify(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, timeout_ms: int = 30000, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, on_challenge: Optional[Callable[[Dict[str, Any]], Any]] = None, context: Optional[Dict[str, Any]] = None, challenge_digits: Optional[int] = None, security_changes: Optional[Dict[str, Any]] = None, destination: Optional[Dict[str, Any]] = None, locale: Optional[str] = None) -> Dict[str, Any]:
         """Request a login and wait (poll) until the user approves or rejects it.
 
         With number matching (your ``require_number_match``, a workspace policy
@@ -655,7 +813,7 @@ class Login:
         a phishing-resistant policy (``reason='policy'``, no push sent), or the
         user tapped Approve during a call (``reason='step_up'``, Vishing Shield):
         finish it in the browser with ``@touchque/web``."""
-        request_result = self.request(external_username, type, reference_id, client_ip, user_agent, require_biometric, require_number_match, details, browser_proof, context)
+        request_result = self.request(external_username, type, reference_id, client_ip, user_agent, require_biometric, require_number_match, details, browser_proof, context, challenge_digits, security_changes=security_changes, destination=destination, locale=locale)
         request_id = request_result['requestId']
         if request_result.get('requiresPasskey'):
             raise TouchQuePasskeyRequiredError(request_id)
@@ -744,10 +902,16 @@ class Login:
 # From touchque/resources/offline.py — Offline Sign (QR + code)
 # ─────────────────────────────────────────────────────────────
 
-from typing import Any, Dict, Optional
+import base64
+import hashlib
+import hmac
+import time
+from typing import Any, Dict, List, Optional
 
 from ..http_client import HttpClient
 from ..exceptions import TouchQueAPIException
+
+_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 
 class Offline:
@@ -818,6 +982,51 @@ class Offline:
         if request_id is not None:
             body['requestId'] = request_id
         return self._not_approved_as_result(lambda: self._http.post('/offline/totp/verify', body))
+
+    def totp_verifiers(self, external_usernames: List[str], from_step: Optional[int] = None,
+                       steps: Optional[int] = None) -> Dict[str, Any]:
+        """For checking typed time-based codes while your server cannot reach
+        TouchQue (an outage): salted, slow digests of each user's next codes,
+        never a key. Up to 1,000 users and 24,000 user-steps a call; ``steps`` 1-480 (default 480, four hours)
+        from ``from_step`` (default: the current 30-second step). Returns
+        ``{stepSeconds, fromStep, steps, notAfterStep, kdf, users: [{externalUsername,
+        fromStep, salt, digests}]}`` with only the users who can use time-based codes
+        now. Check a typed code with :meth:`match_totp_verifier`. Requires the
+        workspace policies ``offlineTotpEnabled`` and ``outageVerifiersEnabled``.
+        Fetch again every few minutes: removed and frozen users fall out."""
+        body: Dict[str, Any] = {'externalUsernames': list(external_usernames)}
+        if from_step is not None:
+            body['fromStep'] = from_step
+        if steps is not None:
+            body['steps'] = steps
+        return self._http.post('/offline/totp/verifiers', body)
+
+    @staticmethod
+    def match_totp_verifier(verifiers: Dict[str, Any], user: Dict[str, Any], code: str,
+                            at: Optional[float] = None) -> Optional[int]:
+        """Checks a typed code against one user's digests from
+        :meth:`totp_verifiers` without calling TouchQue. Returns the step the
+        code belongs to (the current one or one either side), or ``None``.
+        Accept each step once: remember the step you accepted for the user and
+        refuse codes for it or an older one. ``at``: Unix time (default now)."""
+        given = ''.join(code.upper().split()).replace('-', '') if isinstance(code, str) else ''
+        if len(given) != 7 or any(c not in _CODE_ALPHABET for c in given):
+            return None
+        kdf = verifiers['kdf']
+        length = kdf['length']
+        now = int((time.time() if at is None else at) // verifiers['stepSeconds'])
+        salt = base64.b64decode(user['salt'])
+        digests = base64.b64decode(user['digests'])
+        for step in (now, now - 1, now + 1):
+            if step < user['fromStep'] or step > verifiers['notAfterStep']:
+                continue
+            i = (step - user['fromStep']) * 2 * length
+            if i + 2 * length > len(digests):
+                continue
+            got = hashlib.pbkdf2_hmac('sha256', given.encode(), salt + f':{step}'.encode(), kdf['iterations'], length)
+            if hmac.compare_digest(digests[i:i + length], got) or hmac.compare_digest(digests[i + length:i + 2 * length], got):
+                return step
+        return None
 
     @staticmethod
     def _not_approved_as_result(call) -> Dict[str, Any]:

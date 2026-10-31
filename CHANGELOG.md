@@ -4,6 +4,16 @@
 
 TouchQue as a tool for AI agents.
 
+- The .NET, Ruby and Java SDKs (4.1.0): `language` takes `"dotnet"`, `"ruby"`
+  and `"java"` in `get_touchque_docs`, `get_sdk_types` and
+  `validate_integration` (frameworks `aspnetcore`, `rails` / `sinatra` /
+  `rack`, `spring-boot`), with their bundled README and type reference and
+  their guards in the validator (`.RequireTouchQue` / `[RequireTouchQue]` /
+  `MapTouchQueRelay`, `require_touchque` / `TouchQue::Rack::Relay`,
+  `@RequireTouchQue` / a `RelayOptions` bean).
+- Bundled docs and types regenerated from the 4.1.0 SDKs (QR pairing, Device
+  risk, typed feature errors, the Management API additions).
+
 - With an agent's own TouchQue identity (`TQ_AGENT_ID` + `TQ_AGENT_KEY`, the
   agent's private key; never a `tq_` API key) the server adds five tools:
   `touchque_agent_whoami`, `touchque_request_approval`,

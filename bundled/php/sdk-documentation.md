@@ -449,6 +449,17 @@ if ($now['state'] === 'confirmed') {
 
 `get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```php
+$key = \TouchQue\CodeReply::newKey();   // keep $key['privateKey'] for this request
+$sent = $tq->login->request($user, reply: ['kind' => 'code', 'key' => $key['publicKey'], 'channel' => 'sms', 'target' => '+**********26']);
+$status = $tq->login->status($sent['requestId']);   // once CONFIRMED
+$code = isset($status['reply']) ? \TouchQue\CodeReply::open($key['privateKey'], $sent['requestId'], $status['reply']['ct']) : null;
+```
+
 ## Errors
 
 All SDK exceptions extend `TouchQueException`: `TouchQueAPIException`,
@@ -472,6 +483,10 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 - PHP 8.1+
 - A [TouchQue Dashboard](https://authenticator.touchque.com) account
 - Laravel 10+ for the bundled middleware (optional)
+
+## Logging
+
+The SDK writes nothing to `error_log()` on its own. To see its own problems (a misconfigured guard, a failed `$onChallenge`, a relay without `getLoginUser`), pass a PSR-3 logger or a `callable(string $level, string $message)`: `new Config(logger: $logger)`, or `new Config(debug: true)` for `error_log()`. Lines carry an error's class and message, never the request.
 
 ## License
 

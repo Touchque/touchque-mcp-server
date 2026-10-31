@@ -281,6 +281,17 @@ if (now.State == "confirmed")
 
 `get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```csharp
+var key = CodeReply.NewKey();   // keep key.PrivateKey for this request
+var sent = await tq.Login.RequestAsync(new LoginRequestOptions { ExternalUsername = user, Reply = new LoginReplyRequest(key.PublicKey, "sms", "+**********26") });
+var status = await tq.Login.StatusAsync(sent.RequestId);   // once CONFIRMED
+var code = status.Reply is { } r ? CodeReply.Open(key.PrivateKey, sent.RequestId, r.Ct) : null;
+```
+
 ## Errors, case codes and retries
 
 | Exception | When |
@@ -305,6 +316,10 @@ refuses plain `http://` except for localhost.
 **HttpClient.** `AddTouchQue()` registers the named client `TouchQue` (no redirects, connections
 recycled every 5 minutes) and returns its `IHttpClientBuilder` for logging or a proxy. Outside
 DI pass your own: `new TouchQueClient(options, httpClient)`.
+
+## Logging
+
+The SDK writes nothing to the console on its own. To see its own problems (a misconfigured guard, a failed `OnChallenge`, a relay without `GetLoginUser`), set `TouchQueOptions.Logger` to an `ILogger` (`loggerFactory.CreateLogger("TouchQue")`), or `Debug = true` for `Console.Error`. Lines carry an error's type and message, never the request.
 
 ## Development
 

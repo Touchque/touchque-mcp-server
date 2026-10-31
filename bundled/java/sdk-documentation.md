@@ -321,6 +321,17 @@ if ("confirmed".equals(now.path("state").asText()))
 
 `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```java
+CodeReply.Key key = CodeReply.newKey();   // keep key.privateKey() for this request
+Login.RequestResult sent = tq.login().request(new LoginRequestOptions(user).reply(key.publicKey(), "sms", "+**********26"));
+Login.Status status = tq.login().status(sent.requestId());   // once CONFIRMED
+String code = status.reply() == null ? null : CodeReply.open(key.privateKey(), sent.requestId(), status.reply().get("ct").asText());
+```
+
 ## Errors, case codes and retries
 
 | Exception (all unchecked) | When |

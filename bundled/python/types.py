@@ -8,6 +8,8 @@
 # From touchque/__init__.py — everything importable from `touchque`
 # ─────────────────────────────────────────────────────────────
 
+import logging as _logging
+
 from .config import Config
 from .client import TouchQue, get_default_client
 from .exceptions import (
@@ -30,6 +32,7 @@ from .exceptions import (
 from .resources.webhook import ReplayCache, MemoryReplayCache, WebhookReasons, WebhookEvents
 from .steps import normalize_details, details_digest
 from .approval_proof import verify_approval_proof
+from .code_reply import new_code_reply_key, open_code_reply
 from .guard import run_guard, guard_input_from_headers, silent_input_from_headers, BROWSER_HEADER
 from .resources.risk import parse_risk_check
 from .resources.recovery import is_recovery_open
@@ -79,6 +82,8 @@ __all__ = [
     'normalize_details',
     'details_digest',
     'verify_approval_proof',
+    'new_code_reply_key',
+    'open_code_reply',
     'run_guard',
     'guard_input_from_headers',
     'silent_input_from_headers',
@@ -131,6 +136,11 @@ __all__ = [
     'AuthorizationRequest',
     'TokenSet',
 ]
+
+# The SDK's own problems (a misconfigured guard, a failed on_challenge, a relay without
+# get_login_user) go to logging.getLogger('touchque'). Silent by default: nothing is printed
+# unless your app configures logging (logging.basicConfig, or a handler on 'touchque').
+_logging.getLogger('touchque').addHandler(_logging.NullHandler())
 
 # ─────────────────────────────────────────────────────────────
 # From touchque/config.py
@@ -688,7 +698,7 @@ class Login:
     def __init__(self, http: HttpClient):
         self._http = http
 
-    def request(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, context: Optional[Dict[str, Any]] = None, challenge_digits: Optional[int] = None, expires_in: Optional[int] = None, client_signals: Optional[str] = None, security_changes: Optional[Dict[str, Any]] = None, destination: Optional[Dict[str, Any]] = None, locale: Optional[str] = None, qr_pairing: Optional[str] = None, device_risk: Optional[str] = None, device_risk_request_id: Optional[str] = None) -> Dict[str, Any]:
+    def request(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, context: Optional[Dict[str, Any]] = None, challenge_digits: Optional[int] = None, expires_in: Optional[int] = None, client_signals: Optional[str] = None, security_changes: Optional[Dict[str, Any]] = None, destination: Optional[Dict[str, Any]] = None, locale: Optional[str] = None, qr_pairing: Optional[str] = None, device_risk: Optional[str] = None, device_risk_request_id: Optional[str] = None, reply: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Request a 2FA login/approval from the user's mobile device.
 
@@ -748,6 +758,12 @@ class Login:
         ``destination`` is ``{'known', 'lookalike'}``. Do not repeat it in ``details``.
 
         ``locale``: ``'tr'`` (default) or ``'en'``, the language of those rows.
+
+        ``reply``: ask the person to type back on the phone a sign-in code another service sent
+        them, ``{'kind': 'code', 'key': new_code_reply_key()['public_key'], 'channel': 'sms',
+        'target': '+**********26'}``. The phone encrypts it to ``key``; ``status()['reply']['ct']``
+        holds only the ciphertext: open it with ``open_code_reply``. Such a request lives 5
+        minutes. Not with ``qr_pairing``.
         """
         payload = {
             'externalUsername': external_username,
@@ -769,6 +785,8 @@ class Login:
             payload['expiresIn'] = expires_in
         if qr_pairing:
             payload['qrPairing'] = qr_pairing
+        if reply is not None:
+            payload['reply'] = reply
         if client_signals:
             payload['clientSignals'] = client_signals
         if device_risk:
@@ -826,7 +844,7 @@ class Login:
             try:
                 on_challenge(challenge)
             except Exception as err:  # noqa: BLE001 — the user's callback must not stop the wait
-                logger.warning('[TouchQue] on_challenge failed: %s', err)
+                logger.warning('[TouchQue] on_challenge failed: %s: %s', type(err).__name__, err)
 
         start_time = time.time() * 1000
         poll_interval_sec = 0.4

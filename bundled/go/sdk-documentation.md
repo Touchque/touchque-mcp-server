@@ -466,6 +466,20 @@ if now.State == "confirmed" {
 
 `get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```go
+key, err := touchque.NewCodeReplyKey() // keep key.PrivateKey for this request
+sent, err := client.Login.RequestWithOptions(touchque.LoginRequestOptions{ExternalUsername: user, Type: "LOGIN",
+	Reply: &touchque.LoginReplyRequest{Kind: "code", Key: key.PublicKey, Channel: "sms", Target: "+**********26"}})
+status, err := client.Login.Status(sent.RequestID) // once CONFIRMED
+if status.Reply != nil {
+	code, ok := touchque.OpenCodeReply(key.PrivateKey, sent.RequestID, status.Reply.CT)
+}
+```
+
 ## Errors
 
 `APIError`, `NetworkError`, `RejectedError`, `TimeoutError`,
@@ -487,6 +501,10 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 
 - Go 1.26+ (the module's go directive)
 - A [TouchQue Dashboard](https://authenticator.touchque.com) account
+
+## Logging
+
+The SDK writes nothing to the standard `log` package. To see its own problems (a misconfigured guard, a failed `OnChallenge`, a relay without `LoginUser`), set `Config.Logger` to a `*slog.Logger`; nil, the default, logs nothing. Lines carry an error's type and text, never the request.
 
 ## License
 

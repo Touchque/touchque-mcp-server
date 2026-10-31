@@ -18,16 +18,27 @@ class Config
     private string $apiSecret;
     private string $baseUrl;
     private int $timeout;
+    /** @var object|callable|null */
+    private $logger;
+    private bool $debug;
 
     /**
      * Falls back to the environment when an argument is omitted: `TQ_API_KEY`,
      * `TQ_API_SECRET`, `TQ_API_URL` (default `https://api.touchque.com`).
+     *
+     * @param object|callable|null $logger Where the SDK reports its own problems (a misconfigured
+     *   guard, a failed onChallenge, a relay without getLoginUser): any PSR-3 logger (its
+     *   warning() / error()), or a callable(string $level, string $message). Default: nothing is
+     *   logged. Lines carry an error's class and message, never request data.
+     * @param bool $debug With no logger: write those lines to error_log() (local development).
      */
     public function __construct(
         ?string $apiKey = null,
         ?string $apiSecret = null,
         ?string $baseUrl = null,
-        int $timeout = 10000
+        int $timeout = 10000,
+        $logger = null,
+        bool $debug = false
     ) {
         $apiKey = $apiKey ?? (getenv('TQ_API_KEY') ?: null);
         $apiSecret = $apiSecret ?? (getenv('TQ_API_SECRET') ?: null);
@@ -44,6 +55,33 @@ class Config
         $this->apiSecret = $apiSecret;
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->timeout = $timeout;
+        $this->logger = $logger;
+        $this->debug = $debug;
+    }
+
+    /**
+     * @internal Reports one of the SDK's own problems ('warning' or 'error'): to the logger, to
+     * error_log() with debug, else nowhere. A logger that throws never breaks the request.
+     */
+    public function log(string $level, string $message): void
+    {
+        try {
+            if (is_callable($this->logger)) {
+                ($this->logger)($level, $message);
+            } elseif (is_object($this->logger) && method_exists($this->logger, $level)) {
+                $this->logger->{$level}($message);
+            } elseif ($this->logger === null && $this->debug) {
+                error_log($message);
+            }
+        } catch (\Throwable $e) {
+            // a logger must never break a request
+        }
+    }
+
+    /** @internal `Class: message` for a log line: never the request it came from. */
+    public static function describe(\Throwable $e): string
+    {
+        return get_class($e) . ': ' . $e->getMessage();
     }
 
     /** Allow plaintext http only for localhost / loopback (local development). */
@@ -150,6 +188,12 @@ class TouchQue
     public DeviceRisk $deviceRisk;
 
     private Config $config;
+
+    /** @internal The SDK's own log (silent unless the Config has a logger or debug). */
+    public function log(string $level, string $message): void
+    {
+        $this->config->log($level, $message);
+    }
 
     public function __construct(?Config $config = null)
     {
@@ -692,7 +736,8 @@ class Login
         ?string $locale = null,
         ?string $qrPairing = null,
         ?string $deviceRisk = null,
-        ?string $deviceRiskRequestId = null
+        ?string $deviceRiskRequestId = null,
+        ?array $reply = null
     ): array {
         $payload = [
             'externalUsername' => $externalUsername,
@@ -724,6 +769,12 @@ class Login
         // A browser pairing by QR code ($tq->qrPairings), confirmed on the phone: only that phone is asked, once.
         if ($qrPairing !== null && $qrPairing !== '') {
             $payload['qrPairing'] = $qrPairing;
+        }
+        // Ask the person to type back on the phone a sign-in code another service sent them:
+        // ['kind' => 'code', 'key' => CodeReply::newKey()['publicKey'], 'channel' => 'sms', 'target' => '+**********26'].
+        // status()['reply']['ct'] holds only the ciphertext: \TouchQue\CodeReply::open() opens it. Not with $qrPairing.
+        if ($reply !== null) {
+            $payload['reply'] = $reply;
         }
         // The end user's page check from @touchque/web: a browser driven by software asks with number matching.
         if ($clientSignals !== null && $clientSignals !== '') {
@@ -839,7 +890,7 @@ class Login
                 $onChallenge($challenge);
             } catch (\Throwable $e) {
                 // The caller's callback must not stop the wait.
-                error_log('[TouchQue] onChallenge failed: ' . $e->getMessage());
+                $this->http->log('warning', '[TouchQue] onChallenge failed: ' . \TouchQue\Config::describe($e));
             }
         }
 
@@ -1250,7 +1301,7 @@ class RelayHandler
 
         if ($this->getLoginUser === null && !self::$warnedPreAuth) {
             self::$warnedPreAuth = true;
-            error_log('[TouchQue] RelayHandler: POST /login takes the username from the request body'
+            $tq->log('warning', '[TouchQue] RelayHandler: POST /login takes the username from the request body'
                 . ($this->offlineEnabled ? ', and so do the offline routes' : '; the offline routes are disabled until you set it')
                 . '. Set "getLoginUser" to bind them to your first factor (password step) so they cannot be used against arbitrary users.');
         }

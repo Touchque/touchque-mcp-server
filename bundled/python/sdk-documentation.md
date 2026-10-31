@@ -474,6 +474,17 @@ if now['state'] == 'confirmed':
 
 `get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```python
+key = new_code_reply_key()   # pip install "touchque-authenticator[proof]"; keep key['private_key']
+sent = tq.login.request(user, reply={'kind': 'code', 'key': key['public_key'], 'channel': 'sms', 'target': '+**********26'})
+status = tq.login.status(sent['requestId'])   # once CONFIRMED
+code = open_code_reply(key['private_key'], sent['requestId'], status['reply']['ct']) if 'reply' in status else None
+```
+
 ## Errors
 
 All SDK errors extend `TouchQueException`: `TouchQueAPIException`,
@@ -497,6 +508,10 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 
 - Python 3.7+
 - A [TouchQue Dashboard](https://authenticator.touchque.com) account
+
+## Logging
+
+The SDK's own problems (a misconfigured guard, a failed `on_challenge`, a relay error) go to `logging.getLogger('touchque')`, which has a `NullHandler`: nothing is printed until your app configures logging (`logging.basicConfig()`, or a handler on `'touchque'`). Lines carry an error's class and message, never the request.
 
 ## License
 

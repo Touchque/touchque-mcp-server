@@ -496,6 +496,17 @@ if (now.state === 'confirmed') await tq.login.request({ externalUsername: now.ex
 
 `get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```ts
+const key = newCodeReplyKey();   // keep key.privateKey for this request
+const sent = await tq.login.request({ externalUsername: user, type: 'LOGIN', reply: { kind: 'code', key: key.publicKey, channel: 'sms', target: '+**********26' } });
+const status = await tq.login.status(sent.requestId);   // once CONFIRMED
+const code = status.reply ? openCodeReply(key.privateKey, sent.requestId, status.reply.ct) : null;
+```
+
 ## Errors
 
 All SDK errors extend `TouchQueError`: `TouchQueAPIError`, `TouchQueNetworkError`,
@@ -519,6 +530,10 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 
 - Node.js 18+
 - A [TouchQue Dashboard](https://authenticator.touchque.com) account
+
+## Logging
+
+The SDK writes nothing to the console on its own. To see its own problems (a misconfigured guard, a failed `onChallenge`, a relay mounted without `getLoginUser`), pass a logger: `new TouchQue({ logger: console })`, or pino or winston (anything with `warn` and `error`); `debug: true` uses `console`. Lines carry an error's class, code and message, never a request or a user.
 
 ## License
 

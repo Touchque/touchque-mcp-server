@@ -899,6 +899,7 @@ public final class LoginRequestOptions {
     private String deviceRisk;
     private String deviceRiskRequestId;
     private String qrPairing;
+    private ObjectNode reply;
     private List<LoginDetail> details;
     private String browserProof;
     private Map<String, Object> context;
@@ -991,6 +992,21 @@ public final class LoginRequestOptions {
      */
     public LoginRequestOptions qrPairing(String v) {
         this.qrPairing = v;
+        return this;
+    }
+
+    /**
+     * Ask the person to type back on the phone a sign-in code another service sent them. {@code key}:
+     * {@code CodeReply.newKey().publicKey()}; {@code channel} (sms, whatsapp, email, app, backup,
+     * other) and {@code target} (the masked number or address, at most 40 characters) are shown on
+     * the phone, null to leave out. {@code status().reply()} holds only the ciphertext:
+     * {@code CodeReply.open} opens it. Such a request lives 5 minutes. Not with {@code qrPairing}.
+     */
+    public LoginRequestOptions reply(String key, String channel, String target) {
+        ObjectNode r = Json.object().put("kind", "code").put("key", key);
+        Json.put(r, "channel", channel);
+        Json.put(r, "target", target);
+        this.reply = r;
         return this;
     }
 
@@ -1088,6 +1104,7 @@ public final class LoginRequestOptions {
             Json.put(body, "clientSignals", clientSignals);
         }
         Json.put(body, "qrPairing", qrPairing);
+        if (reply != null) body.set("reply", reply.deepCopy());
         Json.put(body, "deviceRisk", deviceRisk);
         Json.put(body, "deviceRiskRequestId", deviceRiskRequestId);
         if (details != null && !details.isEmpty()) body.set("details", detailsJson(details));

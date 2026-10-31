@@ -21,6 +21,22 @@ export interface TouchQueConfig {
   baseUrl?: string;
   /** Request timeout in ms (default: 10000) */
   timeout?: number;
+  /**
+   * Where the SDK reports its own problems: a misconfigured guard, an
+   * onChallenge callback that threw, a relay mounted without getLoginUser.
+   * Default: nothing is logged. Pass `console`, or your logger (pino,
+   * winston: anything with `warn` and `error`). Messages carry an error's
+   * class, code and message, never a request, token or user's data.
+   */
+  logger?: TouchQueLogger;
+  /** `true`: log to `console` when no `logger` is given (local development). */
+  debug?: boolean;
+}
+
+/** What the SDK logs through: `console`, or any logger with `warn` and `error`. */
+export interface TouchQueLogger {
+  warn(message: string): void;
+  error(message: string): void;
 }
 
 // ─── Auth Resource ───────────────────────────────────────────────
@@ -326,6 +342,13 @@ export interface LoginRequestOptions {
    */
   qrPairing?: string;
   /**
+   * Ask the person to type something back on the phone: today `kind: 'code'`, a sign-in code
+   * another service sent them. `key` is a one-time P-256 public key (`newCodeReplyKey()`); the
+   * phone encrypts what was typed to it and `login.status().reply.ct` hands back only the
+   * ciphertext: open it with `openCodeReply`. Such a request lives 5 minutes. Not with `qrPairing`.
+   */
+  reply?: LoginReplyRequest;
+  /**
    * Silent sign-ins: the browser's device-bound key proof, exactly as the
    * browser sent it (`X-TouchQue-Browser` header, made by `@touchque/web`).
    * When the user approves this request on the phone (or with a passkey),
@@ -490,6 +513,12 @@ export interface LoginStatusResponse {
   revoked?: boolean;
   /** `COACHED`: someone on the phone told the user to approve. `UNDO`: the user undid it. */
   revokeReason?: 'UNDO' | 'COACHED' | null;
+  /**
+   * A request made with `reply`, once the person typed it back: the ciphertext only. Open it
+   * with `openCodeReply(privateKey, requestId, reply.ct)`. A CONFIRMED request without it was
+   * approved without typing (an older app).
+   */
+  reply?: { ct: string; at?: string | null };
 }
 
 export interface WaitForApprovalOptions {
@@ -1169,6 +1198,17 @@ export interface DeviceRiskCheckResult {
   caseCode?: string;
 }
 
+/** `login.request` `reply`: what the person types back on the phone, encrypted to `key`. */
+export interface LoginReplyRequest {
+  kind: 'code';
+  /** Your one-time P-256 public key: `newCodeReplyKey().publicKey`. */
+  key: string;
+  /** Where the code went, shown on the phone. */
+  channel?: 'sms' | 'whatsapp' | 'email' | 'app' | 'backup' | 'other';
+  /** The masked number or address it went to (`+**********26`), shown on the phone; at most 40 characters. */
+  target?: string;
+}
+
 // ─────────────────────────────────────────────────────────────
 // From src/steps.ts — the headless step-up flow (start/check/complete)
 // ─────────────────────────────────────────────────────────────
@@ -1616,7 +1656,7 @@ export function verifyApprovalProof(
 // This is the core of TouchQue: any action that needs 2FA confirmation
 // (login, withdraw, transfer, purchase, etc.) uses these methods.
 
-import { HttpClient } from '../core/HttpClient';
+import { HttpClient, describeError } from '../core/HttpClient';
 import {
   LoginRequestOptions,
   LoginRequestResponse,
@@ -1709,6 +1749,7 @@ export class Login {
       ...((options.challengeDigits === 2 || options.challengeDigits === 3) && { challengeDigits: options.challengeDigits }),
       ...(options.expiresIn !== undefined && { expiresIn: options.expiresIn }),
       ...(options.qrPairing && { qrPairing: options.qrPairing }),
+      ...(options.reply && { reply: options.reply }),
       ...(options.browserProof && { browserProof: options.browserProof }),
       ...(options.clientSignals && { clientSignals: options.clientSignals }),
       ...(options.deviceRisk && { deviceRisk: options.deviceRisk }),
@@ -1857,10 +1898,10 @@ export class Login {
       try {
         const out = onChallenge(challenge) as Promise<unknown> | undefined;
         if (out && typeof out.catch === 'function') {
-          out.catch((err: unknown) => console.warn('[TouchQue] onChallenge failed:', err instanceof Error ? err.message : err));
+          out.catch((err: unknown) => this.http.log.warn(`[TouchQue] onChallenge failed: ${describeError(err)}`));
         }
       } catch (err) {
-        console.warn('[TouchQue] onChallenge failed:', err instanceof Error ? err.message : err);
+        this.http.log.warn(`[TouchQue] onChallenge failed: ${describeError(err)}`);
       }
     }
 
@@ -1978,6 +2019,8 @@ import type { LoginRequestDetails } from './types';
 /** Reserved action: the approval on the phone that unlocks adding a passkey. */
 const PASSKEY_ENROLL_ACTION = 'PASSKEY_ENROLL';
 import { FixedWindowLimiter, RateLimitOptions } from './rateLimiter';
+import { logOf } from './internal';
+import { describeError, type SdkLog } from './core/HttpClient';
 
 export interface TouchQueRouterOptions {
   /**

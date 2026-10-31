@@ -6,6 +6,7 @@
 package touchque
 
 import (
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
@@ -20,6 +21,10 @@ type Config struct {
 	APISecret string
 	BaseURL   string
 	TimeoutMs int
+	// Logger receives the SDK's own problems: a misconfigured guard, a
+	// failed OnChallenge, a relay without LoginUser. nil (the default) logs
+	// nothing. Lines carry an error's type and text, never request data.
+	Logger *slog.Logger
 }
 
 // DefaultConfig creates a new Config with standard defaults.
@@ -327,6 +332,10 @@ type LoginStatusResponse struct {
 	RequiresPasskey bool       `json:"requiresPasskey,omitempty"`
 	ConfirmedVia    string     `json:"confirmedVia,omitempty"`
 	Assurance       *Assurance `json:"assurance,omitempty"`
+	// Reply: a request made with Reply, once the person typed it back (the
+	// ciphertext only; OpenCodeReply opens it). nil for a CONFIRMED request
+	// approved without typing (an older app).
+	Reply *LoginReply `json:"reply,omitempty"`
 	ShieldFields
 }
 
@@ -401,6 +410,8 @@ type ValidateSecretResponse struct {
 
 package touchque
 
+import "log/slog"
+
 // Client is the main entry point for the TouchQue Go SDK.
 type Client struct {
 	Auth     *AuthResource
@@ -438,6 +449,7 @@ type Client struct {
 	DeviceRisk *DeviceRiskResource
 
 	apiSecret string
+	logger    *slog.Logger
 }
 
 // NewClient initializes a new TouchQue SDK Client with the given
@@ -471,6 +483,7 @@ func newClient(config *Config) *Client {
 	httpWrapper := newHTTPClient(config)
 
 	return &Client{
+		logger:      config.Logger,
 		Auth:        newAuthResource(httpWrapper),
 		Login:       newLoginResource(httpWrapper),
 		WebAuthn:    newWebAuthnResource(httpWrapper),
@@ -1048,7 +1061,7 @@ func (o *OfflineResource) notApprovedAsResult(call func() (map[string]interface{
 package touchque
 
 import (
-	"log"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"time"
@@ -1094,6 +1107,11 @@ type LoginRequestOptions struct {
 	// confirmed on the phone. Only the phone that scanned it is asked, once,
 	// with number matching, for the user it scanned for.
 	QRPairing string
+	// Reply asks the person to type back on the phone a sign-in code another
+	// service sent them; the phone encrypts it to Reply.Key and Status hands
+	// back only the ciphertext (open it with OpenCodeReply). Such a request
+	// lives 5 minutes. Not with QRPairing.
+	Reply *LoginReplyRequest
 	// ClientSignals: the end user's page check from @touchque/web
 	// (startClientSignals().encode()), passed through untouched. A browser
 	// driven by software asks with number matching, or is refused where the
@@ -1147,11 +1165,11 @@ type VerifyChallenge struct {
 	CaseCode string
 }
 
-// callOnChallenge runs the caller's callback; its panic is logged and never stops the wait.
-func callOnChallenge(fn func(VerifyChallenge), c VerifyChallenge) {
+// callOnChallenge runs the caller's callback; its panic goes to Config.Logger and never stops the wait.
+func callOnChallenge(l *slog.Logger, fn func(VerifyChallenge), c VerifyChallenge) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[TouchQue] OnChallenge failed: %v", r)
+			sdkLog(l, slog.LevelWarn, "[TouchQue] OnChallenge failed", "error", errorText(r))
 		}
 	}()
 	fn(c)
@@ -1218,6 +1236,9 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	}
 	if opts.QRPairing != "" {
 		payload["qrPairing"] = opts.QRPairing
+	}
+	if opts.Reply != nil {
+		payload["reply"] = opts.Reply
 	}
 	if len(opts.Details) > 0 {
 		payload["details"] = opts.Details
@@ -1380,6 +1401,12 @@ func (l *LoginResource) Status(requestID string) (*LoginStatusResponse, error) {
 	}
 	resp.Assurance = parseAssurance(res)
 	resp.ShieldFields = parseShieldFields(res)
+	if r, ok := res["reply"].(map[string]interface{}); ok {
+		if ct, ok := r["ct"].(string); ok && ct != "" {
+			at, _ := r["at"].(string)
+			resp.Reply = &LoginReply{CT: ct, At: at}
+		}
+	}
 
 	return resp, nil
 }
@@ -1457,7 +1484,7 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 	}
 	// The number to show, before waiting: the phone asks the user for it.
 	if opts.OnChallenge != nil {
-		callOnChallenge(opts.OnChallenge, VerifyChallenge{
+		callOnChallenge(l.http.config.Logger, opts.OnChallenge, VerifyChallenge{
 			RequestID: reqID, ChallengeCode: reqResult.ChallengeCode, ExpiresAt: reqResult.ExpiresAt,
 			Reasons: reqResult.Reasons, CaseCode: reqResult.CaseCode,
 		})
@@ -1875,7 +1902,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
@@ -1964,8 +1991,8 @@ func NewRelayHandler(client *Client, opts RelayOptions) http.Handler {
 			if h.offlineEnabled {
 				tail = ", and so do the offline routes"
 			}
-			log.Printf("[TouchQue] NewRelayHandler: POST /login takes the username from the request body%s."+
-				" Set RelayOptions.LoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.", tail)
+			sdkLog(client.logger, slog.LevelWarn, "[TouchQue] NewRelayHandler: POST /login takes the username from the request body"+tail+"."+
+				" Set RelayOptions.LoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.")
 		})
 	}
 

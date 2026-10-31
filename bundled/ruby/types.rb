@@ -661,10 +661,10 @@ module TouchQue
         issue.call(Steps.start(client, action, user, details: norm, reference_id: reference_id, ip: ip, user_agent: user_agent,
                                                      enroll: enroll, browser_proof: proof, context: context))
       rescue ConfigError => e
-        warn "[TouchQue] #{e.message}"
+        TouchQue.log :error, "[TouchQue] #{e.message}"
         error(500, { "state" => "blocked", "reason" => "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.")
       rescue NetworkError, APIError => e
-        warn "[TouchQue] approval failed: #{e.message}"
+        TouchQue.log :error, "[TouchQue] approval failed: #{e.class}: #{e.message}"
         error(503, { "state" => "blocked", "reason" => "unavailable" }, "unavailable", "Two-factor approval is temporarily unavailable.")
       end
     end
@@ -688,7 +688,7 @@ module TouchQue
         "reasons" => res["reasons"]
       }
     rescue StandardError => e
-      warn "[TouchQue] silent sign-in check failed, asking the phone: #{e.message}"
+      TouchQue.log :warn, "[TouchQue] silent sign-in check failed, asking the phone: #{e.class}: #{e.message}"
       nil
     end
 
@@ -815,7 +815,7 @@ module TouchQue
     # Raises ApprovalMismatchError unless the claims say what you expect.
     def assert_matches!(claims, user: nil, type: nil, authorization_details: nil)
       if user && claims["sub"] != user
-        raise ApprovalMismatchError, "the approval is for another person (#{claims["sub"]})"
+        raise ApprovalMismatchError, "the approval is for another person"
       end
       if type && claims["type"] != type
         raise ApprovalMismatchError, "the approval is for another action type (#{claims["type"]})"
@@ -955,7 +955,7 @@ module TouchQue
       def request(external_username, type: "LOGIN", reference_id: nil, client_ip: nil, user_agent: nil,
                   require_biometric: false, require_number_match: false, details: nil, browser_proof: nil,
                   context: nil, challenge_digits: nil, expires_in: nil, client_signals: nil,
-                  security_changes: nil, destination: nil, locale: nil, qr_pairing: nil, device_risk: nil, device_risk_request_id: nil)
+                  security_changes: nil, destination: nil, locale: nil, qr_pairing: nil, device_risk: nil, device_risk_request_id: nil, reply: nil)
         body = { "externalUsername" => external_username, "type" => type || "LOGIN" }
         body["referenceId"] = reference_id unless reference_id.nil?
         body["clientIp"] = client_ip unless client_ip.nil?
@@ -967,6 +967,10 @@ module TouchQue
         body["expiresIn"] = expires_in unless expires_in.nil?
         # A browser pairing by QR code (qr_pairings), confirmed on the phone: only that phone is asked, once.
         body["qrPairing"] = qr_pairing unless qr_pairing.to_s.empty?
+        # Ask the person to type back on the phone a sign-in code another service sent them:
+        # { kind: "code", key: TouchQue::CodeReply.new_key["publicKey"], channel: "sms", target: "+**********26" }.
+        # status(id)["reply"]["ct"] holds only the ciphertext: TouchQue::CodeReply.open opens it. Not with qr_pairing.
+        body["reply"] = Util.stringify(reply) if reply
         body["clientSignals"] = client_signals if client_signals && !client_signals.empty?
         # The page's device report from @touchque/web (deviceRisk.collect), when the workspace
         # turned Device risk on: its signals only ever ask for more.
@@ -1017,7 +1021,7 @@ module TouchQue
             on_challenge.call(challenge)
           rescue StandardError => e
             # The caller's callback must not stop the wait.
-            warn "[TouchQue] on_challenge failed: #{e.message}"
+            TouchQue.log :warn, "[TouchQue] on_challenge failed: #{e.class}: #{e.message}"
           end
         end
         wait(request_id, sent["challengeCode"], timeout, poll_interval)

@@ -257,6 +257,17 @@ tq.login.request(now["externalUsername"], qr_pairing: p["pairingId"]) if now["st
 
 `get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
 
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```ruby
+key = TouchQue::CodeReply.new_key   # keep key["privateKey"] for this request
+sent = tq.login.request(user, reply: { kind: "code", key: key["publicKey"], channel: "sms", target: "+**********26" })
+status = tq.login.status(sent["requestId"])   # once CONFIRMED
+code = status["reply"] && TouchQue::CodeReply.open(key["privateKey"], sent["requestId"], status["reply"]["ct"])
+```
+
 ## Errors, case codes and retries
 
 | Error | When |
@@ -276,6 +287,10 @@ A feature your organization cannot use here raises a `TouchQue::FeatureError` (s
 **Retries.** Every request is signed with a one-time nonce, so the SDK never replays one. Retry
 `TouchQue::NetworkError` at the call site; on 429 / 423 wait `retry_after` seconds. The client
 never follows redirects and refuses plain `http://` except for localhost.
+
+## Logging
+
+The SDK writes nothing to `$stderr` on its own. To see its own problems (a misconfigured guard, a failed `on_challenge`, a relay without `get_login_user`), set a logger: `TouchQue.logger = Rails.logger` (or any `Logger`). Lines carry an error's class and message, never the request.
 
 ## Development
 

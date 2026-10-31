@@ -4,6 +4,8 @@
 // src/TouchQue.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchQue.cs,TouchQueRelayEndpoints.cs}.
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.
 
+using Microsoft.Extensions.Logging;
+
 namespace TouchQue;
 
 /// <summary>
@@ -27,6 +29,16 @@ public sealed class TouchQueOptions
     /// <summary>Timeout of one HTTP request (default 10 seconds). Ignored when you pass your own HttpClient.</summary>
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Where the SDK reports its own problems: a misconfigured guard, an OnChallenge that threw,
+    /// a relay without GetLoginUser. Default: nothing is logged. Lines carry an error's type and
+    /// message, never request data.
+    /// </summary>
+    public ILogger? Logger { get; set; }
+
+    /// <summary>With no <see cref="Logger"/>: write those lines to Console.Error (local development).</summary>
+    public bool Debug { get; set; }
+
     /// <summary>The options with the environment filled in, checked.</summary>
     internal ResolvedOptions Resolve()
     {
@@ -43,7 +55,7 @@ public sealed class TouchQueOptions
             throw new TouchQueConfigException("ApiKey must start with \"tq_\". Did you accidentally swap ApiKey and ApiSecret?");
         }
         AssertSafeBaseUrl(baseUrl, "BaseUrl");
-        return new ResolvedOptions(apiKey, apiSecret, baseUrl.TrimEnd('/'), Timeout);
+        return new ResolvedOptions(apiKey, apiSecret, baseUrl.TrimEnd('/'), Timeout, new Internal.SdkLog(Logger, Debug));
     }
 
     /// <summary>Allow plaintext http only for localhost / loopback (local development).</summary>
@@ -70,7 +82,7 @@ public sealed class TouchQueOptions
     }
 }
 
-internal sealed record ResolvedOptions(string ApiKey, string ApiSecret, string BaseUrl, TimeSpan Timeout);
+internal sealed record ResolvedOptions(string ApiKey, string ApiSecret, string BaseUrl, TimeSpan Timeout, Internal.SdkLog Log);
 
 // ─────────────────────────────────────────────────────────────
 // From TouchQueClient.cs — the client (StartAsync/CheckAsync/CompleteAsync and the resources)
@@ -171,6 +183,8 @@ public sealed class TouchQueClient
     public DeviceRiskResource DeviceRisk { get; }
 
     internal string ApiSecret => _http.ApiSecret;
+
+    internal SdkLog Log => _http.Log;
 
     internal string BaseUrl => _http.BaseUrl;
 
@@ -765,12 +779,12 @@ public static class Guard
         }
         catch (TouchQueConfigException e)
         {
-            Console.Error.WriteLine("[TouchQue] " + e.Message);
+            client.Log.Error("[TouchQue] " + e.Message);
             return Error(500, new Step { State = "blocked", Reason = "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.");
         }
         catch (Exception e) when (e is TouchQueNetworkException or TouchQueApiException)
         {
-            Console.Error.WriteLine("[TouchQue] approval failed: " + e.Message);
+            client.Log.Error("[TouchQue] approval failed: " + SdkLog.Describe(e));
             return Error(503, new Step { State = "blocked", Reason = "unavailable" }, "unavailable", "Two-factor approval is temporarily unavailable.");
         }
     }
@@ -807,7 +821,7 @@ public static class Guard
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            Console.Error.WriteLine("[TouchQue] silent sign-in check failed, asking the phone: " + e.Message);
+            client.Log.Warn("[TouchQue] silent sign-in check failed, asking the phone: " + SdkLog.Describe(e));
             return null;
         }
     }
@@ -1014,7 +1028,7 @@ public sealed class LoginResource
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 // The caller's callback must not stop the wait.
-                Console.Error.WriteLine("[TouchQue] OnChallenge failed: " + e.Message);
+                _http.Log.Warn("[TouchQue] OnChallenge failed: " + SdkLog.Describe(e));
             }
         }
         return await WaitAsync(sent.RequestId, sent.ChallengeCode, options.Timeout ?? TimeSpan.FromSeconds(30), options.PollInterval ?? TimeSpan.FromMilliseconds(400), ct).ConfigureAwait(false);
@@ -1136,6 +1150,13 @@ public sealed record LoginRequestOptions
     /// </summary>
     public string? QrPairing { get; init; }
 
+    /// <summary>
+    /// Ask the person to type back on the phone a sign-in code another service sent them; the phone
+    /// encrypts it to <c>Reply.Key</c> and <see cref="LoginStatus.Reply"/> holds only the ciphertext
+    /// (<see cref="CodeReply.Open"/>). Such a request lives 5 minutes. Not with <see cref="QrPairing"/>.
+    /// </summary>
+    public LoginReplyRequest? Reply { get; init; }
+
     /// <summary>Transaction context for the approval screen (at most 8 lines).</summary>
     public IReadOnlyList<LoginDetail>? Details { get; init; }
 
@@ -1186,6 +1207,10 @@ public sealed record LoginRequestOptions
         body.PutNode("securityChanges", SecurityChanges?.ToJson());
         if (Destination is not null) body["destination"] = Json.ToNode(Destination);
         body.Put("locale", Locale);
+        if (Reply is not null)
+        {
+            body["reply"] = new JsonObject { ["kind"] = Reply.Kind, ["key"] = Reply.Key }.Put("channel", Reply.Channel).Put("target", Reply.Target);
+        }
         return body;
     }
 
@@ -1251,6 +1276,8 @@ public sealed record LoginStatus : TouchQueObject
     public string? ReconfirmedAt { get; init; }
     public bool Revoked { get; init; }
     public string? RevokeReason { get; init; }
+    /// <summary>A request made with Reply, once the person typed it back: the ciphertext only (<see cref="CodeReply.Open"/>).</summary>
+    public LoginReply? Reply { get; init; }
 }
 
 public sealed record VerifyResult : TouchQueObject
@@ -1443,7 +1470,7 @@ public sealed class RelayHandler<TRequest>
         _offlineEnabled = options.GetLoginUser is not null || options.AllowOfflineWithoutFirstFactor;
         if (options.GetLoginUser is null && Interlocked.Exchange(ref _warned, 1) == 0)
         {
-            Console.Error.WriteLine("[TouchQue] RelayHandler: POST /login takes the username from the request body"
+            client.Log.Warn("[TouchQue] RelayHandler: POST /login takes the username from the request body"
                 + (_offlineEnabled ? ", and so do the offline routes" : "; the offline routes are disabled until you set it")
                 + ". Set GetLoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.");
         }

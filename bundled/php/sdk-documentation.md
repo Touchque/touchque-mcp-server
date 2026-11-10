@@ -7,7 +7,7 @@ middleware line per route. Laravel adapter included.
 [![Packagist](https://img.shields.io/packagist/v/touchque-authenticator/php-sdk.svg)](https://packagist.org/packages/touchque-authenticator/php-sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -17,7 +17,7 @@ composer require touchque-authenticator/php-sdk
 
 ## Setup
 
-Get an API key and secret from your [TouchQue Dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue Dashboard](https://dashboard.touchque.com):
 
 ```bash
 TQ_API_KEY=tq_auth_your_key
@@ -481,7 +481,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## Requirements
 
 - PHP 8.1+
-- A [TouchQue Dashboard](https://authenticator.touchque.com) account
+- A [TouchQue Dashboard](https://dashboard.touchque.com) account
 - Laravel 10+ for the bundled middleware (optional)
 
 ## Logging

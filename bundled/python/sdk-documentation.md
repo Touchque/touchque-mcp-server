@@ -7,7 +7,7 @@ decorator per route. Adapters for Flask, Django and FastAPI included.
 [![PyPI version](https://img.shields.io/pypi/v/touchque-authenticator.svg)](https://pypi.org/project/touchque-authenticator/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -21,7 +21,7 @@ The importable package is `touchque` (`import touchque`).
 
 ## Setup
 
-Get an API key and secret from your [TouchQue Dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue Dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key
@@ -507,7 +507,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## Requirements
 
 - Python 3.7+
-- A [TouchQue Dashboard](https://authenticator.touchque.com) account
+- A [TouchQue Dashboard](https://dashboard.touchque.com) account
 
 ## Logging
 

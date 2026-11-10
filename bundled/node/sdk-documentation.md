@@ -7,7 +7,7 @@ passkeys, and offline approval codes, added to any backend with one line per rou
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -17,7 +17,7 @@ npm install @touchque/node
 
 ## Setup
 
-Get an API key and secret from your [TouchQue Dashboard](https://authenticator.touchque.com),
+Get an API key and secret from your [TouchQue Dashboard](https://dashboard.touchque.com),
 then set them as environment variables:
 
 ```bash
@@ -529,7 +529,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## Requirements
 
 - Node.js 18+
-- A [TouchQue Dashboard](https://authenticator.touchque.com) account
+- A [TouchQue Dashboard](https://dashboard.touchque.com) account
 
 ## Logging
 

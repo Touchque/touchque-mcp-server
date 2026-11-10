@@ -10,7 +10,7 @@ Mobile SDK.
 | `com.touchque:touchque-java` | The client. Java 17+, `java.net.http`, Jackson, unchecked exceptions, no logging. |
 | `com.touchque:touchque-spring-boot-starter` | Spring Boot 3 auto-configuration: the client bean, `@RequireTouchQue` on controller methods, the relay routes `@touchque/web` needs, verified webhooks, TouchQue Login through Spring Security, MCP server protection. |
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -33,7 +33,7 @@ implementation("com.touchque:touchque-java:4.1.0")                  // anything 
 
 ## Setup
 
-Get an API key and secret from your [TouchQue dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key

@@ -7,7 +7,7 @@ with one middleware wrap per route.
 [![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v4.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -17,7 +17,7 @@ go get github.com/Touchque/touchque-go/v4
 
 ## Setup
 
-Get an API key and secret from your [TouchQue Dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue Dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key
@@ -500,7 +500,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## Requirements
 
 - Go 1.26+ (the module's go directive)
-- A [TouchQue Dashboard](https://authenticator.touchque.com) account
+- A [TouchQue Dashboard](https://dashboard.touchque.com) account
 
 ## Logging
 

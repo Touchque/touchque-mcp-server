@@ -10,7 +10,7 @@ Mobile SDK.
 | `TouchQue` | The client. .NET 8+, async throughout, nullable annotations, `HttpClient` / `IHttpClientFactory` friendly. |
 | `TouchQue.AspNetCore` | `AddTouchQue()`, `RequireTouchQue()` on endpoints and `[RequireTouchQue]` on controllers, the relay endpoints `@touchque/web` needs, verified webhooks, TouchQue Login sign-in endpoints and a bearer handler. |
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -21,7 +21,7 @@ dotnet add package TouchQue              # anything else: workers, consoles, Azu
 
 ## Setup
 
-Get an API key and secret from your [TouchQue dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key

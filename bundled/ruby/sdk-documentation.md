@@ -8,7 +8,7 @@ Sinatra and any Rack app.
 
 Ruby 3.1+, no runtime dependencies beyond the standard library (`net/http`, `openssl`, `json`).
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
 
 ## Install
 
@@ -19,7 +19,7 @@ gem "touchque"
 
 ## Setup
 
-Get an API key and secret from your [TouchQue dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key

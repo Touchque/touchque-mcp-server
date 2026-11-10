@@ -7,7 +7,7 @@ with one middleware wrap per route.
 [![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v4.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

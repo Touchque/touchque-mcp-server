@@ -1,37 +1,111 @@
-# TouchQue MCP Server
+# Touchque MCP
 
-An [MCP](https://modelcontextprotocol.io) server that gives AI coding
-assistants (Claude, Cursor, …) accurate, up-to-date TouchQue SDK
-documentation, TypeScript types, and an integration validator — so they stop
-guessing at the API and stop generating the old, broken synchronous
-integration pattern.
+Touchque's MCP server for developers. Add **one URL** to Claude, Cursor or any
+MCP client, sign in once with Touchque, and the AI knows who you are, your
+organization, your role and which Touchque features are on for you. It reads
+your app's code, picks the right SDK, writes the integration and checks it
+against your live workspace.
 
-It's a small, local, **read-only** tool: it doesn't hold an API key, doesn't
-call your TouchQue account, and doesn't need network access at all for its
-docs/types tools (they're bundled with the package). The only network calls
-it makes are ones you explicitly ask for (`ping_touchque_api`, pointed at a
-URL you pass in).
+```
+https://api.touchque.com/mcp
+```
 
-Since 3.0 it is also **a tool for AI agents**: given an agent's own TouchQue
-identity (never an API key), the agent can ask a person to approve an action
-on their TouchQue phone before it acts. See [As an AI agent's tool](#as-an-ai-agents-tool).
+There is one Touchque MCP: this server. No API key to paste: you sign in with
+Touchque SSO in the browser (OAuth 2.1, PKCE). The token is for this server
+only and lasts 10 minutes; your AI tool renews it in the background.
 
-## What this server does NOT do
+## Add it
 
-**This server has no file system access of its own.** It cannot open,
-read, or edit your project's files, and it has no idea what's in
-"my login page" or "the file I'm working on" — it only returns text (docs,
-wizard instructions, a validation report on code YOU paste in).
+### Claude Code
 
-The actual file editing — adding `requireTouchQue` to a route, wiring the
-Offline Sign QR/code into your login screen — is done by **the coding
-assistant you're using** (Claude Code, Cursor, Windsurf, …), using *its
-own* file tools, guided by what this server returns. So "does it edit my
-login screen when I say 'set it up'?" depends on your assistant actually
-being in an agentic/edit mode with file access — this server's job is only
-to make sure it edits it *correctly* (current API, correct prerequisites)
-once it does. The wizard prompts say this explicitly and instruct the
-assistant to ask for exact file paths rather than guess.
+```bash
+claude mcp add --transport http touchque https://api.touchque.com/mcp
+```
+
+Then run `/mcp` in Claude Code, pick **touchque** and **Authenticate**. The
+browser opens Touchque's sign-in; after it, pick the organization and allow.
+
+### Claude (claude.ai and the desktop app)
+
+Settings → Connectors → **Add custom connector** → name `Touchque`, URL
+`https://api.touchque.com/mcp` → Connect, and sign in.
+
+### Cursor
+
+`~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project):
+
+```json
+{
+  "mcpServers": {
+    "touchque": { "url": "https://api.touchque.com/mcp" }
+  }
+}
+```
+
+Cursor shows **Needs login** next to it: click it and sign in.
+
+### VS Code, Windsurf, Grok and others
+
+Any client that speaks Streamable HTTP with MCP authorization: add the URL
+`https://api.touchque.com/mcp`. A client that only runs local (stdio) servers
+can reach the same server through a bridge:
+
+```json
+{ "command": "npx", "args": ["-y", "mcp-remote", "https://api.touchque.com/mcp"] }
+```
+
+## Signing in
+
+1. The client finds Touchque SSO from
+   `https://api.touchque.com/.well-known/oauth-protected-resource/mcp`
+   (RFC 9728) and registers itself (RFC 7591, a public client) or names
+   itself with a client ID metadata document.
+2. You sign in at sso.touchque.com as usual (password, passkey or phone).
+3. The consent screen names the AI tool, lets you pick one of your
+   organizations, and lists what it may do:
+   - `touchque:read`: your organization, role, features and workspace setup.
+     Never a secret.
+   - `touchque:write`: changes you ask for (an API key, a redirect URI). Each
+     one asks you first and, like the dashboard, your phone.
+4. You can end the connection in your Touchque account (AI access), and your
+   organization's AI tool rules apply.
+
+## Slash commands
+
+| Command | What it does |
+|---|---|
+| `/touchque-setup` | Who you are, what is on and set up, which SDK fits this project, what next |
+| `/add-phone-approval` | Phone approval (push with number matching) on sign-in or a sensitive action |
+| `/add-passkeys` | Passkeys: enrollment and phishing-resistant sign-in or step-up |
+| `/add-touchque-login` | Touchque Login: hosted sign-up and sign-in (OpenID Connect) for your customers |
+| `/check-integration` | Checks your code against the SDK rules and your live workspace |
+
+In Claude Code they appear as `/mcp__touchque__touchque-setup` and so on. You
+can also just ask: "add Touchque phone approval to the transfer endpoint".
+
+The older instructions are still there too: `integrate_touchque`,
+`configure_offline_sign`, `audit_touchque_integration`,
+`troubleshoot_touchque`.
+
+## Tools
+
+| Tool | |
+|---|---|
+| `touchque_whoami` | You, the active organization, your role, the features that are ON |
+| `touchque_list_organizations`, `touchque_use_organization` | Your organizations; switch the connection to another one |
+| `touchque_features` | Every feature with ON or OFF for the organization |
+| `touchque_workspace_setup` | API keys (no secrets), webhook, action types, passkey domain, Touchque Login tenant and apps, what is missing |
+| `touchque_pick_sdk` | The SDK for the project, whether it is published, install command, env vars |
+| `touchque_generate_integration` | The SDK's own README sections for a feature and language, with this workspace's real values. Refuses a feature that is OFF |
+| `touchque_check_integration` | Checks code against the live workspace (feature, key, action types, redirect URIs, webhook) and the static checklist |
+| `touchque_search_docs` | Searches https://support.touchque.com |
+| `touchque_explain_case` | Explains a "Why?" case code |
+| `touchque_send_test_approval`, `touchque_test_approval_status` | A test approval on your own phone, only when you ask |
+| `touchque_create_api_key`, `touchque_add_redirect_uri`, `touchque_change_status` | Changes, with your yes and your phone (needs `touchque:write`) |
+| `get_touchque_docs`, `get_sdk_types`, `validate_integration`, `touchque_help` | The SDK READMEs and types bundled from the SDK sources, and the static checklist |
+
+Every call runs as you, in your active organization, and sees only what the
+dashboard shows you.
 
 ## Language support
 
@@ -68,224 +142,52 @@ the Go module path `/v4`, `context` for Actions, `onChallenge` for the
 blocking `verify()`, "Why?" case codes, silent sign-ins, Never Locked Out
 recovery and the Vishing Shield.
 
-## What it gives an assistant
+## How it works
 
-Not every MCP client renders every MCP primitive — some editors only ever
-show **tools**, some show tools + prompts, few show resources. So the same
-content is reachable three independent ways, and none of them require the
-others:
-
-1. **Server `instructions`** (MCP-native "help" text, sent on connect —
-   shown automatically by clients that support it, no call needed).
-2. **The `touchque_help` tool** — works in literally every MCP client,
-   since tools are the one primitive everyone implements. If your editor
-   doesn't show a help command or can't find the docs, look for this tool.
-3. **`resources/list` + `resources/read`** — for clients that browse
-   resources instead of (or alongside) tools.
-
-**Tools:**
-- `touchque_help` — **start here.** Explains what this server is for and
-  which tool to call next. This is the fallback of last resort — call it if
-  nothing else here is obvious.
-- `get_touchque_docs({ language })` — that language's README (install, the
-  step-up model, framework adapters, error handling, security).
-- `get_sdk_types({ language })` — that language's type/class reference
-  (`Config`, `Step`/`StepState`, `StartOptions`, `CompleteExpectations`,
-  resource response types, the approval-proof verifier, `login` with
-  `reportFraud`, and the public part of the relay router).
-- `ping_touchque_api` — checks that a TouchQue backend URL you give it is
-  reachable, before the assistant blames the integration code for a network
-  problem.
-- `validate_integration({ code, framework, language })` — a static-analysis
-  checklist on a pasted route handler, for whichever language it's in: is
-  the SDK actually imported, is the route guarded with the current step-up
-  API (as opposed to the old, removed synchronous `.login.verify()`
-  pattern; a relay router counts too), are secrets kept out of source and
-  read from the environment, is there error handling. Scored checks:
-  `import`, `protection`, `no_synchronous_verify`, `no_hardcoded_secret`,
-  `env_vars`, `error_handling`, and for Go `go_options_user_required` (a
-  `touchque.RequireOptions{…}` without `User:` or a
-  `touchque.RelayOptions{…}` without `UserID:` panics at startup since SDK
-  3.1.1 / 3.2.0). Unscored advisories: `offline_qr_not_linked` (an offline
-  QR without the push's `requestId`), `unpinned_approval_proof` (device
-  proof verified with `allowUnpinnedKey` / `allow_unpinned_key=True` /
-  `'allowUnpinnedKey' => true` / `AllowUnpinnedKey: true` — trust on first
-  use only) and `approval_proof_not_verified` (code acts on a
-  confirmed/approved request but never verifies the device proof),
-  `client_ip_from_leftmost_xff` (the end user's address read from the
-  client-controlled leftmost `X-Forwarded-For` hop) and
-  `nextjs_no_client_ip` (a Next.js `withTouchQue` with neither `ip` nor
-  `trustedProxyHops`, so the address-based risk checks are skipped),
-  `action_types_renamed` (a pre-4.0 `actions.define` call, which fails on
-  4.x) and `go_module_not_v4` (a Go import of an older major).
-
-**Resources** (for clients that browse resources, e.g. as an alternative to
-tools):
-- `touchque://docs/<language>/sdk-documentation.md` — same content as `get_touchque_docs({ language })`.
-- `touchque://docs/<language>/types.{ts,py,php,go}` — same content as `get_sdk_types({ language })`.
-
-(8 resources total — one README + one types file per language.)
-
-**Prompts** (pre-built instruction sets an assistant can load — support for
-this varies by client; if your client doesn't show these, use the tools
-above directly instead):
-- `integrate_touchque` — a step-by-step wizard for adding TouchQue's
-  default push/passkey step-up to an existing codebase without breaking
-  anything, including the relay router for the sign-in routes, pinned
-  device-proof verification and fraud reports.
-- `configure_offline_sign` — a separate wizard for TouchQue's "Offline
-  Sign" flow (QR + 7-character code, for when the phone has no internet —
-  kiosks, air-gapped environments, poor signal). Distinct from
-  `integrate_touchque`; use this one when offline approval is the ask.
-- `audit_touchque_integration` — a formal security-review checklist for an
-  existing integration (guard and relay-router coverage, Go's required
-  `User`/`UserID`, device-proof pinning, fraud feedback via `reportFraud`).
-- `troubleshoot_touchque` — a triage decision tree for a broken integration.
-
-## As an AI agent's tool
-
-Register the agent in TouchQue (Developers → AI agents, or `tq.agents.create`
-with the agent's **public** key) and give the server the agent's id and
-**private** key. The workspace's `tq_` API key never goes here.
-
-```json
-{
-  "mcpServers": {
-    "touchque": {
-      "command": "npx",
-      "args": ["-y", "@touchque/mcp-server"],
-      "env": { "TQ_AGENT_ID": "agt_…", "TQ_AGENT_KEY": "/path/to/agent-key.jwk" }
-    }
-  }
-}
+```
+AI tool ──(Bearer token, aud = api.touchque.com/mcp)──▶ Touchque MCP (remote/server.js)
+                                                         │ exchanges the token, with its own secret,
+                                                         ▼ at sso.touchque.com/sso/mcp/touchque/exchange
+                                                       a 5-minute dashboard token for your organization
+                                                         │ (act: touchque-mcp; a short list of routes)
+                                                         ▼
+                                                       dashboard.touchque.com/v1 (your workspace)
 ```
 
-`TQ_AGENT_KEY` is the private key as a JWK, a PEM, or the path of a file
-holding either; `TQ_API_URL` only for a self-hosted or local TouchQue. Then the
-agent has five more tools:
+- The authorization server is Touchque SSO's MCP issuer
+  (`https://sso.touchque.com/mcp`, touchque-sso-backend `utils/mcp/`).
+  Touchque's own MCP server is built in there next to organizations' own MCP
+  servers. Its connections show on the member's AI access page.
+- The member's token never goes further than this server. The SSO checks the
+  membership, role and features again on every exchange.
+- The dashboard backend lets these tokens read a short list of routes that
+  never show a secret, and make three kinds of change with `touchque:write`.
+  Each change still asks for the role and the phone in the controller.
+- Stateless Streamable HTTP: no sessions to lose on a restart.
 
-| Tool | What it does |
-|---|---|
-| `touchque_agent_whoami` | The agent as TouchQue sees it: the action types it may ask for, its owner, its review date |
-| `touchque_request_approval` | Asks a person to approve an action on their phone; returns the number to tell them |
-| `touchque_get_approval` | The answer (waits up to 60 s); once approved, the single-use approval token for the service that executes |
-| `touchque_request_mandate` | Asks for a series of requests at once (how many, how much, to whom, until when) |
-| `touchque_get_mandate` | A mandate's state and what is left |
-
-Nothing here can approve anything: the person approves on their phone, with
-Face ID and the number the conversation shows, and an approval given during
-a phone call doesn't count. Every call is signed with the agent's key and a
-DPoP proof; the agent's token lives 10 minutes. A wrong identity doesn't stop
-the docs tools: the agent tools then say what is wrong.
-
-The same server ships as an **MCP Bundle** (`touchque-mcp-server-<version>.mcpb`,
-attached to each GitHub release, signed) for one-click install in Claude
-Desktop; it asks for the agent id and key in its settings.
-
-## Install
-
-### Claude Desktop / Claude Code
-
-Add to your MCP config (`claude_desktop_config.json`, or `.mcp.json` for
-Claude Code):
-
-```json
-{
-  "mcpServers": {
-    "touchque": {
-      "command": "npx",
-      "args": ["-y", "@touchque/mcp-server"]
-    }
-  }
-}
-```
-
-### Cursor
-
-`~/.cursor/mcp.json` (or the project's `.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "touchque": {
-      "command": "npx",
-      "args": ["-y", "@touchque/mcp-server"]
-    }
-  }
-}
-```
-
-### Windsurf
-
-`~/.codeium/windsurf/mcp_config.json` (same shape as Cursor's):
-
-```json
-{
-  "mcpServers": {
-    "touchque": {
-      "command": "npx",
-      "args": ["-y", "@touchque/mcp-server"]
-    }
-  }
-}
-```
-
-Windsurf doesn't currently render MCP prompts — use the `touchque_help` and
-`get_touchque_docs` tools directly there (see "What it gives an assistant"
-above).
-
-No API key, no environment variables, no separate server process to run —
-`npx` fetches and runs it on demand over stdio, the same way you'd wire up
-any other local MCP server.
-
-### Run it directly
+## Running it
 
 ```bash
-npx -y @touchque/mcp-server
+npm install
+TOUCHQUE_MCP_SECRET=… npm start      # 127.0.0.1:5010/mcp
 ```
 
-It talks [MCP](https://modelcontextprotocol.io) over stdio (stdin/stdout) —
-you won't see anything if you run it directly in a terminal and start typing;
-it's meant to be launched by an MCP-aware client, not used interactively.
+| Variable | Default (production) | |
+|---|---|---|
+| `TOUCHQUE_MCP_RESOURCE` | `https://api.touchque.com/mcp` | This server's URL: tokens are issued for exactly it |
+| `TOUCHQUE_SSO_URL` | `https://sso.touchque.com` | The SSO (issuer `<sso>/mcp`, JWKS, exchange) |
+| `TOUCHQUE_DASHBOARD_API` | `https://dashboard.touchque.com` | The dashboard backend (`/v1`) |
+| `TOUCHQUE_MCP_SECRET` | (required) | 32+ characters, the same value as the SSO's `TOUCHQUE_MCP_SECRET` |
+| `PORT`, `HOST` | `5010`, `127.0.0.1` | |
 
-## Local development
+Outside production the defaults are the local stack (`localhost:5002`,
+`:5003`, resource `http://localhost:5010/mcp`; set `MCP_ALLOW_LOCAL_CLIENTS=true`
+on the SSO).
 
-If you're editing this server (not consuming it), point the **Node** docs
-at a docs site you're actively editing instead of the bundled copy
-(`DOCS_BASE_URL` only applies to Node — Python/PHP/Go always read their
-bundled copy, since there's no equivalent local dev server for them):
-
-```bash
-DOCS_BASE_URL=http://localhost:5176/docs npx @touchque/mcp-server
-```
-
-The server tries `DOCS_BASE_URL/sdk-documentation.md` and
-`DOCS_BASE_URL/types.ts` first when that variable is set, and falls back to
-the bundled copy under [`bundled/node/`](./bundled/node) if that fetch
-fails — so an unset or unreachable override never breaks the tool.
-
-Keep every language's bundled copy in sync with its SDK source whenever the
-step-up API (or an SDK README) changes. Each bundle is a concatenation of
-the listed files — verbatim, except the large relay-router files, of which
-only the public part (module docs, options type, constructor / entry point)
-is bundled to keep tool output small. Regenerate them all with one command
-(it reads the SDK monorepo next to this repo, or pass its path); it fails
-loudly if a source file or an excerpt marker is missing:
-
-```bash
-node scripts/sync-bundled.js            # default: ../sdks
-node scripts/sync-bundled.js /path/to/sdks
-```
-
-| `bundled/<lang>/` | Source |
-|---|---|
-| `node/` | `sdks/touchque-node/README.md` + `src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}` + public part of `src/router.ts` |
-| `python/` | `sdks/touchque-python/README.md` + `touchque/{__init__.py,config.py,client.py,steps.py,approval_proof.py,resources/login.py,resources/offline.py,contrib/flask.py,contrib/fastapi.py,contrib/django.py}` + public part of `touchque/relay.py` |
-| `php/` | `sdks/touchque-php/README.md` + `src/{Config.php,TouchQue.php,Steps.php,ApprovalProof.php,Resources/Login.php,Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchQueMiddleware.php,Laravel/TouchQueRelay.php}` + public part of `src/Relay/RelayHandler.php` |
-| `go/` | `sdks/touchque-go/README.md` + `touchque/{config.go,types.go,client.go,steps.go,offline.go,login.go,http_middleware.go,approval_proof.go}` + public part of `touchque/relay.go` |
-| `dotnet/` | `sdks/touchque-dotnet/README.md` + `src/TouchQue/{TouchQueOptions.cs,TouchQueClient.cs,Flow/Steps.cs,Flow/Guard.cs,Crypto/ApprovalProof.cs,Resources/Login.cs}` + public part of `Relay/RelayHandler.cs` + `src/TouchQue.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchQue.cs,TouchQueRelayEndpoints.cs}` |
-| `ruby/` | `sdks/touchque-ruby/README.md` + `lib/touchque/{client.rb,errors.rb,flow.rb,approvals.rb,resources/login.rb,rails/guard.rb,rack/relay.rb}` + public part of `lib/touchque/relay.rb` |
-| `java/` | `sdks/touchque-java/README.md` + `touchque-java/src/main/java/com/touchque/{TouchQueOptions,TouchQueClient,flow/Step,flow/StartOptions,flow/CompleteExpectations,flow/Approval,crypto/ApprovalProof,resources/Login,resources/LoginRequestOptions,relay/RelayOptions}.java` + public parts of `flow/Guard.java` and `relay/RelayHandler.java` + the starter's `com/touchque/spring/{RequireTouchQue,TouchQueGuardOptions,TouchQueWebhookListener,TouchQueSpring}.java` |
+`index.js` holds the SDK docs, types, checklist and older instructions, which
+the server serves. `node index.js` still runs them over stdio for development
+and the tests. Refresh the bundles with `node scripts/sync-bundled.js` and the
+feature catalog with `npm run sync:features`.
 
 ## Testing
 
@@ -293,31 +195,14 @@ node scripts/sync-bundled.js /path/to/sdks
 npm test
 ```
 
-Tests spawn the actual server over stdio using the official MCP SDK's
-`Client`/`StdioClientTransport` — the same path any real MCP client takes —
-and check the real tool/prompt/resource lists, the server `instructions`
-field, that the bundled docs/types load without network access, and that
-`validate_integration` correctly distinguishes the current step-up API from
-the old, removed synchronous one (and recognizes the relay routers, flags Go
-options without `User`/`UserID`, and warns about unpinned device proofs) in
-every language.
-
-## Security
-
-Without an agent identity this server is read-only dev tooling: it never
-touches a real TouchQue account, never sees an API key, and never calls a
-TouchQue backend except a URL you explicitly pass to `ping_touchque_api`.
-
-With an agent identity (`TQ_AGENT_ID` + `TQ_AGENT_KEY`) it calls TouchQue as
-that agent and nothing more: private_key_jwt sign-in, a DPoP proof on every
-call, only what the agent's own scopes allow (asking for approvals and
-mandates, reading itself). It never holds a `tq_` key and cannot approve,
-redeem or change anything; a person approves on their phone.
-
-Releases are published from GitHub Actions with npm provenance
-(`npm audit signatures` checks it), and the `.mcpb` bundle is signed with
-TouchQue's code-signing certificate (`mcpb verify`).
+`index.test.js` drives the docs tools over stdio with the MCP SDK's client.
+`remote/remote.test.js` covers the token checks (audience, issuer, expiry,
+DPoP), the resource metadata, the slash commands, the SDK sections and the
+feature gating. The whole path (registration, consent with the organization
+picker, token, refresh, exchange, and this server answering `whoami`) runs
+against a real SSO in touchque-sso-backend
+`tests/integration/touchqueMcp.test.js`.
 
 ## License
 
-MIT © [TouchQue](https://touchque.com)
+MIT © [Touchque](https://touchque.com)

@@ -1,20 +1,13 @@
 {
   "name": "@touchque/mcp-server",
-  "version": "3.0.0",
-  "description": "MCP server for TouchQue — gives AI coding assistants accurate, up-to-date TouchQue SDK docs, types and an integration validator, and lets an AI agent with its own TouchQue identity ask a person to approve an action on their phone.",
-  "main": "index.js",
-  "bin": {
-    "touchque-mcp-server": "index.js"
-  },
-  "files": [
-    "index.js",
-    "agent.js",
-    "bundled",
-    "manifest.json"
-  ],
+  "version": "4.0.0",
+  "description": "Touchque MCP server — add https://api.touchque.com/mcp to Claude, Cursor or any MCP client, sign in once with Touchque, and let the AI integrate Touchque with your live workspace: your organization, role and enabled features, the SDK docs and types, integration code and live checks.",
+  "main": "remote/server.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "node --test index.test.js",
+    "start": "node remote/server.js",
+    "start:stdio": "node index.js",
+    "test": "node --test index.test.js remote/remote.test.js",
+    "sync:features": "node scripts/sync-features.js",
     "pack:mcpb": "node scripts/pack-mcpb.js"
   },
   "keywords": [
@@ -37,13 +30,12 @@
     "type": "git",
     "url": "https://github.com/Touchque/touchque-mcp-server"
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2"
-  }
+  },
+  "private": true
 }

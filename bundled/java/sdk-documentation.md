@@ -10,7 +10,7 @@ Mobile SDK.
 | `com.touchque:touchque-java` | The client. Java 17+, `java.net.http`, Jackson, unchecked exceptions, no logging. |
 | `com.touchque:touchque-spring-boot-starter` | Spring Boot 3 auto-configuration: the client bean, `@RequireTouchQue` on controller methods, the relay routes `@touchque/web` needs, verified webhooks, TouchQue Login through Spring Security, MCP server protection. |
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

@@ -7,7 +7,7 @@ passkeys, and offline approval codes, added to any backend with one line per rou
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

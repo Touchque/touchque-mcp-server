@@ -7,7 +7,7 @@ middleware line per route. Laravel adapter included.
 [![Packagist](https://img.shields.io/packagist/v/touchque-authenticator/php-sdk.svg)](https://packagist.org/packages/touchque-authenticator/php-sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

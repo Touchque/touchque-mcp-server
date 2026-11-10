@@ -618,7 +618,7 @@ async function callAgentTool(name, args) {
   if (name === "touchque_get_mandate") return json(await AGENT.getMandate(String(args.mandateId || "")));
   return null;
 }
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+async function listTools() {
   return {
     tools: [
       {
@@ -697,9 +697,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       ...(AGENT || AGENT_CONFIG_ERROR ? AGENT_TOOLS : []),
     ]
   };
-});
+}
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+async function callTool(request) {
   const { name, arguments: args } = request.params;
 
   try {
@@ -876,7 +876,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: "text", text: `Tool error: ${error.message}` }]
     };
   }
-});
+}
 
 // ==========================================
 // RESOURCES
@@ -884,15 +884,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // A second discovery path for clients that browse resources instead of (or
 // in addition to) calling tools. Read-only, same bundled content as
 // get_touchque_docs/get_sdk_types.
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
+async function listResources() {
   return {
     resources: BUNDLED_DOCS.map(({ uri, name, mimeType, description }) => ({
       uri, name, mimeType, description,
     })),
   };
-});
+}
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+async function readResource(request) {
   const { uri } = request.params;
   const doc = BUNDLED_DOCS.find((d) => d.uri === uri);
   if (!doc) throw new Error(`Unknown resource: ${uri}`);
@@ -901,12 +901,12 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   return {
     contents: [{ uri: doc.uri, mimeType: doc.mimeType, text }],
   };
-});
+}
 
 // ==========================================
 // PROMPTS
 // ==========================================
-server.setRequestHandler(ListPromptsRequestSchema, async () => {
+async function listPrompts() {
   return {
     prompts: [
       {
@@ -927,9 +927,9 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
       }
     ]
   };
-});
+}
 
-server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+async function getPrompt(request) {
   const { name } = request.params;
 
   // ─────────────────────────────────────────────────────────────
@@ -1424,7 +1424,15 @@ Begin by asking the user to describe what they expected to happen, what actually
   }
 
   throw new Error(`Unknown prompt: ${name}`);
-});
+}
+
+// The handlers above serve this stdio server and, reused, the remote one (remote.js).
+server.setRequestHandler(ListToolsRequestSchema, listTools);
+server.setRequestHandler(CallToolRequestSchema, callTool);
+server.setRequestHandler(ListResourcesRequestSchema, listResources);
+server.setRequestHandler(ReadResourceRequestSchema, readResource);
+server.setRequestHandler(ListPromptsRequestSchema, listPrompts);
+server.setRequestHandler(GetPromptRequestSchema, getPrompt);
 
 // ==========================================
 // STARTUP
@@ -1442,4 +1450,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, readDocsFile, HELP_TEXT, BUNDLED_DOCS };
+module.exports = {
+  server, readDocsFile, HELP_TEXT, BUNDLED_DOCS, LANGUAGES, LANGUAGE_NAMES, FRAMEWORK_LANGUAGE, resolveLanguage, PACKAGE_VERSION,
+  handlers: { listTools, callTool, listResources, readResource, listPrompts, getPrompt },
+};

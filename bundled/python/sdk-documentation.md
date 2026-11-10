@@ -7,7 +7,7 @@ decorator per route. Adapters for Flask, Django and FastAPI included.
 [![PyPI version](https://img.shields.io/pypi/v/touchque-authenticator.svg)](https://pypi.org/project/touchque-authenticator/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

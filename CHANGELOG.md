@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.0.0 (2026-11-10)
+
+One Touchque MCP, at a URL: `https://api.touchque.com/mcp`.
+
+- Remote server (`remote/`, Streamable HTTP, stateless). Sign-in with Touchque
+  SSO (MCP authorization: protected resource metadata, dynamic registration
+  or client ID metadata documents, PKCE, tokens for this server only, DPoP
+  when the client binds one). No API key to paste.
+- Knows the signed-in member: the organization (picked on the consent screen,
+  switchable), the role, the features that are ON. Workspace tools: who am I,
+  organizations, features, workspace setup without secrets, SDK picker,
+  integration from the SDK's own README sections with the workspace's real
+  values, a live check, docs search over support.touchque.com, case codes, a
+  test approval on the member's own phone, and changes (API key, redirect
+  URI) only with the member's yes and phone.
+- Slash commands: touchque-setup, add-phone-approval, add-passkeys,
+  add-touchque-login, check-integration.
+- The docs, types and checklist tools of 3.x are served by it. The package is
+  no longer published as a separate local (stdio) server; clients that run
+  only local servers use `npx -y mcp-remote https://api.touchque.com/mcp`.
+- Docs links point at https://support.touchque.com.
+
 ## 3.0.0
 
 TouchQue as a tool for AI agents.

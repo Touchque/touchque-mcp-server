@@ -10,7 +10,7 @@ Mobile SDK.
 | `TouchQue` | The client. .NET 8+, async throughout, nullable annotations, `HttpClient` / `IHttpClientFactory` friendly. |
 | `TouchQue.AspNetCore` | `AddTouchQue()`, `RequireTouchQue()` on endpoints and `[RequireTouchQue]` on controllers, the relay endpoints `@touchque/web` needs, verified webhooks, TouchQue Login sign-in endpoints and a bearer handler. |
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

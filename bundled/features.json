@@ -1,0 +1,294 @@
+{
+  "version": 2,
+  "about": "The feature catalog (raporlar/OZELLIK-PAKETLEME-PLANI-2026-10-29.md, redesigned 2026-10-31). A feature is a flag; a plan is a set of flags. kind: module (sold on its own), addon (sold on top of the base), program (granted by Touchque staff, never in a customer's picker) or base (always on, never sold apart). group: the picker heading it sits under (groups). side: which half of a company it runs in (workspace = the authenticator integration, organization = the SSO organization, both). includes: the lines the pickers show under it. dependsOn: turned on with it, turned off before it. limits and priceRef are the hooks prices attach to later. base: what every account has, for the pickers' Always included card; every route not bound to a feature belongs to it.",
+  "groups": [
+    {
+      "id": "workforce",
+      "name": "Workforce",
+      "description": "For the company's own people: work apps, VPN, devices."
+    },
+    {
+      "id": "customer",
+      "name": "Customer & developer identity",
+      "description": "For the company's own apps and customers."
+    }
+  ],
+  "base": [
+    {
+      "id": "people",
+      "group": "workforce",
+      "name": "Members, invites and domains"
+    },
+    {
+      "id": "sign_in",
+      "group": "workforce",
+      "name": "Sign-in policy and employee MFA: phone approval, passkeys, Vishing Shield"
+    },
+    {
+      "id": "helpdesk",
+      "group": "workforce",
+      "name": "Help desk identity checks (Verify-a-Human)"
+    },
+    {
+      "id": "mfa_report",
+      "group": "workforce",
+      "name": "MFA coverage report for insurers"
+    },
+    {
+      "id": "log_streaming",
+      "group": "workforce",
+      "name": "Activity log and SIEM streaming"
+    },
+    {
+      "id": "access_reviews",
+      "group": "workforce",
+      "name": "Access reviews"
+    },
+    {
+      "id": "cases",
+      "group": "workforce",
+      "name": "“Why?” case codes and Support access"
+    },
+    {
+      "id": "all_organizations",
+      "group": "workforce",
+      "name": "All organizations, for people who run two or more"
+    },
+    {
+      "id": "core_2fa",
+      "group": "customer",
+      "name": "2FA API: phone approvals, API keys, webhooks"
+    },
+    {
+      "id": "actions",
+      "group": "customer",
+      "name": "Actions: your own code in the approval pipeline"
+    }
+  ],
+  "features": [
+    {
+      "id": "core_2fa",
+      "name": "2FA API",
+      "kind": "base",
+      "group": "customer",
+      "side": "workspace",
+      "base": true,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Phone approvals through the API: 2FA users, logs, usage, API keys, action types, webhooks, app user policy, Actions.",
+      "includes": []
+    },
+    {
+      "id": "workforce_sso",
+      "name": "Workforce SSO",
+      "kind": "module",
+      "group": "workforce",
+      "side": "organization",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "One sign-in for every work app, approved on the phone.",
+      "includes": [
+        "SSO apps: SAML, OpenID Connect, WordPress",
+        "My apps for members",
+        "Groups",
+        "App and access requests",
+        "Why someone can or can’t open an app"
+      ]
+    },
+    {
+      "id": "directory",
+      "name": "Directory & lifecycle",
+      "kind": "module",
+      "group": "workforce",
+      "side": "organization",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "People join, move and leave with your directory or HR system.",
+      "includes": [
+        "Directory sync: Microsoft 365, Google, HR, LDAP",
+        "SCIM",
+        "Group rules",
+        "Accounts made in apps (with Workforce SSO)",
+        "Joiner, mover and leaver tasks"
+      ]
+    },
+    {
+      "id": "vpn_radius",
+      "name": "VPN & servers",
+      "kind": "module",
+      "group": "workforce",
+      "side": "organization",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Phone approval for VPN sign-ins and server logins.",
+      "includes": [
+        "VPN sign-ins over RADIUS",
+        "Linux SSH and sudo through the Connector"
+      ]
+    },
+    {
+      "id": "shared_accounts",
+      "name": "Shared accounts",
+      "kind": "module",
+      "group": "workforce",
+      "side": "organization",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Logins a team shares, used without anyone seeing the password.",
+      "includes": [
+        "Filled by the Touchque browser extension",
+        "Check-out",
+        "Approvals"
+      ]
+    },
+    {
+      "id": "device_trust",
+      "name": "Device trust",
+      "kind": "module",
+      "group": "workforce",
+      "side": "organization",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Only known, healthy devices sign in.",
+      "includes": [
+        "Device inventory",
+        "Posture checks",
+        "Approved computers",
+        "MDM sources: Intune, Jamf",
+        "Device-bound sessions (DBSC)"
+      ]
+    },
+    {
+      "id": "threat_protection",
+      "name": "Threat protection",
+      "kind": "module",
+      "group": "workforce",
+      "side": "organization",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Phishing look-alikes and risky app access, found and dealt with.",
+      "includes": [
+        "Look-alike domains and takedowns",
+        "Watching your own domains",
+        "Third-party apps with access to company data"
+      ]
+    },
+    {
+      "id": "ai_agents",
+      "name": "AI agents & MCP",
+      "kind": "module",
+      "group": "workforce",
+      "side": "both",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Identities, approvals and limits for AI agents and the tools they use.",
+      "includes": [
+        "AI agent identities and approvals",
+        "MCP servers",
+        "AI tool policy",
+        "Vault",
+        "Cross-app access (XAA)"
+      ]
+    },
+    {
+      "id": "ciam",
+      "name": "Touchque Login",
+      "kind": "module",
+      "group": "customer",
+      "side": "workspace",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Sign-up and sign-in for your own customers.",
+      "includes": [
+        "Hosted sign-up and sign-in",
+        "Customer accounts",
+        "Business accounts"
+      ]
+    },
+    {
+      "id": "mobile_sdk",
+      "name": "Mobile SDK",
+      "kind": "module",
+      "group": "customer",
+      "side": "workspace",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Your own app approves for your customers.",
+      "includes": [
+        "iOS, Android, React Native and Flutter SDKs",
+        "Hosted push",
+        "Your brand on the approval screen"
+      ]
+    },
+    {
+      "id": "device_risk",
+      "name": "Device risk",
+      "kind": "addon",
+      "group": "customer",
+      "side": "workspace",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Every browser on your sign-in pages recognised, and risky ones stepped up.",
+      "includes": [
+        "A visitor ID on sign-in, sign-up, reset and approval pages",
+        "Tamper, virtual machine, time-zone and velocity signals",
+        "Monitoring"
+      ]
+    },
+    {
+      "id": "safe_guard",
+      "name": "Safe Guard",
+      "kind": "module",
+      "group": "customer",
+      "side": "workspace",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Safe multisig transactions read and approved on your approvers’ phones, and enforced on chain.",
+      "includes": [
+        "Phone approval for Safe transactions, decoded on the phone",
+        "Address book and address lock on chain",
+        "Time lock for risky changes",
+        "Approval history in Logs and SIEM"
+      ]
+    },
+    {
+      "id": "catalog_partner",
+      "name": "Catalog partners",
+      "kind": "program",
+      "group": "customer",
+      "side": "workspace",
+      "base": false,
+      "dependsOn": [],
+      "limits": {},
+      "priceRef": null,
+      "description": "Publishing an app to the Touchque catalog.",
+      "includes": [
+        "Catalog entries with a logo and a test account",
+        "Touchque’s review"
+      ]
+    }
+  ]
+}

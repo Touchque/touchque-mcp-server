@@ -8,7 +8,7 @@ Sinatra and any Rack app.
 
 Ruby 3.1+, no runtime dependencies beyond the standard library (`net/http`, `openssl`, `json`).
 
-📘 Full docs: **[dashboard.touchque.com/docs](https://dashboard.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 

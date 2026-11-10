@@ -27,6 +27,8 @@ public final class TouchQueOptions {
     private String baseUrl;
     private Duration timeout = Duration.ofSeconds(10);
     private HttpClient httpClient;
+    private System.Logger logger;
+    private boolean debug;
 
     /** Your API key from the dashboard ({@code tq_…}). */
     public TouchQueOptions apiKey(String value) {
@@ -61,6 +63,23 @@ public final class TouchQueOptions {
         return this;
     }
 
+    /**
+     * Where the SDK reports its own problems: a misconfigured guard, an onChallenge that threw, a
+     * relay error or a relay without getLoginUser, a silent sign-in check that failed. Default:
+     * nothing is logged. Lines carry an error's class, code and message, never the error object, a
+     * request or a user.
+     */
+    public TouchQueOptions logger(System.Logger value) {
+        this.logger = value;
+        return this;
+    }
+
+    /** With no {@link #logger}: write those lines to System.Logger {@code "touchque"} (local development). */
+    public TouchQueOptions debug(boolean value) {
+        this.debug = value;
+        return this;
+    }
+
     public String apiKey() {
         return apiKey;
     }
@@ -81,7 +100,15 @@ public final class TouchQueOptions {
         return httpClient;
     }
 
-    record Resolved(String apiKey, String apiSecret, String baseUrl, Duration timeout, HttpClient httpClient) {
+    public System.Logger logger() {
+        return logger;
+    }
+
+    public boolean debug() {
+        return debug;
+    }
+
+    record Resolved(String apiKey, String apiSecret, String baseUrl, Duration timeout, HttpClient httpClient, SdkLog log) {
     }
 
     /** The options with the environment filled in, checked. */
@@ -97,7 +124,7 @@ public final class TouchQueOptions {
             throw new TouchQueConfigException("apiKey must start with \"tq_\". Did you accidentally swap apiKey and apiSecret?");
         }
         assertSafeBaseUrl(url, "baseUrl");
-        return new Resolved(key, secret, url.replaceAll("/+$", ""), timeout, httpClient);
+        return new Resolved(key, secret, url.replaceAll("/+$", ""), timeout, httpClient, new SdkLog(logger, debug));
     }
 
     /** Allow plaintext http only for localhost / loopback (local development). */
@@ -120,7 +147,7 @@ public final class TouchQueOptions {
     }
 
     public static boolean isLoopback(String host) {
-        String h = host.toLowerCase();
+        String h = host.toLowerCase(Locale.ROOT);
         return h.equals("localhost") || h.equals("127.0.0.1") || h.equals("::1") || h.equals("[::1]");
     }
 }
@@ -160,6 +187,7 @@ public final class TouchQueClient {
     private final Mobile mobile;
     private final QrPairings qrPairings;
     private final DeviceRisk deviceRisk;
+    private final SafeGuard safeGuard;
 
     /** A client from the environment ({@code TQ_API_KEY}, {@code TQ_API_SECRET}, {@code TQ_API_URL}). */
     public TouchQueClient() {
@@ -169,7 +197,7 @@ public final class TouchQueClient {
     /** @param options anything left null falls back to the environment */
     public TouchQueClient(TouchQueOptions options) {
         TouchQueOptions.Resolved r = options.resolve();
-        this.http = new TouchQueHttp(r.apiKey(), r.apiSecret(), r.baseUrl(), r.timeout(), r.httpClient());
+        this.http = new TouchQueHttp(r.apiKey(), r.apiSecret(), r.baseUrl(), r.timeout(), r.httpClient(), r.log());
         this.auth = new Auth(http);
         this.login = new Login(http);
         this.webauthn = new WebAuthn(http);
@@ -185,6 +213,7 @@ public final class TouchQueClient {
         this.mobile = new Mobile(http);
         this.qrPairings = new QrPairings(http);
         this.deviceRisk = new DeviceRisk(http);
+        this.safeGuard = new SafeGuard(http);
     }
 
     /** Setup secrets and a user's link status. */
@@ -260,6 +289,11 @@ public final class TouchQueClient {
     /** Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on). */
     public DeviceRisk deviceRisk() {
         return deviceRisk;
+    }
+
+    /** Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard. */
+    public SafeGuard safeGuard() {
+        return safeGuard;
     }
 
     /** Internal: the signed HTTP client. */
@@ -771,8 +805,9 @@ public final class Login {
         if (options.onChallenge() != null) {
             try {
                 options.onChallenge().accept(new VerifyChallenge(sent.requestId(), emptyToNull(sent.challengeCode()), sent.expiresAt(), sent.reasons(), sent.caseCode()));
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException e) {
                 // The caller's callback must not stop the wait.
+                http.log().warn("[TouchQue] onChallenge failed: " + SdkLog.describe(e));
             }
         }
         return waitFor(sent.requestId(), sent.challengeCode(),
@@ -1242,14 +1277,19 @@ public final class RelayHandler<T> {
         this.o = options;
         this.limiter = options.rateLimit == null ? null : new RateLimit.Limiter(options.rateLimit);
         this.offlineEnabled = options.getLoginUser != null || options.allowOfflineWithoutFirstFactor;
+        if (options.getLoginUser == null) {
+            client.http().log().warn("[TouchQue] RelayHandler: POST /login takes the username from the request body"
+                    + (offlineEnabled ? ", and so do the offline routes" : "; the offline routes are disabled until you set it")
+                    + ". Set getLoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.");
+        }
     }
 
     /** Handles one relay request; null when no relay route matches (answer 404 yourself). */
     public RelayResponse handle(RelayRequest<T> req) {
-        String method = req.method().toUpperCase();
+        String method = req.method().toUpperCase(Locale.ROOT);
         if (method.equals("HEAD")) method = "GET";
         String path = "/" + req.path().split("\\?", 2)[0].replaceAll("^/+|/+$", "");
-        switch (method + " " + path.toLowerCase()) {
+        switch (method + " " + path.toLowerCase(Locale.ROOT)) {
             case "POST /enroll/start":
                 return enrollStart(req);
             case "GET /enroll/status":
@@ -1280,7 +1320,7 @@ public final class RelayHandler<T> {
                 break;
         }
         String prefix = "/passkey/credentials/";
-        if (method.equals("DELETE") && path.toLowerCase().startsWith(prefix) && path.length() > prefix.length() && !path.substring(prefix.length()).contains("/")) {
+        if (method.equals("DELETE") && path.toLowerCase(Locale.ROOT).startsWith(prefix) && path.length() > prefix.length() && !path.substring(prefix.length()).contains("/")) {
             return deleteCredential(req, URLDecoder.decode(path.substring(prefix.length()).replace("+", "%2B"), StandardCharsets.UTF_8));
         }
         return null;
@@ -1422,7 +1462,8 @@ public final class TouchQueGuardOptions {
  * <ul>
  * <li>bad signature or too old → 401, the listener is not called;</li>
  * <li>a replay of a delivery already accepted → 200 {@code {"received":true,"duplicate":true}}, not called again;</li>
- * <li>otherwise the listener runs and the answer is 200 {@code {"received":true}} (500 when it throws, so TouchQue retries).</li>
+ * <li>otherwise the listener runs and the answer is 200 {@code {"received":true}} (500 when it throws, so TouchQue retries;
+ * the jti is released through {@code Webhook.ReplayCache.release}, so the retry runs the listener again).</li>
  * </ul>
  *
  * <pre>{@code
@@ -1476,7 +1517,7 @@ public final class TouchQueSpring {
     public static String clientIp(HttpServletRequest request) {
         String ip = request.getRemoteAddr();
         if (ip == null) return null;
-        String lower = ip.toLowerCase();
+        String lower = ip.toLowerCase(Locale.ROOT);
         if (lower.startsWith("::ffff:") && ip.indexOf('.') > 0) return ip.substring(7);
         if (lower.startsWith("0:0:0:0:0:ffff:") && ip.indexOf('.') > 0) return ip.substring(15);
         return ip;

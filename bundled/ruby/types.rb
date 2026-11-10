@@ -18,7 +18,7 @@ module TouchQue
   # Thread-safe: create one and reuse it (in Rails, TouchQue.client).
   class Client
     attr_reader :auth, :login, :webauthn, :webhook, :offline, :action_types, :actions, :risk, :recovery,
-                :assist, :agents, :identity, :mobile, :qr_pairings, :device_risk
+                :assist, :agents, :identity, :mobile, :qr_pairings, :device_risk, :safe_guard
 
     # Anything left nil falls back to the environment: TQ_API_KEY, TQ_API_SECRET and
     # TQ_API_URL (default https://api.touchque.com). +timeout+ is seconds per request.
@@ -48,6 +48,7 @@ module TouchQue
       @mobile = Resources::Mobile.new(@http)
       @qr_pairings = Resources::QrPairings.new(@http)
       @device_risk = Resources::DeviceRisk.new(@http)
+      @safe_guard = Resources::SafeGuard.new(@http)
     end
 
     # @api private: signs the guard tokens.
@@ -440,7 +441,9 @@ module TouchQue
       res = client.login.consume(request_id)
       same_user = res["externalUsername"].to_s.downcase == user.to_s.downcase
       same_details = Details.digest(details) == Details.digest(res["details"])
-      if !same_user || res["type"] != action || !same_details || res["referenceId"] != reference_id
+      # No reference and an empty one are the same: the API answers null for both.
+      same_ref = (res["referenceId"].to_s.empty? ? nil : res["referenceId"]) == (reference_id.to_s.empty? ? nil : reference_id)
+      if !same_user || res["type"] != action || !same_details || !same_ref
         raise ApprovalMismatchError, "this approval is for a different user, action or transaction."
       end
 
@@ -663,7 +666,9 @@ module TouchQue
       rescue ConfigError => e
         TouchQue.log :error, "[TouchQue] #{e.message}"
         error(500, { "state" => "blocked", "reason" => "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.")
-      rescue NetworkError, APIError => e
+      rescue StandardError => e
+        # Anything else (Touchque unreachable, an approval for another transaction, a bug)
+        # fails closed with the contract's 503, never a bare 500.
         TouchQue.log :error, "[TouchQue] approval failed: #{e.class}: #{e.message}"
         error(503, { "state" => "blocked", "reason" => "unavailable" }, "unavailable", "Two-factor approval is temporarily unavailable.")
       end
@@ -707,6 +712,11 @@ end
 module TouchQue
   # Transaction details the way the API normalizes and digests them.
   module Details
+    # What JavaScript's trim removes, as the API trims: ASCII and Unicode spaces (U+00A0,
+    # U+202F...), line separators and the BOM. String#strip knows only the ASCII ones.
+    SPACE = "[\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]"
+    TRIM = /\A#{SPACE}+|#{SPACE}+\z/
+
     module_function
 
     # A Hash ({"Amount" => "250 EUR"}) or a list of {label:, value:} as
@@ -722,7 +732,11 @@ module TouchQue
                   [d["label"].to_s, d["value"].to_s]
                 end
               end
-      pairs.map { |label, value| { "label" => label.strip, "value" => value.strip } }
+      pairs.map { |label, value| { "label" => trim(label), "value" => trim(value) } }
+    end
+
+    def trim(text)
+      text.ascii_only? || text.encoding == Encoding::UTF_8 ? text.gsub(TRIM, "") : text.strip
     end
 
     # SHA-256 (hex) over the normalized details joined as label US value RS label...;
@@ -828,9 +842,16 @@ module TouchQue
     end
 
     # Verifies an approval token offline: typ touchque-approval+jwt, ES256 by a key of
-    # +jwks+, not expired (30 s leeway), +audience+ when given, then the expectation.
+    # +jwks+, not expired (30 s leeway), aud equal to +audience+, then the expectation.
+    # +audience+ is required: /agents/jwks.json is one key set for every Touchque
+    # workspace, so without it a token Touchque signed for another workspace would pass.
+    # Pass your own (tq.agents.approval_audience, touchque:workspace:<id>), or use
+    # tq.agents.verify_approval_token, which fills it in.
     # Does NOT make it single-use: agents.redeem_approval does.
     def verify_with(token, jwks, audience: nil, user: nil, type: nil, authorization_details: nil, now: nil)
+      if !audience.is_a?(String) || audience.empty?
+        raise ApprovalMismatchError, "audience is required: your workspace's touchque:workspace:<id> (tq.agents.approval_audience)"
+      end
       parts = JWS.split(token)
       raise ApprovalMismatchError, "not an approval token" unless parts
 
@@ -847,7 +868,9 @@ module TouchQue
 
       exp = claims["exp"]
       raise ApprovalMismatchError, "the approval token expired" unless exp.is_a?(Numeric) && exp + 30 >= (now || Util.now)
-      raise ApprovalMismatchError, "the approval token is for another workspace" if audience && claims["aud"] != audience
+      aud = claims["aud"]
+      raise ApprovalMismatchError, "the approval token names no workspace" if !aud.is_a?(String) || aud.empty?
+      raise ApprovalMismatchError, "the approval token is for another workspace" if aud != audience
 
       assert_matches!(claims, user: user, type: type, authorization_details: authorization_details)
       claims
@@ -957,7 +980,8 @@ module TouchQue
                   context: nil, challenge_digits: nil, expires_in: nil, client_signals: nil,
                   security_changes: nil, destination: nil, locale: nil, qr_pairing: nil, device_risk: nil, device_risk_request_id: nil, reply: nil)
         body = { "externalUsername" => external_username, "type" => type || "LOGIN" }
-        body["referenceId"] = reference_id unless reference_id.nil?
+        # An empty reference is no reference (the API answers null for it).
+        body["referenceId"] = reference_id unless reference_id.to_s.empty?
         body["clientIp"] = client_ip unless client_ip.nil?
         body["userAgent"] = user_agent unless user_agent.nil?
         body["requireBiometric"] = true if require_biometric
@@ -1010,7 +1034,7 @@ module TouchQue
       # call), RejectedError, or TimeoutError.
       def verify(external_username, type: "LOGIN", timeout: 30, poll_interval: 0.4, on_challenge: nil, **options, &block)
         on_challenge ||= block
-        sent = request(external_username, type: type, **options.except(:expires_in, :client_signals))
+        sent = request(external_username, type: type, **options)
         request_id = sent["requestId"]
         raise PasskeyRequiredError.new(request_id) if sent["requiresPasskey"]
 
@@ -1109,6 +1133,17 @@ module TouchQue
 
       def authenticate_verify(request_id, response)
         @http.post("/webauthn/login/verify", { "requestId" => request_id, "response" => response })
+      end
+
+      # Whether passkey sign-in (passwordlessLoginEnabled) is on for your workspace.
+      # Ask before your sign-in page shows its passkey button and passkey autofill:
+      # when it is off, primary_options answers 403 passwordless_login_disabled.
+      # { "enabled" => bool, "userVerification" => "required" | "preferred" | nil }.
+      def primary_availability
+        raw = @http.get("/webauthn/authenticate/primary/availability") || {}
+        enabled = raw["enabled"] == true
+        uv = raw["userVerification"]
+        { "enabled" => enabled, "userVerification" => enabled && %w[required preferred].include?(uv) ? uv : nil }
       end
 
       # Passwordless sign-in step 1; without a user, any passkey of your site (autofill).

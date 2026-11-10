@@ -117,6 +117,46 @@ app.use(touchqueRouter(tq, {
 }));
 ```
 
+- **`touchqueRelay`** (Next.js App Router, Hono, Remix, SvelteKit, Bun, Deno, Workers): the same routes and checks
+  as `touchqueRouter`, as one handler that takes a `Request` and returns a `Response`; no express needed. Set
+  `getLoginUser` exactly as for the router (the offline routes stay off without it). Fetch has no socket address, so
+  say where the end user's address comes from (`ip` or `trustedProxyHops`, as for `withTouchQue`); without one the
+  per-IP limits are skipped and only the per-username ones apply. `basePath` (default `/touchque`) is where it is
+  mounted; another path answers 404.
+
+```typescript
+// app/touchque/[...path]/route.ts
+import { TouchQue, touchqueRelay, ipFromVercel } from '@touchque/node';
+
+const relay = touchqueRelay(new TouchQue(), {
+  getUserId: async () => (await auth())?.user?.email,
+  getLoginUser: async () => (await passwordStep())?.email,
+  ip: ipFromVercel,
+  // `headers` go out on the success response (or use Next's cookies().set()).
+  onAuthenticated: async (req, info, headers) => {
+    headers.append('Set-Cookie', await sessionCookie(info.externalUsername));
+  },
+});
+export { relay as GET, relay as POST, relay as DELETE };
+```
+
+Both relays rate limit with `FixedWindowLimiter`, which is exported for your own routes (`withTouchQue`, a
+hand-written relay). `hit(key, limit)` counts one request and returns the seconds to wait once `key` is over `limit`
+in the window (0 until then); it is in memory, per process.
+
+```typescript
+import { FixedWindowLimiter, withTouchQue, ipFromVercel } from '@touchque/node';
+
+const limiter = new FixedWindowLimiter();   // { windowMs: 60000, perIp: 20, perUser: 5 }
+const transfer = withTouchQue('SEND_MONEY', handler, { user, ip: ipFromVercel });
+
+export async function POST(req: Request) {
+  const wait = limiter.hit(`ip|transfer|${ipFromVercel(req)}`, limiter.perIp);
+  if (wait) return Response.json({ error: 'RATE_LIMITED', retryAfter: wait }, { status: 429, headers: { 'Retry-After': String(wait) } });
+  return transfer(req);
+}
+```
+
 ## Passkeys (phishing-resistant)
 
 Push approval and offline codes stop password reuse and push fatigue, but a
@@ -187,6 +227,12 @@ them to approve), `risk_reversed`, `risk_step_up`, `approval_signature_invalid`,
 `vishing_suspected` and `phishing_origin` (see Vishing Shield). Treat a reason you do not know as a rejection.
 Event webhooks carry `event` (`WebhookEvents`): `DEVICE_LINKED`, `DEVICE_UNLINKED`, `PASSKEY_REGISTERED`,
 `PASSKEY_DELETED`, `APPROVAL_RECONFIRMED`, `APPROVAL_REVOKED`. Ignore events you do not know.
+Touchque also sends `MOBILE_PUSH` (Mobile SDK: send the push with your own keys, `mobilePushFromWebhook`), the
+Never Locked Out events `RECOVERY_STARTED`, `RECOVERY_DEVICE_BOUND`, `RECOVERY_COOLING`, `RECOVERY_COMPLETED`,
+`RECOVERY_VETOED`, `RECOVERY_EXPIRED`, `RECOVERY_FAILED` (with `recoveryId`), and the help-desk events
+`ASSIST_OPENED`, `ASSIST_ENDED`, `ASSIST_CHECK_PASSED`, `ASSIST_CHECK_FAILED`, `ASSIST_UNFROZEN`,
+`ASSIST_CLAIM_CONFIRMED`, `ASSIST_CLAIM_UNVERIFIED` (page someone on the last two failures: someone may be
+pretending to be IT). All are in `WebhookEvents`.
 
 ## Vishing Shield (someone on the phone guiding the user)
 
@@ -330,6 +376,49 @@ const claims = await idJag.verify(form.assertion, { clientId: authenticatedClien
 
 await verifyAgentCard(card, { cardUrl: 'https://agent.example/.well-known/agent-card.json' });
 ```
+
+## Shared Signals (security events from Touchque SSO)
+
+Touchque SSO sends Security Event Tokens (OpenID Shared Signals Framework 1.0, RFC 8417) for an organization's
+members to the receivers its admin adds (Organization > Continuous access) when something happens after sign-in:
+CAEP `session-revoked`, `credential-change`, `device-compliance-change`; RISC `account-disabled`,
+`credential-compromise`. Your app ends the person's sessions or asks them to sign in again. The verifier reads the
+transmitter's keys from its `/.well-known/ssf-configuration` and checks the signature (RS256), `typ`, issuer,
+audience and that the SET carries exactly one event.
+
+```typescript
+import express from 'express';
+import { SecurityEventVerifier, SecurityEventError, pollSecurityEvents } from '@touchque/node';
+
+const verifier = new SecurityEventVerifier({ issuer: 'https://sso.touchque.com', audience: 'https://app.example.com' });
+
+// Push delivery (RFC 8935): the SET is the request body.
+app.post('/ssf', express.text({ type: 'application/secevent+jwt' }), async (req, res) => {
+  try {
+    const event = await verifier.verify(req.body);
+    if (event.name === 'session-revoked') await endSessionsOf(event.subject.email);
+    res.status(202).end();
+  } catch (err) {
+    if (!(err instanceof SecurityEventError)) throw err;
+    res.status(err.code === 'temporarily_unavailable' ? 503 : 400).json({ err: err.code, description: err.message });
+  }
+});
+
+// Poll delivery (RFC 8936): the stream's poll endpoint and token; each poll acknowledges what you handled.
+let ack: string[] = [];
+const { sets, moreAvailable } = await pollSecurityEvents({ url: pollUrl, token: streamToken, ack }); // poll again at once while moreAvailable
+ack = [];
+for (const [jti, set] of Object.entries(sets)) {
+  await handle(await verifier.verify(set));
+  ack.push(jti);   // sent with the next poll
+}
+```
+
+`verify` returns `{ jti, issuer, audience, issuedAt, txn, subject, type, name, claims }`; `txn` is the case code of
+Touchque's decision ("Why?"). A refusal is a `SecurityEventError` whose `code` is the RFC 8935 error to answer with
+(`invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience`), or `temporarily_unavailable` when the keys
+could not be read (answer 503: the transmitter tries again). A SET does not expire: keep the jtis you handled and skip
+a repeat. `SECURITY_EVENT_TYPES` maps the short names to the event type URIs.
 
 ## Silent sign-ins (stop asking when nothing is new)
 
@@ -506,6 +595,38 @@ const sent = await tq.login.request({ externalUsername: user, type: 'LOGIN', rep
 const status = await tq.login.status(sent.requestId);   // once CONFIRMED
 const code = status.reply ? openCodeReply(key.privateKey, sent.requestId, status.reply.ct) : null;
 ```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```ts
+const sent = await tq.safeGuard.request({
+  externalUsername: 'treasurer@acme.com',
+  type: 'safe_payment',   // an action type from your dashboard
+  safeTx: {
+    chainId: 1, safe, guard, tx: { to, value: '0', data, operation: 0, nonce: 42 },
+    config: { threshold: 2, govThreshold: 3, govDelay: 172800, exitDelay: 259200 },
+    batchTargets: [multiSendCallOnly],
+    approverIndex: 0,     // this approver's index in the guard
+  },
+});
+const done = await tq.safeGuard.waitForApproval({ requestId: sent.requestId });   // 5 minutes at most
+const approval = done.safeTx!.approval!;
+
+// Check it yourself: your own transaction, the approver's key from the guard on chain, and the
+// purpose you will use it for (the signature must cover it, so one is never taken for the other).
+const purpose = done.safeTx!.purpose;   // 'approve' (execTransaction) or 'schedule' (a governance change)
+const check = verifySafeApproval({ chainId: 1, safe, guard, tx }, approval, approverKey, { approverIndex: 0, purpose });
+if (!check.valid) throw new Error(`approval refused: ${check.reason}`);
+if (purpose === 'approve') {
+  const signatures = withSafeApprovals(ownerSignatures, [approval]);   // execTransaction(…, signatures)
+} else {
+  const data = safeScheduleCall(safe, check.governanceHash, [approval]);   // a call to the guard; runs after govDelay
+}
+```
+
+`verifySafeApproval` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature for one purpose: `approve` unless you pass `purpose: 'schedule'`, so an approval to schedule a governance change (which leaves out the Safe nonce and gas) never passes as one to execute. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `rows` or `displayDigest` from your own decoding, rows the phone did not show. `reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`. `safeTxHash`, `safeGovernanceHash`, `safeApprovalMessage` and `safeDisplayDigest` are exported too.
 
 ## Errors
 

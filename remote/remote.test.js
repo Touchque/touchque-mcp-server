@@ -146,3 +146,21 @@ test("the server needs its exchange secret, publishes its resource metadata and 
     srv.close();
   }
 });
+
+test("the checklist takes the 4.x (TouchQue) and the 5.0 (Touchque) names alike", async () => {
+  const { handlers } = require("../index.js");
+  const run = async (code, framework, language) => (await handlers.callTool({ params: { name: "validate_integration", arguments: { code, framework, language } } })).content[0].text;
+  const node5 = "const { Touchque, requireTouchque } = require('@touchque/node');\nconst tq = new Touchque({ apiKey: process.env.TQ_API_KEY, apiSecret: process.env.TQ_API_SECRET });\napp.post('/pay', requireTouchque('SEND_MONEY', { tq }), h);";
+  assert.match(await run(node5, "express"), /Score: 100%/);
+  const node4 = node5.replace(/Touchque/g, "TouchQue");
+  assert.match(await run(node4, "express"), /Score: 100%/);
+  const dotnet5 = "using Touchque.AspNetCore;\nbuilder.Services.AddTouchque();\napp.MapPost(\"/pay\", h).RequireTouchque(\"SEND_MONEY\");\ntry { } catch (Exception e) { }";
+  assert.match(await run(dotnet5, "aspnetcore", "dotnet"), /✅ Route protection applied/);
+  const php5 = "use Touchque\\Touchque;\nRoute::post('/pay', $h)->middleware('touchque:SEND_MONEY'); getenv('TQ_API_KEY'); try { } catch (\\Exception $e) { }";
+  assert.match(await run(php5, "laravel", "php"), /✅ Route protection applied/);
+  const go5 = 'import "github.com/Touchque/touchque-go/v5/touchque"\nmux.Handle("/pay", touchque.Require(tq, "SEND_MONEY", h, touchque.RequireOptions{User: u}))\nos.Getenv("TQ_API_KEY")\nif err != nil {}';
+  const goReport = await run(go5, "net-http", "go");
+  assert.match(goReport, /✅ Route protection applied/);
+  assert.doesNotMatch(goReport, /the current SDK is/);
+  assert.deepEqual(actionTypesIn("requireTouchque('PAYOUT'); [RequireTouchque(\"REFUND\")]").sort(), ["PAYOUT", "REFUND"]);
+});

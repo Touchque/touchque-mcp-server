@@ -135,6 +135,7 @@ public sealed class TouchQueClient
         Mobile = new MobileResource(_http);
         QrPairings = new QrPairingsResource(_http);
         DeviceRisk = new DeviceRiskResource(_http);
+        SafeGuard = new SafeGuardResource(_http);
     }
 
     /// <summary>Setup secrets and a user's link status.</summary>
@@ -181,6 +182,9 @@ public sealed class TouchQueClient
 
     /// <summary>Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on).</summary>
     public DeviceRiskResource DeviceRisk { get; }
+
+    /// <summary>Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard.</summary>
+    public SafeGuardResource SafeGuard { get; }
 
     internal string ApiSecret => _http.ApiSecret;
 
@@ -445,7 +449,8 @@ internal static class Steps
         var res = await client.Login.ConsumeAsync(requestId, ct).ConfigureAwait(false);
         var sameUser = string.Equals(res.ExternalUsername, expect.User, StringComparison.OrdinalIgnoreCase);
         var sameDetails = TouchQue.Details.Digest(expect.Details) == TouchQue.Details.Digest(res.Details);
-        var sameRef = (res.ReferenceId ?? null) == (expect.ReferenceId ?? null);
+        // An empty reference is no reference: StartAsync does not send one, so Touchque keeps null.
+        var sameRef = (string.IsNullOrEmpty(res.ReferenceId) ? null : res.ReferenceId) == (string.IsNullOrEmpty(expect.ReferenceId) ? null : expect.ReferenceId);
         if (!sameUser || res.Type != expect.Action || !sameDetails || !sameRef)
         {
             throw new TouchQueApprovalMismatchException("this approval is for a different user, action or transaction.");
@@ -782,7 +787,8 @@ public static class Guard
             client.Log.Error("[TouchQue] " + e.Message);
             return Error(500, new Step { State = "blocked", Reason = "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.");
         }
-        catch (Exception e) when (e is TouchQueNetworkException or TouchQueApiException)
+        // A mismatch here means Touchque holds another transaction than this request: fail closed, never a 500.
+        catch (Exception e) when (e is TouchQueNetworkException or TouchQueApiException or TouchQueApprovalMismatchException)
         {
             client.Log.Error("[TouchQue] approval failed: " + SdkLog.Describe(e));
             return Error(503, new Step { State = "blocked", Reason = "unavailable" }, "unavailable", "Two-factor approval is temporarily unavailable.");
@@ -1007,7 +1013,7 @@ public sealed class LoginResource
     /// <exception cref="TouchQueTimeoutException">It expired or <see cref="LoginRequestOptions.Timeout"/> passed.</exception>
     public async Task<VerifyResult> VerifyAsync(LoginRequestOptions options, CancellationToken ct = default)
     {
-        var sent = await RequestAsync(options with { ExpiresIn = null, ClientSignals = null }, ct).ConfigureAwait(false);
+        var sent = await RequestAsync(options, ct).ConfigureAwait(false);
         if (sent.RequiresPasskey)
         {
             throw new TouchQuePasskeyRequiredException(sent.RequestId);
@@ -1179,7 +1185,7 @@ public sealed record LoginRequestOptions
     /// <summary><c>tr</c> (default) or <c>en</c>: the language of the rows TouchQue adds.</summary>
     public string? Locale { get; init; }
 
-    /// <summary>VerifyAsync only: how long to wait (default 30 seconds).</summary>
+    /// <summary>VerifyAsync only: how long to wait (default 30 seconds; with a longer <see cref="ExpiresIn"/>, set it to match).</summary>
     public TimeSpan? Timeout { get; init; }
 
     /// <summary>VerifyAsync only: how often to ask (default 400 ms).</summary>
@@ -1806,23 +1812,23 @@ public static class TouchQueRelayEndpoints
         var client = endpoints.ServiceProvider.GetRequiredService<TouchQueClient>();
         var handler = new RelayHandler<HttpContext>(client, options ?? new RelayOptions<HttpContext> { GetUserId = http => http.User.TouchQueUser() });
         var group = endpoints.MapGroup(prefix);
-        var mount = "/" + prefix.Trim('/');
-        RequestDelegate run = http => HandleAsync(handler, mount, http);
+        // Each route hands the relay its own path: request.Path also holds the prefixes of the
+        // groups this one is mapped on (app.MapGroup("/api").MapTouchQueRelay("/touchque")).
         foreach (var path in new[]
         {
             "/enroll/start", "/login", "/offline/challenge", "/offline/verify", "/offline/totp", "/passkey/authenticate/options",
             "/passkey/authenticate/verify", "/passkey/login/options", "/passkey/login/verify", "/passkey/register/options", "/passkey/register/verify",
         })
         {
-            group.MapPost(path, run);
+            group.MapPost(path, http => HandleAsync(handler, path, http));
         }
-        group.MapGet("/enroll/status", run);
-        group.MapGet("/passkey/credentials", run);
-        group.MapDelete("/passkey/credentials/{id}", run);
+        group.MapGet("/enroll/status", http => HandleAsync(handler, "/enroll/status", http));
+        group.MapGet("/passkey/credentials", http => HandleAsync(handler, "/passkey/credentials", http));
+        group.MapDelete("/passkey/credentials/{id}", http => HandleAsync(handler, "/passkey/credentials/" + http.Request.RouteValues["id"], http));
         return group;
     }
 
-    private static async Task HandleAsync(RelayHandler<HttpContext> handler, string mount, HttpContext http)
+    private static async Task HandleAsync(RelayHandler<HttpContext> handler, string path, HttpContext http)
     {
         var request = http.Request;
         var body = new JsonObject();
@@ -1843,8 +1849,6 @@ public static class TouchQueRelayEndpoints
                 return;
             }
         }
-        var path = request.Path.Value ?? "/";
-        if (mount != "/" && path.StartsWith(mount, StringComparison.OrdinalIgnoreCase)) path = path[mount.Length..];
         var response = await handler.HandleAsync(new RelayRequest<HttpContext>
         {
             Method = request.Method,

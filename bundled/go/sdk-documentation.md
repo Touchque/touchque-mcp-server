@@ -24,15 +24,19 @@ export TQ_API_KEY=tq_auth_your_key
 export TQ_API_SECRET=your_api_secret
 ```
 
-`touchque.NewClient(&touchque.Config{})` reads these from the environment when
-left empty.
+`touchque.New()` reads these from the environment (and `TQ_API_URL` when set).
+`touchque.NewClient(&touchque.Config{APIKey: ..., APISecret: ...})` takes them
+in code instead; it panics when they are missing or invalid.
 
 ## Quick start (net/http)
 
 ```go
 import "github.com/Touchque/touchque-go/v4/touchque"
 
-tq := touchque.NewClient(&touchque.Config{})
+tq, err := touchque.New() // TQ_API_KEY, TQ_API_SECRET
+if err != nil {
+    log.Fatal(err)
+}
 
 mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", transferHandler, touchque.RequireOptions{
     User: func(r *http.Request) string { return sessionUser(r) },
@@ -479,6 +483,99 @@ if status.Reply != nil {
 	code, ok := touchque.OpenCodeReply(key.PrivateKey, sent.RequestID, status.Reply.CT)
 }
 ```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```go
+target := touchque.SafeTxTarget{ChainID: "1", Safe: safe, Guard: guard,
+	Tx: touchque.SafeTxCall{To: to, Value: "0", Data: data, Operation: 0, Nonce: "42"}}
+sent, err := client.SafeGuard.Request(ctx, touchque.SafeGuardRequestOptions{
+	ExternalUsername: "treasurer@acme.com",
+	Type:             "safe_payment", // an action type from your dashboard
+	SafeTx: touchque.SafeGuardTx{SafeTxTarget: target,
+		Config:        touchque.SafeGuardConfig{Threshold: 2, GovThreshold: 3, GovDelay: 172800, ExitDelay: 259200},
+		BatchTargets:  []string{multiSendCallOnly},
+		ApproverIndex: 0}, // this approver's index in the guard
+})
+done, err := client.SafeGuard.WaitForApproval(ctx, sent.RequestID, 0, 0) // 5 minutes at most
+approval := done.SafeTx.Approval
+
+// Check it yourself: your own transaction, the approver's key from the guard on chain,
+// and the purpose you will act on ("approve" executes, "schedule" starts a governance change).
+index := 0
+check, err := touchque.VerifySafeApproval(target, approval, approverKey, touchque.VerifySafeApprovalOptions{Purpose: done.SafeTx.Purpose, ApproverIndex: &index})
+if err != nil || !check.Valid {
+	return fmt.Errorf("approval refused: %s", check.Reason)
+}
+if check.Purpose == "approve" {
+	signatures, _ := touchque.WithSafeApprovals(ownerSignatures, []string{approval}) // execTransaction(…, signatures)
+} else {
+	calldata, _ := touchque.SafeScheduleCall(safe, check.GovernanceHash, []string{approval}) // a call to the guard; runs after govDelay
+}
+```
+
+`VerifySafeApproval` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `Rows` or `DisplayDigest` from your own decoding, rows the phone did not show. Without `Purpose` only an ordinary approval (`approve`) is valid: a `schedule` approval covers the governance hash, which has no Safe nonce, so it passes only when you name `Purpose: "schedule"`. `Reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`; an error only means the target is not a Safe transaction. `SafeTxHash`, `SafeGovernanceHash`, `SafeApprovalMessage` and `SafeDisplayDigest` are exported too. Standard library only.
+
+## Shared Signals (security events from Touchque SSO)
+
+Touchque SSO tells your app when something happens to a member's account after sign-in: an admin ended their sessions,
+a password or 2FA method changed, a device fell out of compliance, the account was disabled or a credential leaked. It
+sends Security Event Tokens (SETs, OpenID Shared Signals Framework 1.0) to the receivers an organization's admin adds
+(Organization > Continuous access), pushed to your endpoint (RFC 8935) or waiting for you to poll (RFC 8936). End the
+person's sessions, or ask them to sign in again.
+
+```go
+v, _ := touchque.NewSecurityEventVerifier(touchque.SecurityEventVerifierConfig{
+	Issuer:   "https://sso.touchque.com",
+	Audience: "https://app.example.com", // your stream's aud, as the dashboard shows it
+})
+
+// Push: the SET is the request body (application/secevent+jwt).
+http.HandleFunc("/ssf", func(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 32<<10))
+	event, err := v.Verify(r.Context(), string(body))
+	var se *touchque.SecurityEventError
+	if errors.As(err, &se) {
+		if se.Code == "temporarily_unavailable" {
+			w.WriteHeader(503) // the keys could not be read: the transmitter tries again
+			return
+		}
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"err": se.Code, "description": se.Message})
+		return
+	}
+	if event.Name == "session-revoked" {
+		endSessionsOf(event.Subject["email"])
+	}
+	w.WriteHeader(202)
+})
+
+// Poll: acknowledge what you handled, get what is waiting.
+var ack []string
+for {
+	out, err := touchque.PollSecurityEvents(ctx, touchque.PollSecurityEventsParams{
+		URL: pollURL, Token: streamToken, Ack: ack, // the stream's endpoint_url and token
+	})
+	if err != nil {
+		return err // *SecurityEventError with the transmitter's code, or a network error
+	}
+	ack = nil
+	for jti, set := range out.Sets {
+		if event, err := v.Verify(ctx, set); err == nil {
+			handle(event)
+		}
+		ack = append(ack, jti)
+	}
+}
+```
+
+`Name` is the short name (`session-revoked`, `credential-change`, `device-compliance-change`, `account-disabled`,
+`credential-compromise`; `SecurityEventTypes` maps each to its URI), `Subject` the person
+(`{"format": "email", "email": ...}`) and `TXN` the case code of Touchque's decision. The keys come from the issuer's
+`/.well-known/ssf-configuration` (or set `JWKSURI` / `JWKS`). A SET does not expire: keep the jtis you handled and skip
+a repeat.
 
 ## Errors
 

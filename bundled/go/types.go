@@ -286,6 +286,14 @@ type WebAuthnAuthenticateVerifyResponse struct {
 }
 
 // WebAuthnPrimaryOptionsResponse is returned by WebAuthn.PrimaryOptions.
+// WebAuthnPrimaryAvailability is returned by WebAuthn.PrimaryAvailability:
+// whether passkey sign-in is on for your workspace. UserVerification is
+// "required" or "preferred", or empty when Enabled is false.
+type WebAuthnPrimaryAvailability struct {
+	Enabled          bool   `json:"enabled"`
+	UserVerification string `json:"userVerification"`
+}
+
 type WebAuthnPrimaryOptionsResponse struct {
 	AttemptID string                 `json:"attemptId"`
 	Options   map[string]interface{} `json:"options"`
@@ -447,6 +455,9 @@ type Client struct {
 	// DeviceRisk is Device risk: the device on your sign-up, reset, sign-in
 	// or approval page (a paid add-on).
 	DeviceRisk *DeviceRiskResource
+	// SafeGuard is Safe Guard: Safe transactions approved on the approver's
+	// phone, for TouchQueSafeGuard.
+	SafeGuard *SafeGuardResource
 
 	apiSecret string
 	logger    *slog.Logger
@@ -499,6 +510,7 @@ func newClient(config *Config) *Client {
 		Mobile:      newMobileResource(httpWrapper),
 		QRPairings:  newQRPairingsResource(httpWrapper),
 		DeviceRisk:  newDeviceRiskResource(httpWrapper),
+		SafeGuard:   newSafeGuardResource(httpWrapper),
 		apiSecret:   config.APISecret,
 	}
 }
@@ -633,6 +645,10 @@ func normalizeDetails(details []LoginDetail) []LoginDetail {
 	}
 	return out
 }
+
+// NormalizeDetails trims each label and value the way the API does (nil in,
+// nil out): the details a guard token and an approval are bound to.
+func NormalizeDetails(details []LoginDetail) []LoginDetail { return normalizeDetails(details) }
 
 func detailsDigest(details []LoginDetail) string {
 	norm := normalizeDetails(details)
@@ -794,18 +810,24 @@ func (c *Client) Complete(requestID, user, action string, expect CompleteExpect)
 // derived from the API secret and binds the approval to one user, action and
 // transaction, so it cannot be replayed for another user, amount or route.
 
-type guardClaims struct {
-	U   string `json:"u"`
-	A   string `json:"a"`
-	D   string `json:"d"`
-	R   string `json:"r"`
-	St  string `json:"st"`
-	Rid string `json:"rid,omitempty"`
-	N   string `json:"n,omitempty"`
-	Oc  string `json:"oc,omitempty"`
-	Cc  string `json:"cc,omitempty"` // "Why?" case code, shown while waiting
-	Exp int64  `json:"exp"`
+// GuardTokenClaims are what a guard token carries (SignGuardToken /
+// VerifyGuardToken): the user, action, details and reference id it is bound
+// to, the step it was issued for and the request behind it.
+type GuardTokenClaims struct {
+	U   string `json:"u"`             // user
+	A   string `json:"a"`             // action
+	D   string `json:"d"`             // details digest (DetailsDigest)
+	R   string `json:"r"`             // reference id
+	St  string `json:"st"`            // step state (StepWaiting …)
+	Rid string `json:"rid,omitempty"` // request id
+	N   string `json:"n,omitempty"`   // matching number
+	Oc  string `json:"oc,omitempty"`  // offline challenge id
+	Cc  string `json:"cc,omitempty"`  // "Why?" case code, shown while waiting
+	Exp int64  `json:"exp"`           // expiry, ms since the epoch
 }
+
+// guardClaims is the guard's own name for GuardTokenClaims.
+type guardClaims = GuardTokenClaims
 
 func nowMs() int64 { return time.Now().UnixMilli() }
 
@@ -860,6 +882,20 @@ func verifyGuardToken(apiSecret, token string) *guardClaims {
 		return nil
 	}
 	return &claims
+}
+
+// SignGuardToken signs claims into a guard token ("v1.<body>.<mac>") with a
+// key derived from apiSecret, for a guard you build yourself (RunGuard and
+// Require issue their own). Set Exp: RunGuard's tokens live 10 minutes.
+func SignGuardToken(apiSecret string, claims GuardTokenClaims) string {
+	return signGuardToken(apiSecret, claims)
+}
+
+// VerifyGuardToken returns the claims of a guard token signed with apiSecret,
+// or nil when it is malformed, signed with another key or expired. Compare U,
+// A, D and R with the current request before you trust it.
+func VerifyGuardToken(apiSecret, token string) *GuardTokenClaims {
+	return verifyGuardToken(apiSecret, token)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1061,6 +1097,7 @@ func (o *OfflineResource) notApprovedAsResult(call func() (map[string]interface{
 package touchque
 
 import (
+	"context"
 	"log/slog"
 	"net/url"
 	"strconv"
@@ -1371,7 +1408,12 @@ func parseDetails(res map[string]interface{}) []LoginDetail {
 
 // Status checks the current status of a login request.
 func (l *LoginResource) Status(requestID string) (*LoginStatusResponse, error) {
-	res, err := l.http.get("/login/status/" + url.PathEscape(requestID))
+	return l.statusCtx(context.Background(), requestID)
+}
+
+// statusCtx is Status bound to ctx: cancelling ctx aborts the request.
+func (l *LoginResource) statusCtx(ctx context.Context, requestID string) (*LoginStatusResponse, error) {
+	res, err := l.http.getWithQueryCtx(ctx, "/login/status/"+url.PathEscape(requestID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1527,6 +1569,59 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 		}
 
 		time.Sleep(pollInterval)
+	}
+}
+
+// WaitForApproval polls a request you already sent (Request or
+// RequestWithOptions) until the user answers on the phone: the approval, a
+// *RejectedError when they said no, a *TimeoutError when it expired or timeout
+// (0 = 30 seconds) ran out, or a *PasskeyRequiredError (Reason "step_up") when
+// the Vishing Shield moved it to a passkey. pollInterval 0 is 400 ms.
+//
+//	sent, _ := client.Login.RequestWithOptions(touchque.LoginRequestOptions{ExternalUsername: user, Type: "SEND_MONEY"})
+//	done, err := client.Login.WaitForApproval(ctx, sent.RequestID, 30*time.Second, 0)
+func (l *LoginResource) WaitForApproval(ctx context.Context, requestID string, timeout, pollInterval time.Duration) (*VerifyResponse, error) {
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	if pollInterval == 0 {
+		pollInterval = 400 * time.Millisecond
+	}
+	start := time.Now()
+	for {
+		status, err := l.statusCtx(ctx, requestID)
+		if err != nil {
+			return nil, err
+		}
+		switch status.Status {
+		case "CONFIRMED":
+			return &VerifyResponse{
+				Approved:     true,
+				Status:       status.Status,
+				RequestID:    requestID,
+				Assurance:    status.Assurance,
+				ConfirmedVia: status.ConfirmedVia,
+				Provisional:  status.Provisional,
+			}, nil
+		case "PENDING":
+			// Vishing Shield: tapped during a call, the request now waits for a
+			// passkey in the browser; polling would only run into the timeout.
+			if status.RequiresPasskey {
+				return nil, &PasskeyRequiredError{RequestID: requestID, Reason: "step_up"}
+			}
+		case "REJECTED":
+			return nil, &RejectedError{Message: "Request " + requestID + " was rejected by the user."}
+		case "EXPIRED":
+			return nil, &TimeoutError{Message: "Request " + requestID + " expired before it was approved."}
+		}
+		if time.Since(start) > timeout {
+			return nil, &TimeoutError{Message: "Login approval timed out after " + strconv.FormatInt(timeout.Milliseconds(), 10) + "ms"}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
 	}
 }
 

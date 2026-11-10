@@ -33,6 +33,10 @@ from .resources.webhook import ReplayCache, MemoryReplayCache, WebhookReasons, W
 from .steps import normalize_details, details_digest
 from .approval_proof import verify_approval_proof
 from .code_reply import new_code_reply_key, open_code_reply
+from .safe_guard import (
+    safe_approval_message, safe_display_digest, safe_governance_hash, safe_schedule_call, safe_tx_hash, verify_safe_approval,
+    with_safe_approvals,
+)
 from .guard import run_guard, guard_input_from_headers, silent_input_from_headers, BROWSER_HEADER
 from .resources.risk import parse_risk_check
 from .resources.recovery import is_recovery_open
@@ -52,6 +56,9 @@ from .org_agent import TouchQueOrgAgent, file_token, github_actions_token
 from .mcp_auth import McpAuth, McpAuthError
 from .cross_app_access import (
     ID_JAG_TOKEN_TYPE, IdJagError, IdJagVerifier, redeem_id_jag, request_id_jag,
+)
+from .security_events import (
+    SECURITY_EVENT_TYPES, SecurityEvent, SecurityEventError, SecurityEventVerifier, poll_security_events,
 )
 from .agent_card import AgentCardError, canonical_json, sign_agent_card, verify_agent_card
 from .approval_token import matches_authorization_details, verify_approval_token_with
@@ -84,6 +91,13 @@ __all__ = [
     'verify_approval_proof',
     'new_code_reply_key',
     'open_code_reply',
+    'safe_tx_hash',
+    'safe_governance_hash',
+    'safe_approval_message',
+    'safe_display_digest',
+    'verify_safe_approval',
+    'with_safe_approvals',
+    'safe_schedule_call',
     'run_guard',
     'guard_input_from_headers',
     'silent_input_from_headers',
@@ -120,6 +134,7 @@ __all__ = [
     'ID_JAG_TOKEN_TYPE',
     'IdJagError',
     'IdJagVerifier',
+    'SECURITY_EVENT_TYPES', 'SecurityEvent', 'SecurityEventError', 'SecurityEventVerifier', 'poll_security_events',
     'request_id_jag',
     'redeem_id_jag',
     'AgentCardError',
@@ -223,6 +238,7 @@ from .resources.recovery import Recovery
 from .resources.mobile import Mobile
 from .resources.qr_pairings import QrPairings
 from .resources.device_risk import DeviceRisk
+from .resources.safe_guard import SafeGuard
 from .resources.assist import Assist
 from .resources.webauthn import WebAuthn
 from .resources.webhook import Webhook
@@ -273,6 +289,8 @@ class TouchQue:
         self.qr_pairings = QrPairings(http)
         #: Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on).
         self.device_risk = DeviceRisk(http)
+        #: Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard.
+        self.safe_guard = SafeGuard(http)
 
     # ── headless step-up (see touchque.steps / touchque.guard) ─────────────
 
@@ -429,7 +447,7 @@ def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDet
             return {'state': 'rate_limited', 'retryAfter': err.retry_after, **why}
         if err.status == 400 and (code == 'unknown_action' or 'invalid action type' in str(err).lower()):
             raise TouchQueConfigException(
-                f'Unknown action "{action}". Create it once with client.actions.define("{action}") '
+                f'Unknown action "{action}". Create it once with client.action_types.define("{action}") '
                 'or in the Dashboard (Action Types).'
             ) from err
         if err.status == 403:
@@ -540,6 +558,9 @@ def verify_guard_token(api_secret: str, token: Optional[str]) -> Optional[Dict[s
     if len(parts) != 3 or parts[0] != 'v1':
         return None
     _, body, mac = parts
+    # A header may carry any latin-1 text; only an ASCII token can be one we signed.
+    if not body.isascii() or not mac.isascii():
+        return None
     expected = _b64u(hmac.new(_token_key(api_secret), body.encode('ascii'), hashlib.sha256).digest())
     if not hmac.compare_digest(expected, mac):
         return None
@@ -812,6 +833,50 @@ class Login:
         """Check the current status of a login request."""
         return self._http.get(f"/login/status/{quote(request_id, safe='')}")
 
+    def wait_for_approval(self, request_id: str, timeout_ms: int = 30000, poll_interval_ms: int = 400) -> Dict[str, Any]:
+        """Wait (poll) until the user approves or rejects a request you already sent with ``request``.
+
+        Returns ``{'approved': True, 'status': 'CONFIRMED', 'requestId', 'assurance', 'confirmedVia',
+        'provisional'}``. Raises ``TouchQueRejectedException`` when the user said no,
+        ``TouchQueTimeoutException`` when the request expired or ``timeout_ms`` ran out, and
+        ``TouchQuePasskeyRequiredError`` (``reason='step_up'``) when the user tapped Approve
+        during a call and the request now waits for a passkey in the browser::
+
+            req = tq.login.request(user, 'SEND_MONEY')
+            tq.login.wait_for_approval(req['requestId'], timeout_ms=60000)"""
+        start_time = time.time() * 1000
+
+        while True:
+            status_result = self.status(request_id)
+            status = status_result.get('status')
+
+            if status == 'CONFIRMED':
+                return {
+                    'approved': True,
+                    'status': status,
+                    'requestId': request_id,
+                    'assurance': status_result.get('assurance'),
+                    'confirmedVia': status_result.get('confirmedVia'),
+                    # Vishing Shield: approved during a call; critical actions wait for the phone to re-confirm.
+                    'provisional': bool(status_result.get('provisional')),
+                }
+
+            if status == 'REJECTED':
+                raise TouchQueRejectedException(f"Request {request_id} was rejected by the user.")
+
+            if status == 'EXPIRED':
+                raise TouchQueTimeoutException(f"Request {request_id} expired before it was approved.")
+
+            # Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
+            if status == 'PENDING' and status_result.get('requiresPasskey'):
+                raise TouchQuePasskeyRequiredError(request_id, 'step_up')
+
+            elapsed = (time.time() * 1000) - start_time
+            if elapsed > timeout_ms:
+                raise TouchQueTimeoutException(f"Waiting for approval timed out after {timeout_ms}ms")
+
+            time.sleep(poll_interval_ms / 1000)
+
     def verify(self, external_username: str, type: str = 'LOGIN', reference_id: Optional[str] = None, client_ip: Optional[str] = None, user_agent: Optional[str] = None, require_biometric: bool = False, require_number_match: bool = False, timeout_ms: int = 30000, details: Optional[LoginDetails] = None, browser_proof: Optional[str] = None, on_challenge: Optional[Callable[[Dict[str, Any]], Any]] = None, context: Optional[Dict[str, Any]] = None, challenge_digits: Optional[int] = None, security_changes: Optional[Dict[str, Any]] = None, destination: Optional[Dict[str, Any]] = None, locale: Optional[str] = None) -> Dict[str, Any]:
         """Request a login and wait (poll) until the user approves or rejects it.
 
@@ -844,7 +909,8 @@ class Login:
             try:
                 on_challenge(challenge)
             except Exception as err:  # noqa: BLE001 — the user's callback must not stop the wait
-                logger.warning('[TouchQue] on_challenge failed: %s: %s', type(err).__name__, err)
+                # err.__class__, not type(err): the parameter `type` shadows the builtin here.
+                logger.warning('[TouchQue] on_challenge failed: %s: %s', err.__class__.__name__, err)
 
         start_time = time.time() * 1000
         poll_interval_sec = 0.4
@@ -1588,15 +1654,18 @@ def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase
 
 def install_touchque_exception_handler(app: fastapi.FastAPI) -> None:
     """Optional: makes a raised TouchQue step return the SAME JSON shape as
-    the Django/Flask adapters (no ``{"detail": ...}`` wrapper)."""
+    the Django/Flask adapters (no ``{"detail": ...}`` wrapper). Every other
+    ``HTTPException`` goes to FastAPI's own handler, unchanged (no body on a
+    204 or 304)."""
     from fastapi import Request as _Request
+    from fastapi.exception_handlers import http_exception_handler
     from fastapi.responses import JSONResponse
 
     @app.exception_handler(HTTPException)
     async def _touchque_exception_handler(request: _Request, exc: HTTPException):  # type: ignore[no-redef]
         if isinstance(exc.detail, dict) and 'touchque' in exc.detail:
             return JSONResponse(exc.detail, status_code=exc.status_code, headers=exc.headers)
-        return JSONResponse({'detail': exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        return await http_exception_handler(request, exc)
 
 
 async def _await(awaitable: Awaitable[Any]) -> Any:

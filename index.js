@@ -130,11 +130,13 @@ const FRAMEWORK_LANGUAGE = {
 // only the regex and the "guardName" shown in the report differ. Go adds a
 // 7th scored check (see goOptionsMissingUser below). The `proof*` entries
 // drive the unscored device-proof advisories (SDK 3.2.0).
+// SDK 5.0 spells every name Touchque (requireTouchque, Touchque\\, RequireTouchque…); 4.x and older
+// spell them TouchQue. Until 5.0 is on every registry, the patterns take both (Touch[Qq]ue).
 const VALIDATION_PATTERNS = {
   node: {
     guardName: "requireTouchQue/withTouchQue/touchqueRouter",
     import: /require\s*\(\s*['"]@touchque\/node['"]\s*\)|from\s+['"]@touchque\/node['"]/,
-    stepUpGuard: /requireTouchQue\s*\(|withTouchQue\s*\(|touchqueRouter\s*\(/,
+    stepUpGuard: /requireTouch[Qq]ue\s*\(|withTouch[Qq]ue\s*\(|touchqueRouter\s*\(/,
     legacyGuard: /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.actionTypes.define(...)" },
@@ -156,7 +158,7 @@ const VALIDATION_PATTERNS = {
     // The relay adapters (Flask blueprint, FastAPI router, Django view/urls)
     // and the framework-agnostic RelayHandler run the same guard for POST
     // /login as the decorators do — same as touchqueRouter on Node.
-    stepUpGuard: /@require_touchque\s*\(|RequireTouchQue\s*\(|touchque_relay_(?:blueprint|router|view|urls)\s*\(|\bRelayHandler\s*\(/,
+    stepUpGuard: /@require_touchque\s*\(|RequireTouch[Qq]ue\s*\(|touchque_relay_(?:blueprint|router|view|urls)\s*\(|\bRelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
@@ -180,8 +182,8 @@ const VALIDATION_PATTERNS = {
     // service provider, not necessarily in the same file. Treat the alias
     // (and the relay's TouchQueRelay::routes() call in routes/web.php)
     // itself as evidence of SDK usage too, not just a literal `use` line.
-    import: /use\s+TouchQue\\|TouchQue\\\\TouchQue|->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware|TouchQueRelay::routes\s*\(/,
-    stepUpGuard: /->middleware\s*\(\s*['"]touchque:|TouchQueMiddleware|TouchQueRelay::routes\s*\(|new\s+\\?(?:TouchQue\\Laravel\\)?TouchQueRelay\s*\(|new\s+\\?(?:TouchQue\\Relay\\)?RelayHandler\s*\(/,
+    import: /use\s+Touch[Qq]ue\\|Touch[Qq]ue\\\\Touch[Qq]ue|->middleware\s*\(\s*['"]touchque:|Touch[Qq]ueMiddleware|Touch[Qq]ueRelay::routes\s*\(/,
+    stepUpGuard: /->middleware\s*\(\s*['"]touchque:|Touch[Qq]ueMiddleware|Touch[Qq]ueRelay::routes\s*\(|new\s+\\?(?:Touch[Qq]ue\\Laravel\\)?Touch[Qq]ueRelay\s*\(|new\s+\\?(?:Touch[Qq]ue\\Relay\\)?RelayHandler\s*\(/,
     legacyGuard: null,
     syncVerify: /->login->verify\s*\(/,
     oldActionTypes: { re: /->actions\s*->\s*define\s*\(/, now: "$tq->actionTypes->define(...)" },
@@ -219,14 +221,14 @@ const VALIDATION_PATTERNS = {
   },
   dotnet: {
     guardName: ".RequireTouchQue(\"ACTION\") / [RequireTouchQue(\"ACTION\")] / MapTouchQueRelay",
-    import: /using\s+TouchQue(?:\.AspNetCore|\.Relay)?\s*;|\bAddTouchQue\s*\(/,
-    stepUpGuard: /\.RequireTouchQue\s*\(|\[RequireTouchQue\s*\(|\bMapTouchQueRelay\s*\(|\bnew\s+RelayHandler\s*</,
+    import: /using\s+Touch[Qq]ue(?:\.AspNetCore|\.Relay)?\s*;|\bAddTouch[Qq]ue\s*\(/,
+    stepUpGuard: /\.RequireTouch[Qq]ue\s*\(|\[RequireTouch[Qq]ue\s*\(|\bMapTouch[Qq]ueRelay\s*\(|\bnew\s+RelayHandler\s*</,
     legacyGuard: null,
     syncVerify: /\.Login\.VerifyAsync\s*\(/,
     oldActionTypes: { re: /\.Actions\s*\.\s*DefineAsync\s*\(/, now: "tq.ActionTypes.DefineAsync(...)" },
     hardcodedSecret: /ApiKey\s*=\s*"tq_[a-zA-Z0-9]{6,}"|ApiSecret\s*=\s*"[a-zA-Z0-9]{10,}"/,
     // AddTouchQue() and new TouchQueClient() read TQ_API_KEY / TQ_API_SECRET themselves.
-    envVar: /Environment\.GetEnvironmentVariable\s*\(|Configuration\[|\bAddTouchQue\s*\(\s*\)|new\s+TouchQueClient\s*\(\s*\)/,
+    envVar: /Environment\.GetEnvironmentVariable\s*\(|Configuration\[|\bAddTouch[Qq]ue\s*\(\s*\)|new\s+Touch[Qq]ueClient\s*\(\s*\)/,
     errorHandling: /try\s*{|catch\s*\(/,
     offlineChallenge: /\.Offline\s*\.\s*ChallengeAsync\s*\(/,
     offlineLinked: /\bRequestId\b/,
@@ -239,14 +241,14 @@ const VALIDATION_PATTERNS = {
   },
   ruby: {
     guardName: "require_touchque / TouchQue::Rack::Relay / TouchQue::Guard.run",
-    import: /require\s+['"]touchque|\bTouchQue::|gem\s+['"]touchque['"]|\binclude\s+TouchQue::/,
-    stepUpGuard: /\brequire_touchque\s+['"]|TouchQue::Rack::Relay\.new\s*\(|TouchQue::Guard\.run\s*\(|TouchQue::RelayHandler\.new\s*\(/,
+    import: /require\s+['"]touchque|\bTouch[Qq]ue::|gem\s+['"]touchque['"]|\binclude\s+Touch[Qq]ue::/,
+    stepUpGuard: /\brequire_touchque\s+['"]|Touch[Qq]ue::Rack::Relay\.new\s*\(|Touch[Qq]ue::Guard\.run\s*\(|Touch[Qq]ue::RelayHandler\.new\s*\(/,
     legacyGuard: null,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
     hardcodedSecret: /api_key:\s*['"]tq_[a-zA-Z0-9]{6,}['"]|api_secret:\s*['"][a-zA-Z0-9]{10,}['"]/,
     // TouchQue.client reads config.touchque, credentials.touchque, then the environment.
-    envVar: /ENV\[|ENV\.fetch\s*\(|credentials|TouchQue\.client\b|\brequire_touchque\b/,
+    envVar: /ENV\[|ENV\.fetch\s*\(|credentials|Touch[Qq]ue\.client\b|\brequire_touchque\b/,
     errorHandling: /\brescue\b/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequest_id\b/,
@@ -260,13 +262,13 @@ const VALIDATION_PATTERNS = {
   java: {
     guardName: "@RequireTouchQue(\"ACTION\") / RelayOptions bean (Spring Boot starter) / Guard.run",
     import: /import\s+com\.touchque\.|\bcom\.touchque\b/,
-    stepUpGuard: /@RequireTouchQue\s*\(|\bRelayOptions\s*<|\bGuard\.run\s*\(|\bnew\s+RelayHandler\s*</,
+    stepUpGuard: /@RequireTouch[Qq]ue\s*\(|\bRelayOptions\s*<|\bGuard\.run\s*\(|\bnew\s+RelayHandler\s*</,
     legacyGuard: null,
     syncVerify: /\.login\(\)\s*\.\s*verify\s*\(/,
     oldActionTypes: { re: /\.actions\(\)\s*\.\s*define\s*\(/, now: "tq.actionTypes().define(...)" },
     hardcodedSecret: /\.apiKey\s*\(\s*"tq_[a-zA-Z0-9]{6,}"\s*\)|\.apiSecret\s*\(\s*"[a-zA-Z0-9]{10,}"\s*\)|touchque\.api-secret\s*=\s*[a-zA-Z0-9]{10,}/,
     // The starter's bean and new TouchQueClient() read touchque.* / TQ_API_KEY / TQ_API_SECRET themselves.
-    envVar: /System\.getenv\s*\(|\$\{TQ_|@Value\s*\(|new\s+TouchQueClient\s*\(\s*\)|@RequireTouchQue\s*\(|\bTouchQueClient\s+\w+\s*[,)]/,
+    envVar: /System\.getenv\s*\(|\$\{TQ_|@Value\s*\(|new\s+Touch[Qq]ueClient\s*\(\s*\)|@RequireTouch[Qq]ue\s*\(|\bTouch[Qq]ueClient\s+\w+\s*[,)]/,
     errorHandling: /try\s*{|catch\s*\(|@ExceptionHandler/,
     offlineChallenge: /\.offline\(\)\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequestId\b/,
@@ -291,7 +293,7 @@ const FORWARDED_FOR = /x-forwarded-for|forwarded_for/i;
 const FIRST_SPLIT_PART = /(?:split|explode|Split)\s*\(.*\)\s*\[\s*0\s*\]/;
 const leftmostForwardedFor = (code) => code.split("\n").some((l) => FORWARDED_FOR.test(l) && FIRST_SPLIT_PART.test(l));
 // Next.js withTouchQue sends no end-user address unless told where it comes from.
-const NEXT_GUARD = /withTouchQue\s*\(/;
+const NEXT_GUARD = /withTouch[Qq]ue\s*\(/;
 const NEXT_IP_OPTION = /\bip\s*:|\btrustedProxyHops\s*:/;
 const APPROVED_HANDLING = /['"`]login\.confirmed['"`]|['"`]CONFIRMED['"`]|(?:[!=]==?|\bcase)\s*['"`]approved['"`]|['"`]approved['"`]\s*[!=]==?|\bStepApproved\b|\bapprovalProof\b|\.ApprovalProof\b/;
 
@@ -841,7 +843,7 @@ async function callTool(request) {
         );
       }
       const goModule = language === "go" && code.match(/["']github\.com\/Touchque\/touchque-go(\/v\d+)?\/touchque["']/);
-      if (goModule && goModule[1] !== "/v4") {
+      if (goModule && !["/v4", "/v5"].includes(goModule[1])) {
         // id: go_module_not_v4
         advisories.push(
           `ℹ️ This imports ${goModule[0]}; the current SDK is github.com/Touchque/touchque-go/v4/touchque (go get github.com/Touchque/touchque-go/v4). 4.0 moved action types to client.ActionTypes and added case codes, OnChallenge and TouchQue Actions.`

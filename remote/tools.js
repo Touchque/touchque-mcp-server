@@ -233,7 +233,7 @@ async function workspaceSetup(ws, ctx) {
 function actionTypesIn(code) {
   const found = new Set();
   const res = [
-    /requireTouchQue\(\s*['"`]([A-Z0-9_]{2,64})['"`]/g, /require_touchque\(\s*['"]([A-Z0-9_]{2,64})['"]/g, /RequireTouchQue\(\s*"([A-Z0-9_]{2,64})"/g,
+    /requireTouch[Qq]ue\(\s*['"`]([A-Z0-9_]{2,64})['"`]/g, /require_touchque\(\s*['"]([A-Z0-9_]{2,64})['"]/g, /RequireTouch[Qq]ue\(\s*"([A-Z0-9_]{2,64})"/g,
     /touchque:([A-Z0-9_]{2,64})/g, /touchque\.Require\(\s*"([A-Z0-9_]{2,64})"/g, /\btype\s*[:=]\s*['"`]([A-Z][A-Z0-9_]{1,63})['"`]/g, /actionType\s*[:=(]\s*['"`]([A-Z][A-Z0-9_]{1,63})['"`]/g,
   ];
   for (const re of res) for (const m of code.matchAll(re)) found.add(m[1]);

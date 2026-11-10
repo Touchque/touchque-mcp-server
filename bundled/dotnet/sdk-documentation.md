@@ -15,9 +15,11 @@ Mobile SDK.
 ## Install
 
 ```bash
-dotnet add package TouchQue.AspNetCore   # ASP.NET Core (brings TouchQue)
-dotnet add package TouchQue              # anything else: workers, consoles, Azure Functions
+dotnet add package Touchque.AspNetCore   # ASP.NET Core (brings Touchque)
+dotnet add package Touchque              # anything else: workers, consoles, Azure Functions
 ```
+
+The packages are `Touchque` and `Touchque.AspNetCore`; the namespaces stay `TouchQue` and `TouchQue.AspNetCore` (`using TouchQue;`).
 
 ## Setup
 
@@ -222,6 +224,35 @@ var claims = await verifier.VerifyAsync(form["assertion"]!, authenticatedClientI
 await AgentCard.VerifyAsync(cardJson, new() { CardUrl = "https://agent.example/.well-known/agent-card.json" });
 ```
 
+## Shared Signals (security events from Touchque SSO)
+
+When something happens to an organization member's account after sign-in, Touchque SSO sends a Security Event Token (OpenID Shared Signals Framework 1.0, RFC 8417) to the receivers its admin adds (Organization > Continuous access): CAEP `session-revoked`, `credential-change`, `device-compliance-change`; RISC `account-disabled`, `credential-compromise`. Your app ends the person's sessions or asks them to sign in again. `SecurityEventVerifier` checks the signature (RS256, with the keys named by the issuer's `/.well-known/ssf-configuration`, or `JwksUri` / pinned `Jwks`), `typ`, the issuer, your audience and that the SET carries exactly one event; `Txn` is the case code of Touchque's decision.
+
+```csharp
+var verifier = new SecurityEventVerifier(new() { Issuer = "https://sso.touchque.com", Audience = "https://app.example.com" });
+
+// Push delivery (RFC 8935): the SET is the request body (application/secevent+jwt).
+app.MapPost("/ssf", async (HttpRequest req) =>
+{
+    try
+    {
+        var ev = await verifier.VerifyAsync(await new StreamReader(req.Body).ReadToEndAsync());
+        if (ev.Name == "session-revoked") await EndSessionsAsync((string?)ev.Subject["email"]);
+        return Results.StatusCode(202);
+    }
+    catch (TouchQueSecurityEventException e)
+    {
+        return Results.Json(new { err = e.Error, description = e.Message }, statusCode: e.Error == "temporarily_unavailable" ? 503 : 400);
+    }
+});
+
+// Poll delivery (RFC 8936): acknowledge the jtis you handled, read the SETs that wait.
+var (sets, moreAvailable) = await SecurityEvents.PollAsync(new() { Url = pollUrl, Token = streamToken, Ack = handled });
+foreach (var (jti, set) in sets) await HandleAsync(await verifier.VerifyAsync(set));
+```
+
+A refused SET throws `TouchQueSecurityEventException`; `Error` is the RFC 8935 code to answer with (`invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience`), or `temporarily_unavailable` when the issuer's keys could not be read (answer 503: the transmitter tries again). A SET does not expire: keep the jtis you handled and skip a repeat. `SecurityEvents.Types` maps the short names to the event type URIs.
+
 ## TouchQue Login (hosted sign-in)
 
 ```csharp
@@ -291,6 +322,34 @@ var sent = await tq.Login.RequestAsync(new LoginRequestOptions { ExternalUsernam
 var status = await tq.Login.StatusAsync(sent.RequestId);   // once CONFIRMED
 var code = status.Reply is { } r ? CodeReply.Open(key.PrivateKey, sent.RequestId, r.Ct) : null;
 ```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```csharp
+var tx = new SafeGuardTx
+{
+    ChainId = "1", Safe = safe, Guard = guard,
+    Tx = new SafeTxCall { To = to, Value = "0", Data = data, Operation = 0, Nonce = "42" },
+    Config = new SafeGuardConfig { Threshold = 2, GovThreshold = 3, GovDelay = 172800, ExitDelay = 259200 },
+    BatchTargets = [multiSendCallOnly],
+    ApproverIndex = 0,   // this approver's index in the guard
+};
+var sent = await tq.SafeGuard.RequestAsync(new SafeGuardRequestOptions { ExternalUsername = "treasurer@acme.com", Type = "safe_payment", SafeTx = tx });
+var done = await tq.SafeGuard.WaitForApprovalAsync(sent.RequestId);   // 5 minutes at most
+var approval = done.SafeTx!.Approval!;
+
+// Check it yourself: your own transaction, the approver's key from the guard on chain, the purpose you act on.
+var purpose = done.SafeTx.Purpose;   // "approve" runs the transaction, "schedule" only starts a governance change's waiting time
+var check = SafeApproval.Verify(tx, approval, approverKey, new VerifySafeApprovalOptions { Purpose = purpose, ApproverIndex = 0 });
+if (!check.Valid) throw new InvalidOperationException($"approval refused: {check.Reason}");
+var payload = purpose == "approve"
+    ? SafeApproval.WithApprovals(ownerSignatures, [approval])                  // execTransaction(…, signatures)
+    : SafeApproval.ScheduleCall(safe, check.GovernanceHash, [approval]);      // a call to the guard; runs after govDelay
+```
+
+`SafeApproval.Verify` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `Rows` or `DisplayDigest` from your own decoding, rows the phone did not show. Without `Purpose` it checks only an ordinary approval (`approve`): an approval to schedule a governance change covers no Safe nonce or gas fields, so it is accepted only when you pass `Purpose = "schedule"`. `Reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`. `SafeApproval.SafeTxHash`, `GovernanceHash`, `Message` and `DisplayDigest` are public too.
 
 ## Errors, case codes and retries
 

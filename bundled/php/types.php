@@ -92,7 +92,8 @@ class Config
         if ($scheme === 'https') {
             return;
         }
-        if ($scheme === 'http' && in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+        // parse_url() keeps the brackets of an IPv6 host: http://[::1]:3000 gives "[::1]".
+        if ($scheme === 'http' && in_array($host, ['localhost', '127.0.0.1', '::1', '[::1]'], true)) {
             return;
         }
         if ($scheme === 'http') {
@@ -139,6 +140,7 @@ use TouchQue\Resources\Identity;
 use TouchQue\Resources\Mobile;
 use TouchQue\Resources\QrPairings;
 use TouchQue\Resources\DeviceRisk;
+use TouchQue\Resources\SafeGuard;
 use TouchQue\Resources\ActionTypes;
 use TouchQue\Resources\Auth;
 use TouchQue\Resources\Login;
@@ -186,6 +188,8 @@ class TouchQue
     public QrPairings $qrPairings;
     /** Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on). */
     public DeviceRisk $deviceRisk;
+    /** Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard. */
+    public SafeGuard $safeGuard;
 
     private Config $config;
 
@@ -215,6 +219,7 @@ class TouchQue
         $this->mobile = new Mobile($httpClient);
         $this->qrPairings = new QrPairings($httpClient);
         $this->deviceRisk = new DeviceRisk($httpClient);
+        $this->safeGuard = new SafeGuard($httpClient);
     }
 
     /** @internal used by Guard/Steps to sign/verify the browser-facing token. */
@@ -831,6 +836,59 @@ class Login
     public function status(string $requestId): array
     {
         return $this->http->get('/login/status/' . rawurlencode($requestId));
+    }
+
+    /**
+     * Wait (poll) until the user approves or rejects a request you sent with
+     * `request()`: `verify()` without the request, for when you show the
+     * number (`challengeCode`) or store the request id first. Mirrors the
+     * Node SDK's `login.waitForApproval`.
+     *
+     *     $sent = $tq->login->request($user, 'SEND_MONEY');
+     *     show($sent['challengeCode'] ?? null);
+     *     $result = $tq->login->waitForApproval($sent['requestId'], 30000);
+     *
+     * @return array{approved: bool, status: string, requestId: string, assurance: ?string, confirmedVia: ?string, provisional: bool}
+     * @throws TouchQuePasskeyRequiredError when the user tapped Approve during a call and the
+     *   request now waits for a passkey (`reason` step_up).
+     * @throws TouchQueRejectedException when the user rejects it.
+     * @throws TouchQueTimeoutException when it expired or `$timeoutMs` (default 30 seconds) ran out.
+     */
+    public function waitForApproval(string $requestId, int $timeoutMs = 30000, int $pollIntervalMs = 400): array
+    {
+        if ($requestId === '') {
+            throw new TouchQueConfigException('waitForApproval() needs the request id');
+        }
+        $start = microtime(true);
+        while (true) {
+            $statusResult = $this->status($requestId);
+            $status = $statusResult['status'] ?? null;
+            if ($status === 'CONFIRMED') {
+                return [
+                    'approved' => true,
+                    'status' => $status,
+                    'requestId' => $requestId,
+                    'assurance' => $statusResult['assurance'] ?? null,
+                    'confirmedVia' => $statusResult['confirmedVia'] ?? null,
+                    // Vishing Shield: approved during a call; critical actions wait for the phone to re-confirm.
+                    'provisional' => !empty($statusResult['provisional']),
+                ];
+            }
+            if ($status === 'REJECTED') {
+                throw new TouchQueRejectedException("Request $requestId was rejected by the user.");
+            }
+            if ($status === 'EXPIRED') {
+                throw new TouchQueTimeoutException("Request $requestId expired before it was approved.");
+            }
+            // Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
+            if ($status === 'PENDING' && !empty($statusResult['requiresPasskey'])) {
+                throw new TouchQuePasskeyRequiredError($requestId, 'step_up');
+            }
+            if ((microtime(true) - $start) * 1000 > $timeoutMs) {
+                throw new TouchQueTimeoutException("Request $requestId was not approved within {$timeoutMs}ms");
+            }
+            usleep(max(0, $pollIntervalMs) * 1000);
+        }
     }
 
     /**
@@ -1521,6 +1579,14 @@ use TouchQue\TouchQue;
  * `X-TouchQue-Token: <token>`. Once approved the route runs ONCE, with
  * `$request->touchque` set to the approval.
  *
+ * What the phone shows (an amount, a payee): put the name of a Request
+ * macro (or a method of your Request class) after the action; the array it
+ * returns is shown and bound to the approval. A name that is neither
+ * answers 500 `misconfigured`:
+ *
+ *     Request::macro('transferDetails', fn () => ['Amount' => request('amount') . ' EUR']);
+ *     ->middleware('touchque:SEND_MONEY,transferDetails');
+ *
  * The signed-in user comes from Laravel's own auth (`$request->user()`,
  * tried as `->email`, `->getAuthIdentifier()`, `->username`). For the login
  * route (no signed-in user yet), extend this class and override
@@ -1576,7 +1642,20 @@ class TouchQueMiddleware
     public function handle(Request $request, Closure $next, string $action, ?string $detailsMethod = null)
     {
         $user = $this->resolveUser($request);
-        $details = $detailsMethod && method_exists($request, $detailsMethod) ? $request->{$detailsMethod}() : null;
+        $details = null;
+        if ($detailsMethod) {
+            // A Request macro (Request::macro('transferDetails', ...)) is how a route usually adds
+            // one; method_exists() does not see macros. A name that is neither must not approve
+            // without the details the route meant the phone to show.
+            if (!method_exists($request, $detailsMethod) && !$request::hasMacro($detailsMethod)) {
+                $this->touchQue->log('error', "[TouchQue] TouchQueMiddleware: the Request has no method or macro \"{$detailsMethod}\" for the details");
+                return new JsonResponse([
+                    'touchque' => ['state' => 'blocked', 'reason' => 'misconfigured'],
+                    'error' => ['code' => 'misconfigured', 'message' => 'Two-factor approval is not configured correctly.'],
+                ], 500, ['Cache-Control' => 'no-store']);
+            }
+            $details = $request->{$detailsMethod}();
+        }
 
         $header = fn (string $name) => $request->header($name);
         $input = Guard::inputFromHeaders($header);

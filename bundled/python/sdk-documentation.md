@@ -181,7 +181,8 @@ from touchque import WebhookEvents, WebhookReasons
 from touchque.exceptions import TouchQueWebhookSignatureException
 
 try:
-    event = tq.webhook.verify(raw_body=request.data, signature=request.headers['X-Signature'])
+    # raw_body is text: in Flask request.get_data(as_text=True), in Django request.body.decode('utf-8').
+    event = tq.webhook.verify(raw_body=request.get_data(as_text=True), signature=request.headers['X-Signature'])
 except TouchQueWebhookSignatureException:
     return '', 403  # not from TouchQue
 if event.get('event') == WebhookEvents.APPROVAL_REVOKED:
@@ -306,6 +307,38 @@ claims = IdJagVerifier(issuer='https://sso.touchque.com', audience='https://auth
     .verify(form['assertion'], client_id=authenticated_client_id)
 
 verify_agent_card(card, card_url='https://agent.example/.well-known/agent-card.json')
+```
+
+## Shared Signals (security events from Touchque SSO)
+
+Touchque SSO tells your app when something happens to a member's account after sign-in, as Security Event Tokens
+(OpenID Shared Signals Framework 1.0): CAEP `session-revoked`, `credential-change`, `device-compliance-change`; RISC
+`account-disabled`, `credential-compromise`. The organization's admin adds your app as a receiver (Organization >
+Continuous access), by push to your endpoint or by poll. The verifier finds the keys through the issuer's
+`/.well-known/ssf-configuration` and checks the signature, `typ`, issuer, audience and that there is one event; `txn`
+is the case code of Touchque's decision. A SET does not expire: keep the `jti`s you handled and skip a repeat.
+`pip install "touchque-authenticator[agent]"`.
+
+```python
+from touchque import SecurityEventVerifier, SecurityEventError, poll_security_events
+
+verifier = SecurityEventVerifier(issuer='https://sso.touchque.com', audience='https://app.example.com')
+
+# Push (RFC 8935): the SET is the request body (application/secevent+jwt).
+@app.post('/ssf')
+def ssf():
+    try:
+        event = verifier.verify(request.get_data(as_text=True))
+    except SecurityEventError as e:  # e.code: invalid_request, invalid_key, invalid_issuer, invalid_audience
+        return {'err': e.code, 'description': str(e)}, 503 if e.code == 'temporarily_unavailable' else 400
+    if event.name == 'session-revoked':
+        end_sessions_of(event.subject.get('email'))
+    return '', 202
+
+# Poll (RFC 8936): acknowledge what you handled on the next call.
+out = poll_security_events(url=poll_url, token=stream_token, ack=handled_jtis, max_events=50)
+for jti, token in out['sets'].items():
+    event = verifier.verify(token)  # then act on it as above
 ```
 
 ## Silent sign-ins (stop asking when nothing is new)
@@ -484,6 +517,36 @@ sent = tq.login.request(user, reply={'kind': 'code', 'key': key['public_key'], '
 status = tq.login.status(sent['requestId'])   # once CONFIRMED
 code = open_code_reply(key['private_key'], sent['requestId'], status['reply']['ct']) if 'reply' in status else None
 ```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```python
+from touchque import verify_safe_approval, with_safe_approvals, safe_schedule_call   # pip install "touchque-authenticator[proof]"
+
+target = {'chainId': 1, 'safe': SAFE, 'guard': GUARD, 'tx': {'to': to, 'value': 0, 'data': data, 'operation': 0, 'nonce': 42}}
+sent = tq.safe_guard.request('treasurer@acme.com', 'safe_payment', {   # an action type from your dashboard
+    **target,
+    'config': {'threshold': 2, 'govThreshold': 3, 'govDelay': 172800, 'exitDelay': 259200},
+    'batchTargets': [MULTI_SEND_CALL_ONLY],
+    'approverIndex': 0,   # this approver's index in the guard
+})
+done = tq.safe_guard.wait_for_approval(sent['requestId'])   # 5 minutes at most
+approval = done['safeTx']['approval']
+
+# Check it yourself: your own transaction, the approver's key from the guard on chain, and what you will do with it.
+purpose = done['safeTx']['purpose']   # 'approve' (execute it) or 'schedule' (a governance change)
+check = verify_safe_approval(target, approval, approver_key, purpose=purpose, approver_index=0)
+if not check['valid']:
+    raise RuntimeError(f"approval refused: {check['reason']}")
+if purpose == 'approve':
+    signatures = with_safe_approvals(owner_signatures, [approval])   # execTransaction(..., signatures)
+else:
+    data = safe_schedule_call(SAFE, check['governanceHash'], [approval])   # a call to the guard; runs after govDelay
+```
+
+`verify_safe_approval` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. Without `purpose` it accepts only an approval to execute this exact transaction (`approve`); an approval that schedules a governance change covers neither the Safe nonce nor the gas fields, so it passes only when you name `purpose='schedule'`. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `rows` or `display_digest` from your own decoding, rows the phone did not show. `reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`. `safe_tx_hash`, `safe_governance_hash`, `safe_approval_message` and `safe_display_digest` are exported too.
 
 ## Errors
 

@@ -7,7 +7,7 @@ Mobile SDK.
 
 | Artifact | What it is |
 | --- | --- |
-| `com.touchque:touchque-java` | The client. Java 17+, `java.net.http`, Jackson, unchecked exceptions, no logging. |
+| `com.touchque:touchque-java` | The client. Java 17+, `java.net.http`, Jackson, unchecked exceptions, silent unless you pass a logger. |
 | `com.touchque:touchque-spring-boot-starter` | Spring Boot 3 auto-configuration: the client bean, `@RequireTouchQue` on controller methods, the relay routes `@touchque/web` needs, verified webhooks, TouchQue Login through Spring Security, MCP server protection. |
 
 📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
@@ -20,15 +20,15 @@ Maven:
 <dependency>
   <groupId>com.touchque</groupId>
   <artifactId>touchque-spring-boot-starter</artifactId>   <!-- Spring Boot (brings touchque-java) -->
-  <version>4.1.0</version>
+  <version>4.2.0</version>
 </dependency>
 ```
 
 Gradle:
 
 ```kotlin
-implementation("com.touchque:touchque-spring-boot-starter:4.1.0")   // Spring Boot
-implementation("com.touchque:touchque-java:4.1.0")                  // anything else
+implementation("com.touchque:touchque-spring-boot-starter:4.2.0")   // Spring Boot
+implementation("com.touchque:touchque-java:4.2.0")                  // anything else
 ```
 
 ## Setup
@@ -150,10 +150,14 @@ checked first:
 - the signed timestamp: 5 minutes by default;
 - the `jti`: a replay is answered 200 and your listener is not called again.
 
+When your listener throws, the answer is 500 and the `jti` is released, so Touchque's retry of
+that delivery runs your listener again instead of being answered as a duplicate.
+
 The endpoint runs before Spring Security, because the signature is its authentication. The
 starter registers an in-process replay cache. With several instances, declare your own
-`Webhook.ReplayCache` bean, for example with Redis `SET NX EX`. Anywhere else, call
-`tq.webhook().verify(rawBody, signatureHeader, 300, cache)`.
+`Webhook.ReplayCache` bean, for example with Redis `SET NX EX` in `checkAndSet` and `DEL` in
+`release`. Anywhere else, call `tq.webhook().verify(rawBody, signatureHeader, 300, cache)`, and
+`cache.release(jti)` when your handler fails.
 
 ## Silent sign-ins
 
@@ -282,10 +286,60 @@ var req = login.authorizationUrl(null);   // keep state, nonce, codeVerifier; re
 var tokens = login.handleCallback(callbackUrl, new HostedLogin.CallbackChecks(req.state(), req.nonce(), req.codeVerifier()));
 ```
 
+The domain is reached over https. A plaintext `http://` domain is refused except on this machine
+(localhost, 127.0.0.1, ::1, `*.localhost`), for `HostedLogin`, `MyAccount` and `touchque.login.domain`.
+
 `login.myAccount(accessToken)` is the customer's own account API: profile, sign-in methods,
 sessions, apps, data export and deletion. The Management API is `tq.identity()`: users, roles,
 organizations, apps, connections, imports and exports, attack protection, and email and SMS
 providers.
+
+## Shared Signals (security events from Touchque SSO)
+
+When something happens to an organization member's account after sign-in, Touchque SSO sends a
+Security Event Token (SET, OpenID Shared Signals Framework 1.0) to the receivers the
+organization's admin adds (Organization > Continuous access): CAEP `session-revoked`,
+`credential-change`, `device-compliance-change`, RISC `account-disabled`, `credential-compromise`.
+End the person's sessions or ask them to sign in again. `txn()` is the case code of Touchque's
+decision.
+
+Push delivery (RFC 8935): the SET is the request body.
+
+```java
+var verifier = new SecurityEventVerifier(new SecurityEventVerifier.Options("https://sso.touchque.com", "https://app.example.com"));
+
+@PostMapping(value = "/ssf", consumes = "application/secevent+jwt")
+ResponseEntity<?> ssf(@RequestBody String body) {
+    try {
+        SecurityEventVerifier.SecurityEvent event = verifier.verify(body);
+        if (handled.add(event.jti()) && "session-revoked".equals(event.name())) sessions.endFor(event.subject().path("email").asText());
+        return ResponseEntity.accepted().build();
+    } catch (TouchQueSecurityEventException e) {
+        // temporarily_unavailable: the keys could not be read; 503 and the transmitter tries again.
+        int status = "temporarily_unavailable".equals(e.error()) ? 503 : 400;
+        return ResponseEntity.status(status).body(Map.of("err", e.error(), "description", e.getMessage()));
+    }
+}
+```
+
+Poll delivery (RFC 8936), with the stream's poll endpoint and token: each poll acknowledges what
+the last one returned.
+
+```java
+SecurityEventVerifier.PollResult page = SecurityEventVerifier.poll(
+        new SecurityEventVerifier.PollOptions(pollUrl, streamToken).ack(handledLastTime).returnImmediately(true));
+handledLastTime = new ArrayList<>();
+for (Map.Entry<String, String> set : page.sets().entrySet()) {   // jti -> SET
+    handle(verifier.verify(set.getValue()));
+    handledLastTime.add(set.getKey());
+}
+// page.moreAvailable(): poll again right away. Report a SET you could not handle in setErrs(…), not in ack.
+```
+
+The verifier reads the transmitter's keys from its `/.well-known/ssf-configuration` (or
+`jwksUri(…)`, or pinned `jwks(…)`) and checks the RS256 signature, `typ`, the issuer, your
+audience and that the SET carries one event. A SET does not expire: it says what happened, so keep
+the jtis you handled and skip a repeat.
 
 ## Mobile SDK (your own app approves)
 
@@ -332,6 +386,30 @@ Login.Status status = tq.login().status(sent.requestId());   // once CONFIRMED
 String code = status.reply() == null ? null : CodeReply.open(key.privateKey(), sent.requestId(), status.reply().get("ct").asText());
 ```
 
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```java
+SafeTx tx = new SafeTx("1", safe, guard).to(to).value("0").data(data).operation(0).nonce("42")
+        .config(2, 3, 172800, 259200).batchTarget(multiSendCallOnly)
+        .approverIndex(0);   // this approver's index in the guard
+JsonNode sent = tq.safeGuard().request(new SafeGuard.RequestOptions("treasurer@acme.com", "safe_payment", tx));   // an action type from your dashboard
+JsonNode done = tq.safeGuard().waitForApproval(sent.path("requestId").asText(), null, null);   // 5 minutes at most
+String approval = done.path("safeTx").path("approval").asText();
+
+// Check it yourself: your own transaction, the approver's key from the guard on chain. Name what you
+// are about to do: "approve" executes it (the default), "schedule" starts a governance change's waiting time.
+String purpose = governance ? "schedule" : "approve";   // your own decision: a delegatecall, a change to the Safe, a proxy upgrade
+SafeApproval.Verification check = SafeApproval.verify(tx, approval, approverKey, new SafeApproval.VerifyOptions().purpose(purpose).approverIndex(0));
+if (!check.valid()) throw new IllegalStateException("approval refused: " + check.reason());
+String payload = "approve".equals(purpose)
+        ? SafeApproval.withApprovals(ownerSignatures, List.of(approval))                 // execTransaction(…, signatures)
+        : SafeApproval.scheduleCall(safe, check.governanceHash(), List.of(approval));   // a call to the guard; runs after govDelay
+```
+
+`SafeApproval.verify` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `rows` or `displayDigest` from your own decoding, rows the phone did not show. Without `purpose` it accepts only an ordinary approval (`approve`): a governance approval carries no Safe nonce and only starts the guard's waiting time, so it passes only when you name `purpose("schedule")`. `reason()` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`. `SafeApproval.safeTxHash`, `governanceHash`, `message` and `displayDigest` are public too; `SafeTx.fromJson` reads the API's `safeTx` shape.
+
 ## Errors, case codes and retries
 
 | Exception (all unchecked) | When |
@@ -355,7 +433,12 @@ Don't wrap the client in a retry layer. Retry `TouchQueNetworkException` at the 
 `http://` except for localhost. If you pass your own `HttpClient`, build it with
 `HttpClient.Redirect.NEVER`.
 
-**Logging.** The SDK writes nothing to any log. Log what you need from the results and exceptions.
+**Logging.** The SDK writes nothing to any log on its own. To see its own problems (a misconfigured
+guard, an `onChallenge` that threw, a relay error or a relay without `getLoginUser`, a silent
+sign-in check that failed), pass a `System.Logger`: `new TouchQueOptions().logger(System.getLogger("com.acme.touchque"))`,
+or `debug(true)` for System.Logger `touchque`. In Spring Boot, set `touchque.debug=true` and the
+level with `logging.level.touchque`. Lines carry an error's class, code and message, never a
+request or a user.
 
 ## Development
 

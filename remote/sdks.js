@@ -8,24 +8,25 @@ const path = require("path");
 
 const BUNDLED = path.join(__dirname, "..", "bundled");
 
-// Published state as on https://support.touchque.com (Libraries), 2026-11-10.
+// What is on the registries, 2026-11-10 evening: 4.2.0 (the bundled READMEs and types are that release,
+// sdks b95c77f). sdks efd8f8c renames every TouchQue name to Touchque as 5.0.0, not published yet.
 const SDKS = {
-  node: { label: "Node.js", package: "@touchque/node", published: "4.0.0", install: "npm install @touchque/node", registry: "npm", manifests: ["package.json"] },
+  node: { label: "Node.js", package: "@touchque/node", published: "4.2.0", install: "npm install @touchque/node", registry: "npm", manifests: ["package.json"] },
   php: {
-    label: "PHP", package: "touchque-authenticator/php-sdk", published: "4.0.0",
+    label: "PHP", package: "touchque-authenticator/php-sdk", published: "4.2.0",
     install: "composer config repositories.touchque vcs https://github.com/Touchque/touchque-php && composer require touchque-authenticator/php-sdk:^4.0",
     registry: "GitHub release tag (not on Packagist yet)", manifests: ["composer.json"],
   },
-  go: { label: "Go", package: "github.com/Touchque/touchque-go/v4", published: "4.0.0", install: "go get github.com/Touchque/touchque-go/v4", registry: "Go modules", manifests: ["go.mod"] },
-  python: { label: "Python", package: "touchque-authenticator", published: null, install: null, registry: "not on PyPI yet (source on GitHub)", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
-  dotnet: { label: ".NET", package: "TouchQue.AspNetCore", published: null, install: null, registry: "not on NuGet yet", manifests: [".csproj", ".sln", "Program.cs"] },
+  go: { label: "Go", package: "github.com/Touchque/touchque-go/v4", published: "4.2.0", install: "go get github.com/Touchque/touchque-go/v4", registry: "Go modules", manifests: ["go.mod"] },
+  python: { label: "Python", package: "touchque-authenticator", published: "4.2.0", install: "pip install touchque-authenticator", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
+  dotnet: { label: ".NET", package: "TouchQue.AspNetCore", published: null, install: null, registry: "not listed on NuGet yet", manifests: [".csproj", ".sln", "Program.cs"] },
   ruby: { label: "Ruby", package: "touchque", published: null, install: null, registry: "not on RubyGems yet", manifests: ["Gemfile"] },
   java: { label: "Java", package: "com.touchque:touchque-spring-boot-starter", published: null, install: null, registry: "not on Maven Central yet", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"] },
 };
 
 const FRONTEND = [
-  { package: "@touchque/web", published: "1.5.0", install: "npm install @touchque/web", what: "Drives the step-up loop (the matching number, the first-time QR) and passkey ceremonies in the browser." },
-  { package: "@touchque/react", published: "1.1.1", install: "npm install @touchque/react @touchque/web", what: "Hooks and components on top of @touchque/web." },
+  { package: "@touchque/web", published: "1.6.0", install: "npm install @touchque/web", what: "Drives the step-up loop (the matching number, the first-time QR) and passkey ceremonies in the browser." },
+  { package: "@touchque/react", published: "1.2.0", install: "npm install @touchque/react @touchque/web", what: "Hooks and components on top of @touchque/web." },
 ];
 
 /** The language a project's manifest files point at, or null. */

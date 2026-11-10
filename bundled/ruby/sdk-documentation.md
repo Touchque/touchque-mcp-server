@@ -208,6 +208,36 @@ claims = TouchQue::IdJagVerifier.new(issuer: "https://sso.touchque.com", audienc
 TouchQue::AgentCard.verify(card_json, card_url: "https://agent.example/.well-known/agent-card.json")
 ```
 
+## Shared Signals (security events from Touchque SSO)
+
+When something happens to a member's account after sign-in (sessions revoked, credentials changed or compromised, a device out of compliance, the account disabled), Touchque SSO sends a Security Event Token (OpenID Shared Signals Framework 1.0) to the receivers the organization's admin adds (Organization > Continuous access). Your app ends the person's sessions or asks them to sign in again. The verifier reads the keys from the issuer's `/.well-known/ssf-configuration` and checks the signature, `typ`, issuer, audience and the one event. A SET does not expire: keep the `jti`s you handled and skip a repeat.
+
+```ruby
+SSF = TouchQue::SecurityEventVerifier.new(issuer: "https://sso.touchque.com", audience: "https://app.example.com")
+
+# Push (RFC 8935): the SET is the request body (application/secevent+jwt).
+def create
+  event = SSF.verify(request.raw_post)   # "name": session-revoked, credential-change, account-disabled...
+  end_sessions_of(event["subject"]["email"]) if event["name"] == "session-revoked"
+  head :accepted
+rescue TouchQue::SecurityEventError => e
+  render json: { err: e.error, description: e.message }, status: e.error == "temporarily_unavailable" ? 503 : 400
+end
+
+# Poll (RFC 8936): acknowledge what you handled on the next call.
+ack = []
+loop do
+  out = TouchQue::SecurityEvents.poll(url: poll_url, token: stream_token, ack: ack, max_events: 50, return_immediately: true)
+  ack = out["sets"].map do |jti, set|
+    handle(SSF.verify(set))
+    jti
+  end
+  break if ack.empty? && !out["more_available"]
+end
+```
+
+`verify` returns `"jti"`, `"issuer"`, `"audience"`, `"issued_at"`, `"txn"` (the case code of Touchque's decision), `"subject"`, `"type"`, `"name"` and `"claims"`, or raises `TouchQue::SecurityEventError` whose `error` is the RFC 8935 code to answer (`invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience`; `temporarily_unavailable` when the issuer's keys could not be read). Report a SET you refuse while polling with `set_errs: { jti => { "err" => e.error, "description" => e.message } }`.
+
 ## TouchQue Login (hosted sign-in)
 
 ```ruby
@@ -267,6 +297,36 @@ sent = tq.login.request(user, reply: { kind: "code", key: key["publicKey"], chan
 status = tq.login.status(sent["requestId"])   # once CONFIRMED
 code = status["reply"] && TouchQue::CodeReply.open(key["privateKey"], sent["requestId"], status["reply"]["ct"])
 ```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```ruby
+target = { "chainId" => 1, "safe" => safe, "guard" => guard,
+           "tx" => { "to" => to, "value" => 0, "data" => data, "operation" => 0, "nonce" => 42 } }
+sent = tq.safe_guard.request("treasurer@acme.com", "safe_payment", target.merge( # an action type from your dashboard
+  "config" => { "threshold" => 2, "govThreshold" => 3, "govDelay" => 172_800, "exitDelay" => 259_200 },
+  "batchTargets" => [multi_send_call_only],
+  "approverIndex" => 0 # this approver's index in the guard
+))
+done = tq.safe_guard.wait_for_approval(sent["requestId"]) # 5 minutes at most
+approval = done["safeTx"]["approval"]
+
+# Check it yourself: your own transaction, the approver's key from the guard on chain, and what
+# you are about to do with it: "approve" runs this transaction, "schedule" starts a governance change.
+purpose = done["safeTx"]["purpose"] == "schedule" ? "schedule" : "approve"
+check = TouchQue::SafeApproval.verify(target, approval, approver_key, purpose: purpose, approver_index: 0)
+raise "approval refused: #{check["reason"]}" unless check["valid"]
+
+if purpose == "approve"
+  signatures = TouchQue::SafeApproval.with_approvals(owner_signatures, [approval]) # execTransaction(..., signatures)
+else
+  data = TouchQue::SafeApproval.schedule_call(safe, check["governanceHash"], [approval]) # a call to the guard; runs after govDelay
+end
+```
+
+`TouchQue::SafeApproval.verify` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. `purpose:` defaults to `"approve"`: a schedule approval covers no Safe nonce or gas fields, so it is accepted only when you pass `purpose: "schedule"`, never as permission to execute. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `rows:` or `display_digest:` from your own decoding, rows the phone did not show. `"reason"` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`. `safe_tx_hash`, `governance_hash`, `message` and `display_digest` are public too.
 
 ## Errors, case codes and retries
 

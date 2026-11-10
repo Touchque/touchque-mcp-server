@@ -171,7 +171,58 @@ Login results carry `status` (`SUCCESS` | `REJECTED`) and, when rejected, a `rea
 them to approve), `risk_reversed`, `risk_step_up`, `approval_signature_invalid`, `device_integrity_failed`,
 `vishing_suspected` and `phishing_origin` (see Vishing Shield). Treat a reason you do not know as a rejection.
 Event webhooks carry `event` (`TouchQue\Resources\Webhook::EVENT_*`): `DEVICE_LINKED`, `DEVICE_UNLINKED`, `PASSKEY_REGISTERED`,
-`PASSKEY_DELETED`, `APPROVAL_RECONFIRMED`, `APPROVAL_REVOKED`. Ignore events you do not know.
+`PASSKEY_DELETED`, `APPROVAL_RECONFIRMED`, `APPROVAL_REVOKED`, `MOBILE_PUSH` (Mobile SDK), `RECOVERY_*` (Never Locked Out:
+`STARTED`, `DEVICE_BOUND`, `COOLING`, `COMPLETED`, `VETOED`, `EXPIRED`, `FAILED`) and `ASSIST_*` (help desk: `OPENED`, `ENDED`,
+`CHECK_PASSED`, `CHECK_FAILED`, `UNFROZEN`, `CLAIM_CONFIRMED`, `CLAIM_UNVERIFIED`). Ignore events you do not know.
+
+## Shared Signals (security events from Touchque SSO)
+
+After sign-in, Touchque SSO tells your app when something happens to an organization member's account: sessions
+revoked, a credential changed or compromised, the account disabled, a device out of compliance. It sends Security
+Event Tokens (OpenID Shared Signals Framework 1.0, CAEP and RISC) to the receivers the organization's admin adds
+(Organization > Continuous access). `SecurityEventVerifier` checks each one: the RS256 signature with the issuer's
+keys (found from its `/.well-known/ssf-configuration`, https only), `typ`, issuer, audience and exactly one event.
+
+Push delivery (RFC 8935): the SET is the request body (`application/secevent+jwt`).
+
+```php
+use TouchQue\SecurityEventVerifier;
+use TouchQue\Exceptions\TouchQueSecurityEventException;
+
+$verifier = new SecurityEventVerifier(['issuer' => 'https://sso.touchque.com', 'audience' => 'https://app.example.com']);
+try {
+    $event = $verifier->verify(file_get_contents('php://input'));
+} catch (TouchQueSecurityEventException $e) {
+    // temporarily_unavailable: the keys could not be read; 503 makes the transmitter try again.
+    http_response_code($e->error === 'temporarily_unavailable' ? 503 : 400);
+    echo json_encode(['err' => $e->error, 'description' => $e->getMessage()]);
+    exit;
+}
+if (in_array($event['name'], ['session-revoked', 'account-disabled'], true)) {
+    endSessionsOf($event['subject']['email'] ?? null);
+}
+http_response_code(202);
+```
+
+Poll delivery (RFC 8936), with the stream's token: the next poll acknowledges what you handled.
+
+```php
+$ack = [];
+do {
+    $page = SecurityEventVerifier::poll($pollUrl, $streamToken, ['ack' => $ack, 'returnImmediately' => true]);
+    $ack = [];
+    foreach ($page['sets'] as $jti => $set) {
+        handle($verifier->verify($set));
+        $ack[] = $jti;
+    }
+} while ($page['moreAvailable'] || $ack);
+```
+
+`$event` has `jti`, `issuer`, `audience`, `issuedAt`, `txn` (the case code of Touchque's decision), `subject`
+(`['format' => 'email', 'email' => ...]` for a person), `type`, `name` (`session-revoked`, `credential-change`,
+`device-compliance-change`, `account-disabled`, `credential-compromise`; `SecurityEventVerifier::TYPES`) and
+`claims`. A SET does not expire: keep the jtis you handled and skip a repeat. A SET you could not handle goes back
+in `setErrs` (`[$jti => ['err' => ..., 'description' => ...]]`) instead of `ack`.
 
 ## Vishing Shield (someone on the phone guiding the user)
 
@@ -404,6 +455,10 @@ not called when only a passkey can approve (`verify()` throws `TouchQuePasskeyRe
 throws is logged with `error_log` and ignored: `verify()` keeps waiting. In a web request, where the page hears
 nothing until you answer, use the relay or `$tq->start()`: their first answer already carries the number.
 
+Sent the request yourself with `$tq->login->request()`? `$tq->login->waitForApproval($requestId, $timeoutMs = 30000,
+$pollIntervalMs = 400)` is the waiting half of `verify()`: the same answer (`approved`, `status`, `requestId`,
+`assurance`, `confirmedVia`, `provisional`), and it throws what `verify()` throws while it waits.
+
 ## Verifying the device proof (no need to trust TouchQue)
 
 Every approval from a phone with a hardware key carries `approvalProof`: the phone's own
@@ -459,6 +514,39 @@ $sent = $tq->login->request($user, reply: ['kind' => 'code', 'key' => $key['publ
 $status = $tq->login->status($sent['requestId']);   // once CONFIRMED
 $code = isset($status['reply']) ? \TouchQue\CodeReply::open($key['privateKey'], $sent['requestId'], $status['reply']['ct']) : null;
 ```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```php
+use TouchQue\SafeApproval;
+
+$target = ['chainId' => 1, 'safe' => $safe, 'guard' => $guard, 'tx' => ['to' => $to, 'value' => '0', 'data' => $data, 'operation' => 0, 'nonce' => 42]];
+$sent = $tq->safeGuard->request('treasurer@acme.com', 'safe_payment', $target + [   // an action type from your dashboard
+    'config' => ['threshold' => 2, 'govThreshold' => 3, 'govDelay' => 172800, 'exitDelay' => 259200],
+    'batchTargets' => [$multiSendCallOnly],
+    'approverIndex' => 0,   // this approver's index in the guard
+]);
+$done = $tq->safeGuard->waitForApproval($sent['requestId']);   // 5 minutes at most
+$approval = $done['safeTx']['approval'];
+
+// Check it yourself: your own transaction, the approver's key from the guard on chain, and what
+// you are about to do with it: 'approve' (the default) runs it with execTransaction, 'schedule'
+// sends a governance change (a delegatecall, a change to the Safe, a proxy upgrade) to the guard.
+$purpose = $isGovernanceChange ? 'schedule' : 'approve';   // from your own decoding of $target
+$check = SafeApproval::verify($target, $approval, $approverKey, ['approverIndex' => 0, 'purpose' => $purpose]);
+if (!$check['valid']) {
+    throw new RuntimeException("approval refused: {$check['reason']}");
+}
+if ($purpose === 'approve') {
+    $signatures = SafeApproval::withApprovals($ownerSignatures, [$approval]);   // execTransaction(..., $signatures)
+} else {
+    $data = SafeApproval::scheduleCall($safe, $check['governanceHash'], [$approval]);   // a call to the guard; runs after govDelay
+}
+```
+
+`SafeApproval::verify` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature (ext-openssl). Without `purpose` only an ordinary approval (`approve`) passes: an approval to schedule a change covers no nonce or gas fields and is never one to execute, so name `'purpose' => 'schedule'` when that is what you send. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `rows` or `displayDigest` from your own decoding, rows the phone did not show. `reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`. `SafeApproval::safeTxHash`, `governanceHash`, `message` and `displayDigest` are public too.
 
 ## Errors
 

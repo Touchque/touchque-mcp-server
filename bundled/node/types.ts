@@ -7,6 +7,8 @@
 // src/types.ts
 // All TypeScript types and interfaces for the TouchQue Node.js SDK
 
+import type { SafeTxTarget, SafeDisplayRow } from './safeGuard';
+
 export interface TouchQueConfig {
   /** Your TouchQue API key (starts with `tq_`) */
   apiKey: string;
@@ -483,6 +485,25 @@ export interface ApprovalAssurance {
 
 export type LoginStatus = 'PENDING' | 'CONFIRMED' | 'REJECTED' | 'EXPIRED';
 
+/** What `login.consume` answers: the approved request, used up by this call. */
+export interface ConsumeResponse {
+  consumed: true;
+  requestId: string;
+  externalUsername: string;
+  type: string;
+  referenceId: string | null;
+  details: Array<{ label: string; value: string }> | null;
+  confirmedVia: string | null;
+  assurance: ApprovalAssurance | null;
+  /** Device-signed proof of what was approved, when the phone holds a hardware key. */
+  approvalProof: import('./approvalProof').ApprovalProof | null;
+  /** Vishing Shield fields, as on `login.status`. */
+  provisional?: boolean;
+  reconfirmedAt?: string | null;
+  revoked?: boolean;
+  revokeReason?: 'UNDO' | 'COACHED' | null;
+}
+
 export interface LoginStatusResponse {
   status: LoginStatus;
   /** How the request was confirmed ('DEVICE', 'WEBAUTHN', ...); null until confirmed */
@@ -814,7 +835,11 @@ export interface WebhookPayload {
   event: string;
   requestId: string;
   externalUsername: string;
-  status: LoginStatus;
+  /**
+   * A login result: `SUCCESS` or `REJECTED`. An event webhook may carry its
+   * own (a recovery's, for example).
+   */
+  status: 'SUCCESS' | 'REJECTED' | (string & {});
   timestamp: string;
   /**
    * On a SUCCESS webhook, the approving phone's device-signed proof of what
@@ -875,6 +900,38 @@ export const WebhookEvents = {
   APPROVAL_RECONFIRMED: 'APPROVAL_RECONFIRMED',
   /** The user took an approval back (`reason`: `COACHED` or `UNDO`): end the session or stop the action built on it. */
   APPROVAL_REVOKED: 'APPROVAL_REVOKED',
+  /** Mobile SDK: send this push to your app with your own APNs / FCM keys (`mobilePushFromWebhook`). */
+  MOBILE_PUSH: 'MOBILE_PUSH',
+  // Never Locked Out (tq.recovery): each carries `recoveryId` and `status`.
+  /** A recovery started for a user whose phone is gone. */
+  RECOVERY_STARTED: 'RECOVERY_STARTED',
+  /** The new phone scanned the recovery QR. */
+  RECOVERY_DEVICE_BOUND: 'RECOVERY_DEVICE_BOUND',
+  /** Enough vouchers approved; the cooling-off runs until `coolOffUntil`. */
+  RECOVERY_COOLING: 'RECOVERY_COOLING',
+  /** The account moved to the new phone (`method`: `vouch` or `old_phone`; `probationUntil` after a vouch). */
+  RECOVERY_COMPLETED: 'RECOVERY_COMPLETED',
+  /** The old phone, a voucher or an admin stopped the recovery (`reason`, `by`). */
+  RECOVERY_VETOED: 'RECOVERY_VETOED',
+  /** The recovery ran out of time, or a new one replaced it (`reason`). */
+  RECOVERY_EXPIRED: 'RECOVERY_EXPIRED',
+  /** The recovery failed (`reason`: `not_enough_approvals`, `new_phone_key_changed`, `account_gone`). */
+  RECOVERY_FAILED: 'RECOVERY_FAILED',
+  // Help desk (tq.assist): each carries `assistId` (except ASSIST_CLAIM_UNVERIFIED), `agentRef` and `agentName`.
+  /** An IT agent opened a help-desk session on a person's account. */
+  ASSIST_OPENED: 'ASSIST_OPENED',
+  /** The help-desk session ended (`reason`). */
+  ASSIST_ENDED: 'ASSIST_ENDED',
+  /** The person confirmed on their phone that they are on the call with IT (`requestId`, `action`, `caseCode`). */
+  ASSIST_CHECK_PASSED: 'ASSIST_CHECK_PASSED',
+  /** The check failed (`outcome`: `wrong_number`, `not_me`, `coached`, `declined`): page someone. */
+  ASSIST_CHECK_FAILED: 'ASSIST_CHECK_FAILED',
+  /** The help desk lifted the person's 2FA freeze after a passed check on their phone (`requestId`). */
+  ASSIST_UNFROZEN: 'ASSIST_UNFROZEN',
+  /** The person checked on their phone that the IT agent working on their account is real. */
+  ASSIST_CLAIM_CONFIRMED: 'ASSIST_CLAIM_CONFIRMED',
+  /** Someone said they were from IT and nobody from IT was working on the account (`caseCode`): page someone. */
+  ASSIST_CLAIM_UNVERIFIED: 'ASSIST_CLAIM_UNVERIFIED',
   // AI agents (tq.agents): changes partners may act on, and what TouchQue noticed.
   /** An AI agent was registered. */
   AGENT_CREATED: 'AGENT_CREATED',
@@ -1150,6 +1207,97 @@ export interface DeviceRiskVisitor {
   sealed?: boolean;
 }
 
+/** The address as the risk engine saw it for an event: the place (never coordinates), the operator, the kind of network. */
+export interface DeviceRiskNetwork {
+  countryCode: string | null;
+  region: string | null;
+  city: string | null;
+  /** How far off the place can be. */
+  accuracyKm: number | null;
+  timeZone: string | null;
+  asn: number | null;
+  /** The network operator. */
+  asnOrg: string | null;
+  /** `hosting`: a cloud or hosting network (scripts, proxies and many VPNs come from one). */
+  type: 'isp' | 'hosting' | 'tor' | 'unknown';
+  tor: boolean;
+  hosting: boolean;
+  hostingProvider: string | null;
+  /** The browser's clock is 2 h or more off the address's time zone: a VPN or proxy in another country. */
+  timezoneMismatch: boolean | null;
+}
+
+/** The visitor's counts: the risk engine's (accounts, sign-ups, countries, stored-id resets) and TouchQue's identifications. */
+export interface DeviceRiskVelocity {
+  accounts24h: number | null;
+  accounts30d: number | null;
+  signUps24h: number | null;
+  countries24h: number | null;
+  idResets7d: number | null;
+  identifications1h: number | null;
+  identifications24h: number | null;
+}
+
+/** One answer to "a bot?", summing up the signals (the risk engine still decides). */
+export interface DeviceRiskBot {
+  /** `detected`: the browser says it is driven (webdriver, headless); `suspected`: the pointer moved like software, a zero-size window, software graphics. */
+  result: 'detected' | 'suspected' | 'not_detected';
+  reasons: Array<'webdriver' | 'headless' | 'pointer_synthetic' | 'zero_window' | 'soft_gpu'>;
+}
+
+/** `deviceRisk.searchEvents(options)`: a date range (7 days by default, at most 90, within the retention) and any filters. */
+export interface DeviceRiskSearchOptions {
+  /** Start: a Date, `YYYY-MM-DD` (UTC) or an ISO time. Default: 7 days before `to`. */
+  from?: Date | string;
+  /** End: a Date, `YYYY-MM-DD` (UTC, the whole day) or an ISO time. Default: now. */
+  to?: Date | string;
+  /** Only identifications that raised this signal code. */
+  signal?: string;
+  /** true: only the ones that asked for more; false: only the others. */
+  stepUp?: boolean;
+  /** The page. */
+  kind?: DeviceRiskEvent;
+  /** The page's origin, like https://shop.example.com. */
+  origin?: string;
+  /** An address or a CIDR range ('203.0.113.0/24'). A filter only: no answer carries an address. */
+  ip?: string;
+  /** The account (externalUsername). */
+  account?: string;
+  visitorId?: string;
+  requestId?: string;
+  /** The previous page's `nextCursor`, as it came. */
+  cursor?: string | null;
+  /** 1 to 100, default 25. */
+  limit?: number;
+}
+
+/** One identification in a search: no address and no raw trait. */
+export interface DeviceRiskIdentification {
+  requestId: string;
+  at: string;
+  visitorId: string;
+  kind: DeviceRiskEvent;
+  origin: string | null;
+  externalUsername: string | null;
+  country: string | null;
+  network: DeviceRiskNetwork | null;
+  confidence: number | null;
+  matchedBy: 'key' | 'sid' | 'traits' | 'new' | null;
+  sealed: boolean;
+  stepUp: boolean;
+  signals: Array<{ code: string; enforced: boolean }>;
+  caseCode: string | null;
+  bot: DeviceRiskBot | null;
+}
+
+/** One page of `deviceRisk.searchEvents()`: pass `nextCursor` back until it is null. */
+export interface DeviceRiskSearchResult {
+  events: DeviceRiskIdentification[];
+  nextCursor: string | null;
+  from: string;
+  to: string;
+}
+
 /** An identification as TouchQue saw it (GET /device-risk/events/:requestId): trust this, never the page's copy. */
 export interface DeviceRiskEventResult {
   requestId: string;
@@ -1168,6 +1316,9 @@ export interface DeviceRiskEventResult {
   facts: { codes: string[]; evidence: Record<string, unknown>; reset: boolean; twins: boolean; privateWindow: boolean };
   /** The risk engine's verdict (null before the engine answered). */
   verdict: { stepUp: boolean; wouldStepUp: boolean; requires: string; mode: string; signals: DeviceRiskSignal[]; caseCode: string | null } | null;
+  network: DeviceRiskNetwork | null;
+  velocity: DeviceRiskVelocity;
+  bot: DeviceRiskBot;
 }
 
 export interface DeviceRiskCheckResult {
@@ -1186,6 +1337,12 @@ export interface DeviceRiskCheckResult {
   visitor: DeviceRiskVisitor | null;
   /** The risk engine's counts for this visitor. */
   counts: Record<string, number> | null;
+  /** The address (never coordinates); null without one. */
+  network: DeviceRiskNetwork | null;
+  /** The visitor's counts; null without a usable identification. */
+  velocity: DeviceRiskVelocity | null;
+  /** One answer to "a bot?"; null without a usable identification. */
+  bot: DeviceRiskBot | null;
   signals: DeviceRiskSignal[];
   /** Ask for more on this page (an emailed code, a passkey, a number-matched approval). Never a reason to refuse. */
   stepUp: boolean;
@@ -1194,6 +1351,8 @@ export interface DeviceRiskCheckResult {
   requires: 'none' | 'number_match' | 'passkey';
   /** `enforce` when at least one raised signal is enforced. */
   mode: 'shadow' | 'enforce';
+  /** The engine's state for this check; `'unavailable'` when the risk engine could not be reached and the verdict is a safe default. */
+  engine: string | null;
   /** "Why?": the decision record, opened by this code in the dashboard. */
   caseCode?: string;
 }
@@ -1207,6 +1366,88 @@ export interface LoginReplyRequest {
   channel?: 'sms' | 'whatsapp' | 'email' | 'app' | 'backup' | 'other';
   /** The masked number or address it went to (`+**********26`), shown on the phone; at most 40 characters. */
   target?: string;
+}
+
+// ─── Safe Guard (Safe transactions approved on the phone) ────────
+
+/** How TouchQueSafeGuard treats a transaction: `governance` is scheduled and waits; `exit` is the emergency exit. */
+export type SafeTxClass = 'tighten' | 'ordinary' | 'governance' | 'exit';
+
+/** The guard's settings for this Safe, as you read them from chain. */
+export interface SafeGuardConfig {
+  threshold: number;
+  govThreshold: number;
+  /** Seconds. */
+  govDelay: number;
+  /** Seconds. */
+  exitDelay: number;
+  /** With the address lock on, a payment or allowance outside the address book is a governance change. */
+  recipientLock?: boolean;
+}
+
+/** An entry of the guard's address book: the phone names the address with its label. */
+export interface SafeGuardRecipient {
+  address: string;
+  /** At most 64 bytes, without control, bidi or invisible characters. */
+  label?: string;
+}
+
+/** The raw Safe transaction and what the phone needs to decode it like the guard. */
+export interface SafeGuardTx extends SafeTxTarget {
+  config: SafeGuardConfig;
+  /** MultiSendCallOnly contracts the guard opens call by call (at most 5). */
+  batchTargets?: string[];
+  recipients?: SafeGuardRecipient[];
+  /** This approver's index in the guard: the approval names it. */
+  approverIndex: number;
+  /** The language of the rows on the phone, `'tr'` by default. */
+  locale?: 'en' | 'tr';
+}
+
+export interface SafeGuardRequestOptions {
+  /** User identifier in YOUR system (the approver). */
+  externalUsername: string;
+  /** An action type from your dashboard. */
+  type: string;
+  safeTx: SafeGuardTx;
+  /** Your own id for this transaction. */
+  referenceId?: string;
+  /** Seconds, 30 to 300 (default 300: reading a transaction takes longer than a sign-in). */
+  expiresIn?: number;
+  clientIp?: string;
+  userAgent?: string;
+}
+
+export interface SafeGuardRequestResponse extends LoginRequestResponse {
+  /** TouchQue's own decoding, for your logs and screens. The phone decodes for itself. */
+  safeTx: {
+    class: SafeTxClass;
+    flags: string[];
+    safeTxHash: string;
+    governanceHash: string | null;
+    rows: SafeDisplayRow[];
+  };
+}
+
+export interface SafeGuardStatusResponse {
+  requestId: string;
+  externalUsername: string;
+  status: LoginStatus;
+  /** Given during a call or after a risky Second Thought answer: the person confirms it again later. */
+  provisional: boolean;
+  safeTx: {
+    class: SafeTxClass;
+    flags: string[];
+    safeTxHash: string;
+    governanceHash: string | null;
+    /** `approve`: append to the owners' signatures. `schedule`: send `guard.schedule`. */
+    purpose: 'approve' | 'schedule';
+    approverIndex: number;
+    /** Once approved: the 105-byte approval, 0x hex. Check it with `verifySafeApproval`. */
+    approval?: string;
+    /** Once approved: Unix seconds. */
+    expiresAt?: number;
+  } | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1661,6 +1902,7 @@ import {
   LoginRequestOptions,
   LoginRequestResponse,
   LoginStatusResponse,
+  ConsumeResponse,
   WaitForApprovalOptions,
   WaitForApprovalResult,
   VerifyOptions,
@@ -1774,6 +2016,21 @@ export class Login {
    */
   async status(requestId: string): Promise<LoginStatusResponse> {
     return this.http.get<LoginStatusResponse>(`/login/status/${encodeURIComponent(requestId)}`);
+  }
+
+  /**
+   * Use an approved request exactly once. The first call on a CONFIRMED request
+   * wins atomically; every later call (a replayed token, a retried form post)
+   * throws `TouchQueAPIError` with `code: 'already_used'` (409). Compare the
+   * answer's user, type, referenceId and details with what you asked for, or
+   * use `tq.complete()`, which does both.
+   *
+   * @example
+   * const approval = await tq.login.consume(requestId);
+   * if (approval.externalUsername !== user) throw new Error('approval for someone else');
+   */
+  async consume(requestId: string): Promise<ConsumeResponse> {
+    return this.http.post<ConsumeResponse>(`/login/${encodeURIComponent(requestId)}/consume`, {});
   }
 
   /**
@@ -2010,7 +2267,7 @@ export interface ReportFraudResponse {
 // `allowOfflineWithoutFirstFactor`): with the username taken from the body,
 // anyone could burn a user's offline attempts and lock them out.
 
-import { Router, Request, Response } from 'express';
+import type { Router, Request, Response } from 'express';
 import { TouchQue } from './index';
 import { TouchQueRejectedError, TouchQueTimeoutError, TouchQuePasskeyRequiredError, TouchQueAPIError } from './errors';
 import { runGuard, guardInputFromHeaders, isStatusPoll, silentInputFromHeaders, SilentSignInOptions } from './guard';
@@ -2021,6 +2278,7 @@ const PASSKEY_ENROLL_ACTION = 'PASSKEY_ENROLL';
 import { FixedWindowLimiter, RateLimitOptions } from './rateLimiter';
 import { logOf } from './internal';
 import { describeError, type SdkLog } from './core/HttpClient';
+import { expressRouter } from './middleware/loadExpress';
 
 export interface TouchQueRouterOptions {
   /**

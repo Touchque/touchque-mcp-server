@@ -164,3 +164,97 @@ test("the checklist takes the 4.x (TouchQue) and the 5.0 (Touchque) names alike"
   assert.doesNotMatch(goReport, /the current SDK is/);
   assert.deepEqual(actionTypesIn("requireTouchque('PAYOUT'); [RequireTouchque(\"REFUND\")]").sort(), ["PAYOUT", "REFUND"]);
 });
+
+// ── 4.1: shorter, smarter answers ──────────────────────────────────────────
+const docsSearch = require("./docsSearch");
+const tools41 = require("./tools");
+
+test("a docs page becomes clean sections: no tabs, Copy, line numbers or pager", () => {
+  const html = `<html><body><main><nav class="docs-breadcrumb">Docs / API</nav><div class="docs-hero"><h1>Callback / webhook</h1></div>
+<p>Set the Callback URL under Developers &rarr; Webhooks.</p>
+<div class="docs-params-title">Callback payload</div><table><tr><th>Field</th><th>Type</th></tr><tr><td>status</td><td>string</td></tr></table>
+<div class="docs-code-block"><div class="docs-code-header"><div class="docs-code-tabs"><button class="docs-code-tab active">JavaScript</button><button class="docs-code-tab">PHP</button></div><div class="docs-code-actions"><button class="docs-copy-btn">Copy</button><button class="docs-try-btn">Try it</button></div></div>
+<div class="docs-code-body"><div class="docs-code-lines"><span>1</span><span>2</span></div><pre><code>tq.webhook.verify({ rawBody, signature });
+res.json({ ok: true });</code></pre></div></div>
+<div class="docs-pager"><a class="docs-pager-link">Next</a></div></main></body></html>`;
+  const t = docsSearch.htmlToText(html);
+  assert.doesNotMatch(t, /JavaScript|PHP|Copy|Try it|Next|Docs \/ API/);
+  assert.match(t, /tq\.webhook\.verify\(\{ rawBody, signature \}\);\nres\.json/);
+  assert.match(t, /Developers → Webhooks/);
+  assert.deepEqual(docsSearch.splitSections(t).map((s) => s.heading), ["Callback / webhook", "Callback payload"]);
+});
+
+test("search: Turkish questions find the right section and are answered in Turkish; prices get a straight answer", async () => {
+  const page = (url, lang, title, secs) => ({ url, lang, title, sections: [{ heading: title, text: secs[0] }, ...secs.slice(1).map(([h, x]) => ({ heading: h, text: x }))] });
+  const pages = [
+    page("https://d.test/offline-sign", "en", "Offline sign", ["When the phone has no internet, show a QR; the phone shows a 7-character code.", ["Offline time-based code", "A TOTP code as a fallback."]]),
+    page("https://d.test/offline-sign?lang=tr", "tr", "Çevrimdışı onay", ["Telefonda internet yoksa bir QR gösterin; telefon 7 karakterlik bir kod üretir.", ["Zaman tabanlı kod", "Yedek olarak TOTP kodu."]]),
+    page("https://d.test/callback", "en", "Callback / webhook", ["Set the Callback URL under Developers → Webhooks.", ["Verify the signature", "Check the x-signature header with your API secret (HMAC-SHA256)."]]),
+    page("https://d.test/callback?lang=tr", "tr", "Callback / webhook", ["Callback URL'yi Developers → Webhooks altında girin.", ["İmzayı doğrulayın", "x-signature başlığını API secret ile kontrol edin (HMAC-SHA256)."]]),
+    page("https://d.test/sdk-setup", "en", "Setup", ["Install the SDK and set your keys.", ["Where the SDK plugs in", "Your backend calls the API."]]),
+    page("https://d.test/sdk-setup?lang=tr", "tr", "Kurulum", ["SDK'yı kurun ve anahtarlarınızı tanımlayın.", ["SDK nereye bağlanır", "Backend'iniz API'yi çağırır."]]),
+  ];
+  docsSearch._setIndex(docsSearch.indexFromPages(pages), "https://d.test");
+  const top = async (q) => (await docsSearch.search("https://d.test", q)).hits[0];
+  const off = await top("Kullanıcının telefonunda internet yoksa ne olur?");
+  assert.equal(off.title, "Çevrimdışı onay");
+  assert.equal(off.lang, "tr");
+  assert.equal((await top("Webhook nasıl kurulur?")).title, "Callback / webhook");
+  const sig = await top("webhook imzasını nasıl doğrularım");
+  assert.equal(sig.section, "İmzayı doğrulayın");
+  assert.equal((await top("how do I verify the webhook signature")).section, "Verify the signature");
+  const price = await docsSearch.search("https://d.test", "Fiyatlar ne kadar?");
+  assert.match(price.note, /does not publish prices/);
+  const p = await docsSearch.page("https://d.test", "/callback", { section: "verify" });
+  assert.match(p.text, /x-signature/);
+});
+
+test("SDK docs and types come a part at a time", () => {
+  assert.match(tools41.readmeToc("node"), /- Install \(/);
+  assert.match(tools41.readmeSection("node", "webhooks"), /^## Webhooks/);
+  assert.ok(tools41.typeNames("node").includes("TouchQueConfig"));
+  const block = tools41.typeBlock("node", "LoginRequestOptions");
+  assert.ok(block && block.length < 8200 && /\{[\s\S]*\}/.test(block));
+  for (const lang of ["python", "go", "php"]) assert.ok(tools41.typeNames(lang).length > 5, lang);
+});
+
+test("the snapshot answers account questions in a few lines, and says what an owner may do", () => {
+  const ctx = { user: { email: "dev@example.com" }, organization: { id: "o1", name: "Acme", slug: "acme", role: "owner" }, organizations: [{ id: "o1", name: "Acme", role: "owner" }, { id: "o2", name: "Globex", role: "member" }], features: ["ciam"], platformOff: ["mobile_sdk"] };
+  const setup = {
+    apiKeys: { keys: [{ keyId: "tq_1", name: "Main", status: "ACTIVE", mine: true, lastUsed: "never" }] }, webhook: { url: null }, actionTypes: [],
+    passkey: { rpId: null }, login: { on: true, slug: "acme", issuer: "https://acme.login.example.com", apps: [{ name: "Web", clientId: "c1", appType: "spa", redirectUris: [] }] },
+  };
+  const t = tools41.snapshotText(ctx, setup, { canWrite: true });
+  assert.match(t, /Role: owner/);
+  assert.match(t, /tq_1 "Main" \(theirs\), last used never/);
+  assert.match(t, /Action types: none yet/);
+  assert.match(t, /Mobile SDK \(not available on Touchque yet\)/);
+  assert.match(t, /As the owner they can turn one on/);
+  assert.match(t, /no redirect URI/);
+  assert.match(t, /Globex \(member\)/);
+  assert.ok(t.length < 1800, `snapshot is ${t.length} characters`);
+});
+
+test("the action-type recipe is each SDK's real call", () => {
+  assert.equal(tools41.DEFINE_ACTION.node("SEND_MONEY", "Send money"), "await tq.actionTypes.define('SEND_MONEY', { name: 'Send money', critical: true });");
+  assert.match(tools41.DEFINE_ACTION.go("SEND_MONEY", "Send money"), /touchque\.DefineOptions\{Name: "Send money", Critical: &critical\}/);
+  assert.match(tools41.DEFINE_ACTION.python("X", "x"), /^client\.action_types\.define\("X", name="x", critical=True\)$/);
+});
+
+test("instructions: routing plus the member's facts at initialize; the routing alone when they are slow", async () => {
+  const { instructionsFor, ROUTING } = require("./server");
+  assert.ok(ROUTING.length < 2600, `routing is ${ROUTING.length}`);
+  assert.doesNotMatch(ROUTING, /Start every Touchque task/);
+  const slow = { claims: { gid: "g" }, canWrite: false, context: () => new Promise(() => {}), tryDash: async () => ({ data: null }) };
+  const t = await instructionsFor(slow, { timeoutMs: 50 });
+  assert.match(t, /could not be read just now/);
+  const ok = { claims: { gid: "g2" }, canWrite: true, context: async () => ({ user: { email: "a@b.c" }, organization: { id: "o", name: "Acme", role: "admin" }, organizations: [{ id: "o", name: "Acme", role: "admin" }], features: [], platformOff: [] }), tryDash: async () => ({ data: null, error: { code: "x", message: "x" } }) };
+  assert.match(await instructionsFor(ok), /Organization: Acme\. Role: admin/);
+});
+
+test("the Node checklist accepts new TouchQue() reading the environment itself", async () => {
+  const { handlers } = require("../index.js");
+  const code = "const { TouchQue, requireTouchQue } = require('@touchque/node');\nconst tq = new TouchQue();\napp.post('/pay', requireTouchQue('SEND_MONEY', { tq }), h);";
+  const r = (await handlers.callTool({ params: { name: "validate_integration", arguments: { code, framework: "express" } } })).content[0].text;
+  assert.match(r, /✅ Environment variables used for secrets/);
+});

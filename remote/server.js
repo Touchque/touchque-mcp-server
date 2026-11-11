@@ -27,41 +27,49 @@ const { createWorkspace } = require("./workspace");
 const tools = require("./tools");
 const prompts = require("./prompts");
 
-// The docs tools of index.js this server offers too (ping_touchque_api would
-// let anyone make this server fetch any address: left out).
-const CORE_TOOLS = new Set(["touchque_help", "get_touchque_docs", "get_sdk_types", "validate_integration"]);
-
-const INSTRUCTIONS = `Touchque MCP: you are connected as a signed-in Touchque member.
-Start every Touchque task with touchque_whoami (who they are, the organization, their role, the features that are ON).
-Only build integrations for features that are ON. Read the person's code before changing it, follow the SDK README sections from touchque_generate_integration or get_touchque_docs, and finish with touchque_check_integration.
-Workspace changes (an API key, a redirect URI) only when the person asks: call without confirm, ask, then confirm: true; tell them the number their phone shows.
+// What every answer should follow. The member's own facts are added below it
+// at initialize (instructionsFor), so a question about them needs no tool.
+const ROUTING = `Touchque MCP. Answer in the person's language, in a few lines; do not narrate tool calls.
+- Their account (organization, role, features, API key, webhook, action types, Touchque Login tenant and apps): use the facts below; no tool call. touchque_whoami only if they are missing or the person switched organization.
+- How-to or concept: one touchque_search_docs call (Turkish questions work). An SDK detail: get_touchque_docs with a section, get_sdk_types with a symbol.
+- Is an SDK published, how to install: touchque_pick_sdk.
+- Write an integration: read their code, touchque_generate_integration, edit the files, then touchque_check_integration. Only for features that are ON.
+- Changes (action type, API key, redirect URI, test approval): only when the person asks; call without confirm, ask them, then confirm: true; tell them the number their phone shows; touchque_wait for the result.
+- If your client loads tools on demand, load the Touchque tools you need in one search.
+- Not in this server: prices, plans, billing (Touchque does not publish them; ask Touchque on support.touchque.com), usage numbers and logs (dashboard), .NET, Ruby and Java SDKs (not released).
+Touchque: Workforce (SSO for work apps, directory, VPN/RADIUS, shared accounts, device trust, threat protection, AI agents) and Customer & developer identity (2FA API: phone approval with number matching, passkeys, offline sign; Touchque Login: hosted sign-up/sign-in for a company's own customers, not employee SSO; Device risk; Safe Guard; Mobile SDK).
 Slash commands: touchque-setup, add-phone-approval, add-passkeys, add-touchque-login, check-integration.`;
 
-function buildServer(auth, config) {
+/** The instructions with the member's facts, or the routing alone when they cannot be read in time. */
+async function instructionsFor(ws, { timeoutMs = 2500 } = {}) {
+  const facts = (async () => {
+    const ctx = await ws.context();
+    const setup = await tools.workspaceSetup(ws, ctx).catch(() => null);
+    return tools.snapshotText(ctx, setup, ws);
+  })();
+  const snapshot = await Promise.race([facts.catch(() => null), new Promise((r) => setTimeout(() => r(null), timeoutMs))]);
+  return snapshot ? `${ROUTING}\n\nThe person's Touchque facts (now):\n${snapshot}` : `${ROUTING}\n\n(The person's facts could not be read just now: call touchque_whoami.)`;
+}
+
+function buildServer(auth, config, instructions = ROUTING) {
   const ws = createWorkspace(config, auth);
   const server = new Server(
     { name: "touchque", title: "Touchque", version: core.PACKAGE_VERSION, websiteUrl: config.docsUrl },
-    { capabilities: { tools: {}, prompts: {}, resources: {} }, instructions: INSTRUCTIONS },
+    { capabilities: { tools: {}, prompts: {}, resources: {} }, instructions },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const base = (await core.handlers.listTools()).tools.filter((t) => CORE_TOOLS.has(t.name));
-    return { tools: [...tools.TOOLS, ...base] };
-  });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    if (CORE_TOOLS.has(name)) return core.handlers.callTool(request);
     const result = await tools.callTool(name, args, ws, core.handlers, config);
     if (result) return result;
     return { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] };
   });
-  server.setRequestHandler(ListPromptsRequestSchema, async () => {
-    const base = (await core.handlers.listPrompts()).prompts;
-    return { prompts: [...prompts.listPrompts(), ...base] };
-  });
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: prompts.listPrompts() }));
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     const mine = prompts.getPrompt(request.params.name, request.params.arguments);
-    return mine || core.handlers.getPrompt(request);
+    if (!mine) throw new Error(`Unknown prompt: ${request.params.name}`);
+    return mine;
   });
   server.setRequestHandler(ListResourcesRequestSchema, core.handlers.listResources);
   server.setRequestHandler(ReadResourceRequestSchema, core.handlers.readResource);
@@ -117,7 +125,10 @@ function createApp(config = loadConfig()) {
     } catch (err) {
       return unauthorized(res, err);
     }
-    const server = buildServer(auth, config);
+    const isInit = (m) => m && m.method === "initialize";
+    const initializing = Array.isArray(req.body) ? req.body.some(isInit) : isInit(req.body);
+    const instructions = initializing ? await instructionsFor(createWorkspace(config, auth)) : ROUTING;
+    const server = buildServer(auth, config, instructions);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close().catch(() => {});
@@ -151,8 +162,10 @@ function createApp(config = loadConfig()) {
 if (require.main === module) {
   const config = loadConfig();
   createApp(config).listen(config.port, config.host, () => {
+    // Build the docs index now, so the first question does not wait for it.
+    require("./docsSearch").search(config.docsUrl, "touchque").catch((err) => console.error("docs index:", err.message));
     console.error(`Touchque MCP ${core.PACKAGE_VERSION} on http://${config.host}:${config.port}${new URL(config.resource).pathname} (resource ${config.resource}, issuer ${config.issuer})`);
   });
 }
 
-module.exports = { createApp, buildServer };
+module.exports = { createApp, buildServer, instructionsFor, ROUTING };

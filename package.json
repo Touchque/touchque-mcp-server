@@ -1,7 +1,7 @@
 {
   "name": "@touchque/mcp-server",
-  "version": "4.0.0",
-  "description": "Touchque MCP server — add https://api.touchque.com/mcp to Claude, Cursor or any MCP client, sign in once with Touchque, and let the AI integrate Touchque with your live workspace: your organization, role and enabled features, the SDK docs and types, integration code and live checks.",
+  "version": "4.1.0",
+  "description": "Touchque MCP server \u2014 add https://api.touchque.com/mcp to Claude, Cursor or any MCP client, sign in once with Touchque, and let the AI integrate Touchque with your live workspace: your organization, role and enabled features, the SDK docs and types, integration code and live checks.",
   "main": "remote/server.js",
   "scripts": {
     "start": "node remote/server.js",

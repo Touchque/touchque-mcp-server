@@ -91,18 +91,17 @@ The older instructions are still there too: `integrate_touchque`,
 
 | Tool | |
 |---|---|
-| `touchque_whoami` | You, the active organization, your role, the features that are ON |
-| `touchque_list_organizations`, `touchque_use_organization` | Your organizations; switch the connection to another one |
-| `touchque_features` | Every feature with ON or OFF for the organization |
-| `touchque_workspace_setup` | API keys (no secrets), webhook, action types, passkey domain, Touchque Login tenant and apps, what is missing |
-| `touchque_pick_sdk` | The SDK for the project, whether it is published, install command, env vars |
-| `touchque_generate_integration` | The SDK's own README sections for a feature and language, with this workspace's real values. Refuses a feature that is OFF |
-| `touchque_check_integration` | Checks code against the live workspace (feature, key, action types, redirect URIs, webhook) and the static checklist |
-| `touchque_search_docs` | Searches https://support.touchque.com |
+| `touchque_whoami` | You, the organization, your role, every feature ON/OFF, API key, webhook, action types, Touchque Login. Also in the server instructions at connect, so most account questions need no call |
+| `touchque_use_organization` | Switch the connection to another of your organizations |
+| `touchque_workspace_setup` | The setup in detail (no secrets), or one `section` |
+| `touchque_search_docs` | Searches support.touchque.com in English and Turkish and the SDK READMEs: three short sections; `page` reads one page |
+| `touchque_pick_sdk` | The SDK for the project: published or not, version, install, import line, requirements |
+| `touchque_generate_integration` | The SDK's own README sections for a feature and language, this workspace's values, what is missing first. Refuses a feature that is OFF |
+| `touchque_check_integration` | Checks code against the live workspace and the SDK's static checklist |
 | `touchque_explain_case` | Explains a "Why?" case code |
-| `touchque_send_test_approval`, `touchque_test_approval_status` | A test approval on your own phone, only when you ask |
-| `touchque_create_api_key`, `touchque_add_redirect_uri`, `touchque_change_status` | Changes, with your yes and your phone (needs `touchque:write`) |
-| `get_touchque_docs`, `get_sdk_types`, `validate_integration`, `touchque_help` | The SDK READMEs and types bundled from the SDK sources, and the static checklist |
+| `touchque_define_action_type`, `touchque_create_api_key`, `touchque_add_redirect_uri`, `touchque_send_test_approval`, `touchque_wait` | Changes and the test approval, with your yes and your phone (`touchque:write`) |
+| `get_touchque_docs`, `get_sdk_types` | An SDK README's contents or one section; the type names or one declaration |
+| `touchque_help` | What Touchque is and which tool answers what |
 
 Every call runs as you, in your active organization, and sees only what the
 dashboard shows you.

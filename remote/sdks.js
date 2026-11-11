@@ -11,14 +11,14 @@ const BUNDLED = path.join(__dirname, "..", "bundled");
 // What is on the registries, 2026-11-10 evening: 4.2.0 (the bundled READMEs and types are that release,
 // sdks b95c77f). sdks efd8f8c renames every TouchQue name to Touchque as 5.0.0, not published yet.
 const SDKS = {
-  node: { label: "Node.js", package: "@touchque/node", published: "4.2.0", install: "npm install @touchque/node", registry: "npm", manifests: ["package.json"] },
+  node: { label: "Node.js", package: "@touchque/node", import: "const { TouchQue, requireTouchQue } = require('@touchque/node');", published: "4.2.0", install: "npm install @touchque/node", registry: "npm", manifests: ["package.json"] },
   php: {
-    label: "PHP", package: "touchque-authenticator/php-sdk", published: "4.2.0",
+    label: "PHP", package: "touchque-authenticator/php-sdk", import: "use TouchQue\\TouchQue;", published: "4.2.0",
     install: "composer config repositories.touchque vcs https://github.com/Touchque/touchque-php && composer require touchque-authenticator/php-sdk:^4.0",
     registry: "GitHub release tag (not on Packagist yet)", manifests: ["composer.json"],
   },
-  go: { label: "Go", package: "github.com/Touchque/touchque-go/v4", published: "4.2.0", install: "go get github.com/Touchque/touchque-go/v4", registry: "Go modules", manifests: ["go.mod"] },
-  python: { label: "Python", package: "touchque-authenticator", published: "4.2.0", install: "pip install touchque-authenticator", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
+  go: { label: "Go", package: "github.com/Touchque/touchque-go/v4", import: "import \"github.com/Touchque/touchque-go/v4/touchque\"", published: "4.2.0", install: "go get github.com/Touchque/touchque-go/v4", registry: "Go modules", manifests: ["go.mod"] },
+  python: { label: "Python", package: "touchque-authenticator", import: "from touchque import TouchQue  # Flask: from touchque.contrib.flask import require_touchque", published: "4.2.0", install: "pip install touchque-authenticator", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
   dotnet: { label: ".NET", package: "TouchQue.AspNetCore", published: null, install: null, registry: "not listed on NuGet yet", manifests: [".csproj", ".sln", "Program.cs"] },
   ruby: { label: "Ruby", package: "touchque", published: null, install: null, registry: "not on RubyGems yet", manifests: ["Gemfile"] },
   java: { label: "Java", package: "com.touchque:touchque-spring-boot-starter", published: null, install: null, registry: "not on Maven Central yet", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"] },
@@ -40,7 +40,7 @@ function languageFromFiles(files = []) {
 
 // Which README sections a feature needs (headings matched case-insensitively).
 const FEATURE_SECTIONS = {
-  phone_approval: [/^install/, /^setup/, /^quick start/, /^relay/, /^the three primitives/, /^waiting in one call/, /^errors/, /^"why\?"|^errors, case codes/],
+  phone_approval: [/^install/, /^setup/, /^quick start/, /^framework adapters/, /^relay/],
   passkeys: [/^install/, /^setup/, /^passkeys/, /^relay/],
   touchque_login: [/^install/, /^setup/, /^touchque login/],
   webhooks: [/^setup/, /^webhooks/],

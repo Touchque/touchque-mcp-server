@@ -1,5 +1,29 @@
 # Changelog
 
+## 4.1.0 (2026-11-11)
+
+Shorter, smarter answers (owner: "it thinks a lot even for the smallest question"). Measured on 12 real
+questions before the change: 49 tool calls, 365k characters of tool output, 6.8/10.
+
+- The server instructions carry the member's facts at initialize (organization, role, features ON/OFF,
+  API key, webhook, action types, passkey domain, Touchque Login tenant and apps, other organizations)
+  and say which tool answers what; "start every task with whoami" is gone. Account questions need no
+  tool call.
+- Docs search rebuilt: every docs page in English and Turkish from the prerendered site, cut into
+  sections, page chrome dropped (tabs, Copy, line numbers, pager), BM25 with title and heading weight,
+  Turkish questions searched in Turkish and through an English dictionary, SDK README sections indexed,
+  three short sections (2.6k at most) with a handle to read a page or section; prices get a straight
+  answer.
+- get_touchque_docs gives a table of contents or one section; get_sdk_types a list of names or one
+  declaration (they returned 30k and 100k).
+- Fewer tools: whoami covers features and organizations (detail: true for what each includes);
+  workspace_setup takes a section; touchque_wait replaces change_status and test_approval_status;
+  validate_integration runs inside check_integration. New: touchque_define_action_type.
+- generate_integration says what is missing first (the action type, with each SDK's define call; an
+  API key; a redirect URI), keeps the quick start and framework adapters, drops errors and case codes.
+- pick_sdk gives published true/false, version, import line and requirements. touchque_help is short and
+  current. The checklist accepts new TouchQue() reading the environment.
+
 ## 4.0.0 (2026-11-10)
 
 One Touchque MCP, at a URL: `https://api.touchque.com/mcp`.

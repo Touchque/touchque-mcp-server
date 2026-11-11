@@ -338,3 +338,9 @@ test("4.0 tool names still answer, and an odd action type name does not crash", 
   const ask = await callTool("touchque_define_action_type", { type: "-" }, ws, {}, loadConfig({}));
   assert.match(ask.content[0].text, /confirmToken|type:/);
 });
+
+test("a link to another docs page keeps its target", () => {
+  const t = docsSearch.htmlToText('<main><h1>FAQ</h1><p>Bkz. <a href="/offline-sign">Çevrimdışı onay</a>. Or <a href="https://example.com/x">elsewhere</a>.</p></main>');
+  assert.match(t, /Çevrimdışı onay \(\/offline-sign\)/);
+  assert.doesNotMatch(t, /example\.com/);
+});

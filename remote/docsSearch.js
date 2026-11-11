@@ -72,7 +72,10 @@ function htmlToText(html) {
       const cls = (/class="([^"]*)"/.exec(attrs) || [])[1] || "";
       const noise = NOISE.test(cls) || tag === "button" || tag === "svg" || tag === "nav";
       const heading = HEADING.test(cls) || /^h[1-4]$/.test(tag);
-      stack.push({ tag, noise, heading });
+      // A link to another docs page keeps its target: "see Offline sign (/offline-sign)".
+      const href = tag === "a" ? (/href="([^"#][^"]*)"/.exec(attrs) || [])[1] : null;
+      const target = href && (href.startsWith("/") || /^https:\/\/support\.touchque\.com\//.test(href)) ? href.replace(/^https:\/\/support\.touchque\.com/, "").replace(/\?lang=(en|tr)$/, "") : null;
+      stack.push({ tag, noise, heading, target });
       if (noise) skip += 1;
       if (skip) continue;
       if (heading) out += "\n\n## ";
@@ -94,6 +97,7 @@ function htmlToText(html) {
     if (skip) continue;
     const el = popped[0];
     if (el.heading) out += "\n";
+    else if (el.target && !pre && !el.heading) out += ` (${el.target}) `;
     else if (tag === "pre") { out += "\n```\n"; pre = Math.max(0, pre - 1); }
     else if (tag === "td" || tag === "th") out += " |";
     else if (BLOCK.has(tag)) out += "\n";

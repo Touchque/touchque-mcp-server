@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.3 (2026-11-11)
+
+- Docs search keeps the target of a link to another docs page ("see Offline sign (/offline-sign)"), so a
+  cross-reference can be followed with touchque_search_docs page. The docs gained /action-types and
+  /safe-guard and the corrected 401/403 split the same day; the index picks them up on its next build.
+
 ## 4.1.2 (2026-11-11)
 
 Third measured round (23 questions, 5 in English): the same 12 questions 6.8 (4.0) → 8.0 (4.1.0) → 8.3,

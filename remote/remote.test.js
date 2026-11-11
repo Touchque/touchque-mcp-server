@@ -231,7 +231,7 @@ test("the snapshot answers account questions in a few lines, and says what an ow
   assert.match(t, /Mobile SDK \(not available on Touchque yet\)/);
   assert.match(t, /As the owner they can turn one on/);
   assert.match(t, /no redirect URI/);
-  assert.match(t, /Globex \(member\)/);
+  assert.match(t, /"Globex" \(member\)/);
   assert.ok(t.length < 1800, `snapshot is ${t.length} characters`);
   const many = tools41.snapshotText(ctx, { ...setup, actionTypes: Array.from({ length: 53 }, (_, i) => ({ type: `TYPE_${i}` })) }, { canWrite: true });
   assert.match(many, /Action types: 53, e\.g\. TYPE_0/);
@@ -252,7 +252,7 @@ test("instructions: routing plus the member's facts at initialize; the routing a
   const t = await instructionsFor(slow, { timeoutMs: 50 });
   assert.match(t, /could not be read just now/);
   const ok = { claims: { gid: "g2" }, canWrite: true, context: async () => ({ user: { email: "a@b.c" }, organization: { id: "o", name: "Acme", role: "admin" }, organizations: [{ id: "o", name: "Acme", role: "admin" }], features: [], platformOff: [] }), tryDash: async () => ({ data: null, error: { code: "x", message: "x" } }) };
-  assert.match(await instructionsFor(ok), /Organization: Acme\. Role: admin/);
+  assert.match(await instructionsFor(ok), /Organization: "Acme"\. Role: admin/);
 });
 
 test("the Node checklist accepts new TouchQue() reading the environment itself", async () => {
@@ -299,7 +299,7 @@ test("a change needs the confirmToken of an earlier call without confirm, for th
 
 test("English questions are not taken for Turkish", () => {
   for (const q of ["device risk scoring", "make sure webhook signatures verify", "what is the plan for passkeys", "internet down on the phone", "turn on offline sign"]) assert.equal(docsSearch.looksTurkish(q), false, q);
-  for (const q of ["Webhook nasıl kurulur?", "API anahtarım var mı", "passkey domainim ne"]) assert.equal(docsSearch.looksTurkish(q), true, q);
+  for (const q of ["Webhook nasıl kurulur?", "API anahtarım var mı", "passkey domainim nedir"]) assert.equal(docsSearch.looksTurkish(q), true, q);
 });
 
 test("action types: one looked up, an off one flagged, no guessing the action", async () => {
@@ -333,7 +333,7 @@ test("the snapshot says when there is no other organization, and marks an off ac
 test("4.0 tool names still answer, and an odd action type name does not crash", async () => {
   const ws = fakeWorkspace();
   const r = await callTool("touchque_features", {}, ws, {}, loadConfig({}));
-  assert.match(r.content[0].text, /Organization: Acme/);
+  assert.match(r.content[0].text, /Organization: "Acme"/);
   assert.equal(tools41.DEFINE_ACTION.node("_X", require("./tools").DEFINE_ACTION ? "_X" : "_X").includes("_X"), true);
   const ask = await callTool("touchque_define_action_type", { type: "-" }, ws, {}, loadConfig({}));
   assert.match(ask.content[0].text, /confirmToken|type:/);

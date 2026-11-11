@@ -25,7 +25,10 @@ let cache = { index: null, until: 0, base: null, loading: null };
 
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", rarr: "→", larr: "←", mdash: "—", ndash: "–", hellip: "…", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", copy: "©" };
 const decode = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
-  if (e[0] === "#") return String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10));
+  if (e[0] === "#") {
+    const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isInteger(n) && n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : m;
+  }
   return ENTITIES[e.toLowerCase()] ?? m;
 });
 
@@ -185,7 +188,8 @@ function synonymsOf(x) {
 }
 
 // Turkish: its letters, or its question and function words (folded).
-const TR_WORDS = new Set(["nasil", "nedir", "neden", "nerede", "hangi", "mi", "mu", "ne", "var", "yok", "icin", "ile", "bende", "benim", "miyim", "misin", "degil", "kac", "kadar", "bu", "bir", "ve", "ama", "gibi", "olur", "olarak", "yap", "yapar", "nasil", "lazim", "gerek"]);
+// Words only Turkish uses (no "var", "ne", "bu", "mu": English and code use them too).
+const TR_WORDS = new Set(["nasil", "nedir", "neden", "nerede", "hangi", "mi", "miyim", "misin", "musun", "yok", "icin", "bende", "benim", "degil", "kac", "kadar", "bir", "ve", "ama", "gibi", "olur", "olarak", "yapar", "lazim", "gerek", "acik", "kapali", "nasil"]);
 const looksTurkish = (q) => /[ğüşöçıİĞÜŞÖÇ]/.test(q) || String(q).split(/[^A-Za-z]+/).filter(Boolean).map(fold).filter((w) => TR_WORDS.has(w)).length >= 1;
 
 // ── Index ──────────────────────────────────────────────────────────────────
@@ -300,6 +304,8 @@ async function buildIndex(docsUrl) {
 async function indexOf(docsUrl) {
   const fresh = cache.index && cache.base === docsUrl;
   if (fresh && cache.until > Date.now()) return cache.index;
+  // A cold build that just failed is not retried for two minutes (the site is down): fail fast.
+  if (!fresh && cache.failedAt && Date.now() - cache.failedAt < 120000) throw new Error("the docs site could not be read just now");
   if (!cache.loading || cache.base !== docsUrl) {
     cache.base = docsUrl;
     const previous = fresh ? cache.index : null;
@@ -311,6 +317,7 @@ async function indexOf(docsUrl) {
       })
       .catch((err) => {
         cache.loading = null;
+        cache.failedAt = Date.now();
         if (previous) {
           cache.until = Date.now() + 5 * 60 * 1000;
           return previous;
@@ -408,13 +415,14 @@ async function search(docsUrl, query, { limit = 3, lang = null, sdk = null } = {
   const index = await indexOf(docsUrl);
   const terms = queryTerms(query);
   const turkish = lang ? lang === "tr" : looksTurkish(query);
-  const wantSdk = sdk || ["dotnet", "python", "php", "go", "ruby", "java", "node"].find((l) => new RegExp(`\\b${l === "dotnet" ? "(\\.net|dotnet|c#)" : l === "node" ? "(node|express|nextjs|next\\.js|javascript|typescript)" : l}\\b`, "i").test(query)) || "node";
+  const SDK_WORDS = { dotnet: /(?<![\w.])(\.net|dotnet|c#|asp\.net|aspnetcore)(?![\w])/i, python: /\b(python|flask|django|fastapi|pip)\b/i, php: /\b(php|laravel|composer)\b/i, go: /\b(golang|go\.mod|go module|net\/http|gin|echo)\b/i, ruby: /\b(ruby|rails|sinatra|gem)\b/i, java: /\b(java|spring|maven|gradle)\b/i, node: /\b(node|express|nextjs|next\.js|javascript|typescript|nestjs|fastify)\b/i };
+  const wantSdk = sdk || Object.keys(SDK_WORDS).find((l) => SDK_WORDS[l].test(query)) || "node";
   const frontend = FRONTEND_Q.test(fold(query));
   const f = fold(query);
   const notes = [];
   if (PRICE.test(f)) notes.push("Touchque does not publish prices or plans in its docs. For a quote, ask Touchque through the support chat on https://support.touchque.com or your Touchque contact; an organization's features are in its dashboard (Organization → Features).");
   if (/\b(401|403)\b/.test(f) || /(signature|imza|hmac)/.test(f) && /(invalid|gecersiz|fail|hata|reject|red|tutmuyor)/.test(f)) {
-    notes.push("Touchque API status codes (docs /error-codes, /authentication): 401 = the API key is missing or wrong (x-api-key; check the key is active in the dashboard → Developers → API keys). 403 = the HMAC signature does not match, or the IP is blocked. Signature = HMAC-SHA256(API_SECRET, METHOD:PATH:timestamp:nonce:sha256(body)); for GET the body is an empty string; x-timestamp is Unix milliseconds within ±5 minutes; x-nonce is 16+ characters and new for every request. The SDKs sign for you.");
+    notes.push("Touchque API (its auth middleware; the body's error names the case). 401 = something missing or stale: no x-api-key, SIGNATURE_REQUIRED, TIMESTAMP_REQUIRED, TIMESTAMP_EXPIRED (x-timestamp is Unix milliseconds, within ±5 minutes), NONCE_REQUIRED, NONCE_INVALID (x-nonce 16+ characters, new for every request). 403 = SIGNATURE_INVALID (the HMAC does not match), an unknown, revoked or expired key, or an IP that is not allowed. Signature = HMAC-SHA256(API_SECRET, METHOD:PATH:timestamp:nonce:sha256(body)), PATH with its query string, an empty body for GET; the SDKs sign for you. A 401 with 'Invalid signature' text often comes from the app's own webhook handler (the docs' example answers that), not from the Touchque API.");
   }
   const note = notes.length ? notes.join("\n") : null;
   // A section's score is the better of its English and its Turkish version; it is shown in the question's language.

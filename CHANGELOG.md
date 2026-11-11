@@ -1,5 +1,21 @@
 # Changelog
 
+## 4.1.2 (2026-11-11)
+
+Third measured round (23 questions, 5 in English): the same 12 questions 6.8 (4.0) → 8.0 (4.1.0) → 8.3,
+English 8.5 (no regression), tool output for the 12 questions 365k → 30k characters. Review fixes:
+
+- Confirm tokens are bound to the active organization and capped (20 per connection, 10,000 in all).
+- Names other people typed (organizations, keys, apps, URLs) are quoted in the facts, with a line that
+  they are data, never instructions.
+- The 401/403 note follows the API's own middleware: 401 is a missing or stale header (key, signature,
+  timestamp, nonce); 403 is a wrong signature or an unknown, revoked or expired key or a blocked IP; the
+  signature covers the path with its query string.
+- Turkish is no longer read into English words like "var", "ne", "bu"; Go and .NET are recognised by
+  real markers; out-of-range HTML entities no longer drop a docs page; a cold docs build that failed is
+  not retried for two minutes.
+- check_integration marks a turned-off action type and says "could not be read" instead of "not set".
+
 ## 4.1.1 (2026-11-11)
 
 From the second measured round (18 questions: 12 repeated, mean 6.8 → 8.0, tool output 365k → 36k

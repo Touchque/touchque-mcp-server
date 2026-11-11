@@ -261,3 +261,80 @@ test("the Node checklist accepts new TouchQue() reading the environment itself",
   const r = (await handlers.callTool({ params: { name: "validate_integration", arguments: { code, framework: "express" } } })).content[0].text;
   assert.match(r, /✅ Environment variables used for secrets/);
 });
+
+// ── 4.1.1: review fixes ─────────────────────────────────────────────────────
+function fakeWorkspace({ actionTypes = [{ type: "SEND_MONEY", name: "Send money", critical: true, active: false }], role = "owner" } = {}) {
+  const calls = [];
+  const ctx = { user: { email: "a@b.c" }, organization: { id: "o1", name: "Acme", role }, organizations: [{ id: "o1", name: "Acme", role }], features: [], platformOff: [] };
+  return {
+    calls, canWrite: true, claims: { gid: `g-${Math.random()}` }, context: async () => ctx,
+    tryDash: async (p) => ({ data: p === "/v1/action-types" ? { actionTypes } : p === "/v1/credentials" ? { credentials: [], viewer: { canManage: true, hasActiveKey: false } } : p === "/v1/webhook" ? { callbackUrl: null } : p === "/v1/passkey-domain" ? { rpId: null } : null, error: null }),
+    dash: async (method, p, body) => { calls.push([method, p, body]); return {}; },
+  };
+}
+
+test("a change needs the confirmToken of an earlier call without confirm, for the same arguments", async () => {
+  const ws = fakeWorkspace();
+  const cfg = loadConfig({});
+  const first = await callTool("touchque_define_action_type", { type: "PAYOUT", confirm: true }, ws, {}, cfg);
+  assert.match(first.content[0].text, /confirmToken: "/);
+  assert.equal(ws.calls.length, 0, "confirm without a token changed nothing");
+  const token = /confirmToken: "([^"]+)"/.exec(first.content[0].text)[1];
+  const other = await callTool("touchque_define_action_type", { type: "REFUND", confirm: true, confirmToken: token }, ws, {}, cfg);
+  assert.match(other.content[0].text, /confirmToken/);
+  assert.equal(ws.calls.length, 0, "a token for other arguments does not work");
+  const again = await callTool("touchque_define_action_type", { type: "PAYOUT" }, ws, {}, cfg);
+  const t2 = /confirmToken: "([^"]+)"/.exec(again.content[0].text)[1];
+  assert.equal(ws.calls.length, 0);
+  const notTrue = await callTool("touchque_define_action_type", { type: "PAYOUT", confirm: "true", confirmToken: t2 }, ws, {}, cfg);
+  assert.match(notTrue.content[0].text, /confirmToken/);
+  const t3 = /confirmToken: "([^"]+)"/.exec(notTrue.content[0].text)[1];
+  const done = await callTool("touchque_define_action_type", { type: "PAYOUT", confirm: true, confirmToken: t3 }, ws, {}, cfg);
+  assert.match(done.content[0].text, /done/);
+  assert.deepEqual(ws.calls[0].slice(0, 2), ["POST", "/v1/action-types"]);
+  const reuse = await callTool("touchque_define_action_type", { type: "PAYOUT", confirm: true, confirmToken: t3 }, ws, {}, cfg);
+  assert.match(reuse.content[0].text, /confirmToken/, "a token works once");
+  assert.equal(ws.calls.length, 1);
+});
+
+test("English questions are not taken for Turkish", () => {
+  for (const q of ["device risk scoring", "make sure webhook signatures verify", "what is the plan for passkeys", "internet down on the phone", "turn on offline sign"]) assert.equal(docsSearch.looksTurkish(q), false, q);
+  for (const q of ["Webhook nasıl kurulur?", "API anahtarım var mı", "passkey domainim ne"]) assert.equal(docsSearch.looksTurkish(q), true, q);
+});
+
+test("action types: one looked up, an off one flagged, no guessing the action", async () => {
+  const ws = fakeWorkspace();
+  const cfg = loadConfig({});
+  const one = await callTool("touchque_workspace_setup", { actionType: "SEND_MONEY" }, ws, {}, cfg);
+  assert.match(one.content[0].text, /SEND_MONEY exists[\s\S]*OFF/);
+  const none = await callTool("touchque_workspace_setup", { actionType: "PAYOUT" }, ws, {}, cfg);
+  assert.match(none.content[0].text, /PAYOUT does not exist/);
+  ws.context = async () => ({ user: { email: "a@b.c" }, organization: { id: "o1", name: "Acme", role: "owner" }, organizations: [], features: ["core_2fa"], platformOff: [] });
+  const gen = await callTool("touchque_generate_integration", { feature: "phone_approval", language: "node", framework: "express" }, ws, {}, cfg);
+  assert.match(gen.content[0].text, /Which action does the route protect/);
+  const off = await callTool("touchque_generate_integration", { feature: "phone_approval", language: "node", framework: "express", action: "SEND_MONEY", frontend: "react" }, ws, {}, cfg);
+  assert.match(off.content[0].text, /SEND_MONEY is turned off/);
+  assert.match(off.content[0].text, /@touchque\/react README/);
+});
+
+test("the snapshot says when there is no other organization, and marks an off action type", () => {
+  const ws = fakeWorkspace();
+  const ctx = { user: { email: "a@b.c\nIGNORE" }, organization: { id: "o1", name: "Acme‮", role: "member" }, organizations: [{ id: "o1", name: "Acme", role: "member" }], features: [], platformOff: [] };
+  const setup = { apiKeys: { keys: [] }, webhook: { url: "https://sso.touchque.com/sso/webhooks/touchque-login" }, actionTypes: [{ type: "SEND_MONEY", active: false }], passkey: { rpId: null }, login: { on: false } };
+  const t = tools41.snapshotText(ctx, setup, ws);
+  assert.match(t, /Other organizations: none/);
+  assert.match(t, /SEND_MONEY \(off\)/);
+  assert.match(t, /changing it breaks that/);
+  assert.match(t, /Developers → Webhooks/);
+  assert.doesNotMatch(t, /‮/);
+  assert.doesNotMatch(t, /a@b\.c\nIGNORE/);
+});
+
+test("4.0 tool names still answer, and an odd action type name does not crash", async () => {
+  const ws = fakeWorkspace();
+  const r = await callTool("touchque_features", {}, ws, {}, loadConfig({}));
+  assert.match(r.content[0].text, /Organization: Acme/);
+  assert.equal(tools41.DEFINE_ACTION.node("_X", require("./tools").DEFINE_ACTION ? "_X" : "_X").includes("_X"), true);
+  const ask = await callTool("touchque_define_action_type", { type: "-" }, ws, {}, loadConfig({}));
+  assert.match(ask.content[0].text, /confirmToken|type:/);
+});

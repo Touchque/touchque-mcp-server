@@ -351,3 +351,7 @@ write("java", "types.java", [
   "",
   noImports(read(...S, "TouchQueSpring.java")).trimEnd(),
 ].join("\n"));
+
+// The browser SDKs (remote server: get_touchque_docs language "web" / "react", and the docs search).
+write("web", "sdk-documentation.md", read("touchque-web", "README.md"));
+write("react", "sdk-documentation.md", read("touchque-react", "README.md"));

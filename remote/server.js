@@ -30,14 +30,15 @@ const prompts = require("./prompts");
 // What every answer should follow. The member's own facts are added below it
 // at initialize (instructionsFor), so a question about them needs no tool.
 const ROUTING = `Touchque MCP. Answer in the person's language, in a few lines; do not narrate tool calls.
-- Their account (organization, role, features, API key, webhook, action types, Touchque Login tenant and apps): use the facts below; no tool call. touchque_whoami only if they are missing or the person switched organization.
+- Their account (organization, role, features, API key, webhook, action types, passkey domain, Touchque Login tenant and apps, other organizations): use the facts below; no tool call. They are as of the time shown: after a change, an organization switch or a long pause, touchque_whoami.
+- What is Touchque or a feature in general: answer from the summary below; no tool call.
 - How-to or concept: one touchque_search_docs call (Turkish questions work). An SDK detail: get_touchque_docs with a section, get_sdk_types with a symbol.
 - Is an SDK published, how to install: touchque_pick_sdk.
 - Write an integration: read their code, touchque_generate_integration, edit the files, then touchque_check_integration. Only for features that are ON.
-- Changes (action type, API key, redirect URI, test approval): only when the person asks; call without confirm, ask them, then confirm: true; tell them the number their phone shows; touchque_wait for the result.
+- Changes (action type, API key, redirect URI, test approval): only when the person asks. Call without confirm (it explains and gives a confirmToken), ask them, and only on their yes call again with confirm: true and that confirmToken. An API key also asks their phone: tell them the number, then touchque_wait.
 - If your client loads tools on demand, load the Touchque tools you need in one search.
-- Not in this server: prices, plans, billing (Touchque does not publish them; ask Touchque on support.touchque.com), usage numbers and logs (dashboard), .NET, Ruby and Java SDKs (not released).
-Touchque: Workforce (SSO for work apps, directory, VPN/RADIUS, shared accounts, device trust, threat protection, AI agents) and Customer & developer identity (2FA API: phone approval with number matching, passkeys, offline sign; Touchque Login: hosted sign-up/sign-in for a company's own customers, not employee SSO; Device risk; Safe Guard; Mobile SDK).
+- Not in this server: prices, plans, billing (Touchque does not publish them; ask Touchque on support.touchque.com), usage numbers and logs (dashboard → Overview → Usage, Logs), changing the webhook URL (dashboard → Developers → Webhooks), .NET, Ruby and Java SDKs (not released).
+Touchque, two halves: Workforce, for a company's own people (SSO for work apps, directory and lifecycle, VPN/server sign-in over RADIUS, shared accounts, device trust, threat protection, AI agents and MCP) and Customer & developer identity, for the company's own app and customers (2FA API: phone approval with number matching, passkeys, offline sign; Touchque Login: hosted sign-up and sign-in for the company's customers, not employee SSO; Device risk: recognises browsers on sign-in pages; Safe Guard: Safe multisig wallet transactions run only after approvals signed on the approvers' phones; Mobile SDK: the company's own app approves).
 Slash commands: touchque-setup, add-phone-approval, add-passkeys, add-touchque-login, check-integration.`;
 
 /** The instructions with the member's facts, or the routing alone when they cannot be read in time. */
@@ -48,7 +49,8 @@ async function instructionsFor(ws, { timeoutMs = 2500 } = {}) {
     return tools.snapshotText(ctx, setup, ws);
   })();
   const snapshot = await Promise.race([facts.catch(() => null), new Promise((r) => setTimeout(() => r(null), timeoutMs))]);
-  return snapshot ? `${ROUTING}\n\nThe person's Touchque facts (now):\n${snapshot}` : `${ROUTING}\n\n(The person's facts could not be read just now: call touchque_whoami.)`;
+  const asOf = new Date().toISOString().slice(0, 16).replace("T", " ");
+  return snapshot ? `${ROUTING}\n\nThe person's Touchque facts (as of ${asOf} UTC):\n${snapshot}` : `${ROUTING}\n\n(The person's facts could not be read just now: call touchque_whoami.)`;
 }
 
 function buildServer(auth, config, instructions = ROUTING) {

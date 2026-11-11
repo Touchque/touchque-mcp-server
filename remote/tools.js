@@ -42,7 +42,13 @@ const DEFINE_ACTION = {
   ruby: (t, n) => `client.action_types.define("${t}", name: "${n}", critical: true)`,
   java: (t, n) => `tq.actionTypes().define("${t}", "${n}", true);`,
 };
-const exampleName = (t) => t.toLowerCase().split(/[_.:-]+/).map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ");
+const exampleName = (t) => {
+  const words = String(t).toLowerCase().split(/[_.:-]+/).filter(Boolean);
+  return words.length ? words.map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ") : String(t);
+};
+// Member-controlled text (organization, key, app names; URLs) goes into the model's context: one line, short.
+const clean = (v, n = 80) => String(v ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, " ").trim().slice(0, n);
+const DOC_LANGS = [...Object.keys(SDKS), "web", "react"];
 
 const text = (t) => ({ content: [{ type: "text", text: t }] });
 const fail = (t) => ({ isError: true, content: [{ type: "text", text: t }] });
@@ -50,6 +56,7 @@ const json = (v) => JSON.stringify(v, null, 1);
 const cap = (s, n) => (s.length > n ? `${s.slice(0, n)}\n… (cut at ${n} characters; ask for a narrower section)` : s);
 
 const STR = { type: "string" };
+const CONFIRM = { confirm: { type: "boolean" }, confirmToken: { type: "string", description: "From the call without confirm" } };
 const TOOLS = [
   {
     name: "touchque_whoami",
@@ -65,14 +72,14 @@ const TOOLS = [
   },
   {
     name: "touchque_workspace_setup",
-    description: "The organization's setup in detail, never a secret: API keys, webhook, action types, passkey domain, Touchque Login tenant and apps with redirect URIs. section narrows it.",
-    inputSchema: { type: "object", properties: { section: { type: "string", enum: ["apiKeys", "webhook", "actionTypes", "passkey", "login"] } } },
+    description: "The organization's setup in detail, never a secret: API keys, webhook, action types, passkey domain, Touchque Login tenant and apps with redirect URIs. section narrows it; actionType looks up one action type.",
+    inputSchema: { type: "object", properties: { section: { type: "string", enum: ["apiKeys", "webhook", "actionTypes", "passkey", "login"] }, actionType: { type: "string", description: "e.g. SEND_MONEY: does it exist, is it on" } } },
     annotations: { readOnlyHint: true, title: "Workspace setup" },
   },
   {
     name: "touchque_search_docs",
     description: "Search the Touchque docs (support.touchque.com, English and Turkish) and SDK READMEs; returns the best 3 sections, short, each with a handle to read more. page (and section) returns one docs page, e.g. page: \"/callback\".",
-    inputSchema: { type: "object", properties: { query: STR, page: STR, section: STR, lang: { type: "string", enum: ["en", "tr"] }, language: { type: "string", enum: LANGS, description: "SDK README to search (default: node, or the one the query names)" } } },
+    inputSchema: { type: "object", properties: { query: STR, page: STR, section: STR, lang: { type: "string", enum: ["en", "tr"] }, language: { type: "string", enum: DOC_LANGS, description: "SDK README to search (default: node, or the one the query names)" } } },
     annotations: { readOnlyHint: true, openWorldHint: true, title: "Search Touchque docs" },
   },
   {
@@ -86,7 +93,7 @@ const TOOLS = [
     description: "What to write for one feature in one language: the SDK's own README sections (the real API), this workspace's values, what is missing first (e.g. the action type), and the steps. Refuses a feature that is OFF. Then edit the files yourself and run touchque_check_integration.",
     inputSchema: {
       type: "object",
-      properties: { feature: { type: "string", enum: INTEGRATION_NAMES }, language: { type: "string", enum: LANGS }, framework: STR, action: { type: "string", description: "The action type to protect, e.g. SEND_MONEY" } },
+      properties: { feature: { type: "string", enum: INTEGRATION_NAMES }, language: { type: "string", enum: LANGS, description: "The backend language" }, framework: { type: "string", description: "Backend framework (express, nextjs, laravel, flask…); add the frontend as frontend" }, frontend: { type: "string", enum: ["react", "vue", "web", "none"], description: "The app's frontend, for the browser part" }, action: { type: "string", description: "The action type to protect, e.g. SEND_MONEY" } },
       required: ["feature", "language"],
     },
     annotations: { readOnlyHint: true, title: "Generate integration" },
@@ -105,26 +112,26 @@ const TOOLS = [
   },
   {
     name: "touchque_define_action_type",
-    description: "Creates an action type (e.g. SEND_MONEY) in the organization: owners and admins, needs touchque:write. Without confirm it only says what will happen; ask the person, then confirm: true.",
-    inputSchema: { type: "object", properties: { type: { type: "string", description: "Letters, digits and _ . : - (max 64), e.g. SEND_MONEY" }, name: { type: "string", description: "Shown on the phone, e.g. Send money" }, critical: { type: "boolean" }, confirm: { type: "boolean" } }, required: ["type"] },
+    description: "Creates an action type (e.g. SEND_MONEY) in the organization: owners and admins, needs touchque:write. Without confirm it only says what will happen and gives a confirmToken; ask the person, then call with confirm: true and that confirmToken.",
+    inputSchema: { type: "object", properties: { type: { type: "string", description: "Letters, digits and _ . : - (max 64), e.g. SEND_MONEY" }, name: { type: "string", description: "Shown on the phone, e.g. Send money" }, critical: { type: "boolean" }, ...CONFIRM }, required: ["type"] },
     annotations: { readOnlyHint: false, destructiveHint: false, title: "Define action type" },
   },
   {
     name: "touchque_create_api_key",
-    description: "Creates an API key (owners and admins; refused when the person already has an active key: rotate that in the dashboard). Needs touchque:write. Without confirm it only asks; then confirm: true. The phone approves it (tell the person the number), then touchque_wait. The secret shows once: write it to the server's .env, never into the chat.",
-    inputSchema: { type: "object", properties: { name: STR, expiresInDays: { type: "integer", minimum: 1, maximum: 730 }, confirm: { type: "boolean" } }, required: ["name"] },
+    description: "Creates an API key (owners and admins; refused when the person already has an active key: rotate that in the dashboard). Needs touchque:write. Without confirm it only asks and gives a confirmToken; then confirm: true with it. The phone approves it (tell the person the number), then touchque_wait. The secret shows once: write it to the server's .env, never into the chat.",
+    inputSchema: { type: "object", properties: { name: STR, expiresInDays: { type: "integer", minimum: 1, maximum: 730 }, ...CONFIRM }, required: ["name"] },
     annotations: { readOnlyHint: false, destructiveHint: false, title: "Create API key" },
   },
   {
     name: "touchque_add_redirect_uri",
-    description: "Adds a redirect URI to a Touchque Login app (needs touchque:write and Touchque Login ON). Without confirm it only asks; then confirm: true; the phone may approve it, then touchque_wait.",
-    inputSchema: { type: "object", properties: { clientId: STR, redirectUri: STR, confirm: { type: "boolean" } }, required: ["clientId", "redirectUri"] },
+    description: "Adds a redirect URI to a Touchque Login app (needs touchque:write and Touchque Login ON). Without confirm it only asks and gives a confirmToken; then confirm: true with it.",
+    inputSchema: { type: "object", properties: { clientId: STR, redirectUri: STR, ...CONFIRM }, required: ["clientId", "redirectUri"] },
     annotations: { readOnlyHint: false, destructiveHint: false, title: "Add redirect URI" },
   },
   {
     name: "touchque_send_test_approval",
-    description: "Sends a test approval to the person's OWN Touchque app, only when they ask. Without confirm it only asks; then confirm: true; tell them the number, then touchque_wait.",
-    inputSchema: { type: "object", properties: { confirm: { type: "boolean" } } },
+    description: "Sends a test approval to the person's OWN Touchque app, only when they ask. Without confirm it only asks and gives a confirmToken; then confirm: true with it; tell them the number, then touchque_wait.",
+    inputSchema: { type: "object", properties: { ...CONFIRM } },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, title: "Test approval on my phone" },
   },
   {
@@ -135,13 +142,13 @@ const TOOLS = [
   },
   {
     name: "get_touchque_docs",
-    description: "An SDK's README: without section, its table of contents; with section (part of a heading, e.g. \"Webhooks\", \"Quick start\"), those sections.",
-    inputSchema: { type: "object", properties: { language: { type: "string", enum: LANGS }, section: STR }, required: ["language"] },
+    description: "An SDK's README (server SDKs, and web / react for the browser): without section, its table of contents; with section (part of a heading, e.g. \"Webhooks\", \"Quick start\"), those sections.",
+    inputSchema: { type: "object", properties: { language: { type: "string", enum: DOC_LANGS }, section: STR }, required: ["language"] },
     annotations: { readOnlyHint: true, title: "SDK README" },
   },
   {
     name: "get_sdk_types",
-    description: "An SDK's type reference: without symbol, the list of names; with symbol (e.g. RequireOptions, ActionTypes), that declaration.",
+    description: "A server SDK's type reference: without symbol, the list of names; with symbol (e.g. LoginRequestOptions, TouchQueConfig), that declaration.",
     inputSchema: { type: "object", properties: { language: { type: "string", enum: LANGS }, symbol: STR }, required: ["language"] },
     annotations: { readOnlyHint: true, title: "SDK types" },
   },
@@ -194,13 +201,13 @@ async function workspaceSetup(ws, ctx, { fresh = false } = {}) {
     login: !isOn(ctx, "ciam") ? { on: false } : tenant.data ? {
       on: true, slug: tenant.data.slug, issuer: tenant.data.issuer, discovery: `${tenant.data.issuer}/.well-known/openid-configuration`, enabled: tenant.data.enabled, signUpEnabled: tenant.data.signUpEnabled,
       apps: apps && apps.data ? (apps.data.clients || []).map((c) => ({ clientId: c.clientId, name: c.name, appType: c.appType, tokenAuthMethod: c.tokenAuthMethod, redirectUris: c.redirectUris || [], logoutUris: c.logoutUris || [], webOrigins: c.webOrigins || [], enabled: c.enabled })) : { error: apps && apps.error },
-    } : { on: true, tenant: null, note: tenant.error?.code === "not_enabled" ? "Touchque Login is ON but not set up: dashboard → Touchque Login" : tenant.error },
+    } : tenant.error?.code === "not_enabled" ? { on: true, tenant: null, note: "Touchque Login is ON but not set up: dashboard → Touchque Login → Setup" } : { on: true, unreadable: true, note: `could not be read (${tenant.error?.code || "error"})` },
   };
   const missing = [];
   if (out.apiKeys.keys && !out.apiKeys.keys.some((k) => k.status === "ACTIVE")) missing.push("No active API key (touchque_create_api_key, owners and admins).");
   if (out.webhook && !out.webhook.error && !out.webhook.url) missing.push("No webhook URL (optional; set it in the dashboard → Developers → Webhooks).");
   if (Array.isArray(out.actionTypes) && !out.actionTypes.length) missing.push("No action types yet (touchque_define_action_type, the dashboard, or the SDK at startup).");
-  if (out.login.on && !out.login.slug) missing.push("Touchque Login is ON but has no tenant yet.");
+  if (out.login.on && !out.login.slug && !out.login.unreadable) missing.push("Touchque Login is ON but has no tenant yet.");
   if (Array.isArray(out.login.apps)) {
     if (!out.login.apps.length) missing.push("Touchque Login has no app yet (dashboard → Touchque Login → Applications).");
     for (const a of out.login.apps) if (!a.redirectUris.length) missing.push(`Touchque Login app "${a.name}" has no redirect URI (touchque_add_redirect_uri).`);
@@ -214,9 +221,10 @@ async function workspaceSetup(ws, ctx, { fresh = false } = {}) {
 /** The member's facts in a few lines: the server instructions and whoami. */
 function snapshotText(ctx, setup, ws, { detail = false } = {}) {
   const rows = featureRows(ctx);
-  const owner = ctx.organization.role === "owner";
+  const role = ctx.organization.role;
+  const owner = role === "owner";
   const lines = [
-    `Signed in: ${ctx.user.name ? `${ctx.user.name} <${ctx.user.email}>` : ctx.user.email}. Organization: ${ctx.organization.name}${ctx.organization.slug ? ` (${ctx.organization.slug})` : ""}. Role: ${ctx.organization.role}${owner ? " (may turn features on, manage keys and members)" : ctx.organization.role === "admin" ? " (may manage keys and action types)" : ""}.`,
+    `Signed in: ${clean(ctx.user.name) ? `${clean(ctx.user.name)} <${clean(ctx.user.email)}>` : clean(ctx.user.email)}. Organization: ${clean(ctx.organization.name)}${ctx.organization.slug ? ` (${clean(ctx.organization.slug)})` : ""}. Role: ${role}${owner ? " (may turn features on, manage keys, action types and members)" : role === "admin" ? " (may manage keys and action types)" : " (may read; owners and admins change things)"}.`,
   ];
   if (detail) {
     for (const f of rows) lines.push(`- ${f.name}: ${f.on ? "ON" : f.unavailable ? "OFF (not available on Touchque yet)" : "OFF"}. ${f.description}${f.includes.length ? ` Includes: ${f.includes.join("; ")}.` : ""}`);
@@ -224,34 +232,44 @@ function snapshotText(ctx, setup, ws, { detail = false } = {}) {
     lines.push(`Features ON: ${rows.filter((f) => f.on).map((f) => f.name).join(", ") || "none"}.`);
     const off = rows.filter((f) => !f.on);
     if (off.length) lines.push(`Features OFF: ${off.map((f) => `${f.name}${f.unavailable ? " (not available on Touchque yet)" : ""}`).join(", ")}.${off.some((f) => !f.unavailable) ? ` ${owner ? "As the owner they can" : "An owner can"} turn one on in the dashboard → Organization → Features.` : ""}`);
+    else lines.push("Features OFF: none.");
   }
   if (setup) {
-    const keys = setup.apiKeys.keys || [];
-    const active = keys.filter((k) => k.status === "ACTIVE");
     if (setup.apiKeys.error) lines.push("API keys: could not be read.");
-    else lines.push(`API keys: ${active.length ? active.map((k) => `${k.keyId} "${k.name}"${k.mine ? " (theirs)" : ` (by ${k.createdBy})`}, last used ${k.lastUsed}`).join("; ") : "no active key"}. The secret is shown only when a key is made; a lost one is rotated in the dashboard (Developers → API keys); one active key per person per organization.`);
-    if (!setup.webhook.error) lines.push(`Webhook: ${setup.webhook.url || "not set"}.`);
-    if (Array.isArray(setup.actionTypes)) {
-      const names = setup.actionTypes.map((t) => t.type);
-      lines.push(`Action types: ${!names.length ? "none yet (requireTouchQue('X') fails until X is defined)" : names.length <= 12 ? names.join(", ") : `${names.length}, e.g. ${names.slice(0, 10).join(", ")} (all: touchque_workspace_setup section actionTypes)`}.`);
+    else {
+      const active = (setup.apiKeys.keys || []).filter((k) => k.status === "ACTIVE");
+      lines.push(`API keys (active): ${active.length ? active.map((k) => `${clean(k.keyId, 40)} "${clean(k.name, 60)}"${k.mine ? " (theirs)" : ` (by ${clean(k.createdBy)})`}, last used ${k.lastUsed}`).join("; ") : "none"}. Secrets show only when a key is made; a lost one is rotated in the dashboard → Developers → API keys; a person may create one new key per organization while one of theirs is active (rotate instead).`);
     }
-    if (setup.passkey && !setup.passkey.error) lines.push(`Passkey domain: ${setup.passkey.rpId || "not set (passkeys use Touchque's domain)"}.`);
+    if (setup.webhook.error) lines.push("Webhook: could not be read.");
+    else {
+      const url = setup.webhook.url ? clean(setup.webhook.url, 200) : null;
+      lines.push(`Webhook: ${url || "not set"}${url && /\/sso\/webhooks\/touchque-login$/.test(url) ? " (Touchque SSO's own Touchque Login hook: changing it breaks that)" : ""}. Set or change it in the dashboard → Developers → Webhooks (the phone approves); this server cannot.`);
+    }
+    if (Array.isArray(setup.actionTypes)) {
+      const names = setup.actionTypes.map((t) => `${clean(t.type, 64)}${t.active === false ? " (off)" : ""}`);
+      lines.push(`Action types: ${!names.length ? "none yet (a guard like requireTouchQue('X') fails until X is defined: touchque_define_action_type, or dashboard → Developers → Action types)" : names.length <= 12 ? names.join(", ") : `${names.length}, e.g. ${names.slice(0, 10).join(", ")} (one: touchque_workspace_setup actionType)`}.`);
+    } else lines.push("Action types: could not be read.");
+    if (setup.passkey && !setup.passkey.error) lines.push(`Passkey domain: ${setup.passkey.rpId ? clean(setup.passkey.rpId) : "not set (passkeys use Touchque's domain)"}; set in the dashboard → Developers → App user policy.`);
     if (setup.login.on && setup.login.slug) {
-      const apps = Array.isArray(setup.login.apps) ? setup.login.apps : [];
-      lines.push(`Touchque Login: tenant ${setup.login.slug}, issuer ${setup.login.issuer}; apps: ${apps.length ? apps.map((a) => `"${a.name}" ${a.clientId} (${a.appType}, ${a.redirectUris.length ? `redirect ${a.redirectUris.join(" ")}` : "no redirect URI"})`).join("; ") : "none"}.`);
-    } else if (setup.login.on) lines.push("Touchque Login: ON, not set up yet.");
+      const apps = Array.isArray(setup.login.apps) ? setup.login.apps : null;
+      lines.push(`Touchque Login: tenant ${clean(setup.login.slug)}, issuer ${clean(setup.login.issuer, 120)}; apps: ${!apps ? "could not be read" : apps.length ? apps.slice(0, 8).map((a) => `"${clean(a.name, 60)}" ${clean(a.clientId, 64)} (${a.appType}, ${a.redirectUris.length ? `redirect ${a.redirectUris.slice(0, 3).map((u) => clean(u, 150)).join(" ")}` : "no redirect URI"})`).join("; ") : "none"}.`);
+    } else if (setup.login.on && setup.login.unreadable) lines.push("Touchque Login: ON; its tenant could not be read just now (touchque_workspace_setup section login).");
+    else if (setup.login.on) lines.push("Touchque Login: ON, not set up yet (dashboard → Touchque Login → Setup).");
   }
   const others = ctx.organizations.filter((o) => o.id !== ctx.organization.id);
-  if (others.length) lines.push(`Other organizations: ${others.map((o) => `${o.name} (${o.role})`).join(", ")} (touchque_use_organization switches).`);
-  lines.push(`This connection may ${ws.canWrite ? "read, and make changes the person confirms (each also asks their phone)" : "only read (reconnect and allow touchque:write to make changes)"}.`);
+  lines.push(`Other organizations: ${others.length ? `${others.map((o) => `${clean(o.name)} (${o.role})`).join(", ")} (touchque_use_organization switches)` : "none (this is their only organization)"}.`);
+  lines.push("Not readable here: usage numbers and logs (dashboard → Overview → Usage, Logs).");
+  lines.push(`This connection may ${ws.canWrite ? "read, and make the changes the person confirms (API keys also ask their phone)" : "only read (reconnect and allow touchque:write to make changes)"}.`);
   return lines.join("\n");
 }
 
 // ── SDK docs and types, a part at a time ───────────────────────────────────
 
+const packageOf = (language) => (SDKS[language] ? SDKS[language].package : language === "web" ? "@touchque/web" : language === "react" ? "@touchque/react" : language);
+
 function readmeToc(language) {
   const secs = readmeSections(readme(language));
-  return `${SDKS[language].package} README, sections (ask with section: "<part of a heading>"):\n${secs.map((s) => `- ${s.title} (${s.text.length} ch)`).join("\n")}`;
+  return `${packageOf(language)} README, sections (ask with section: "<part of a heading>"):\n${secs.map((s) => `- ${s.title} (${s.text.length} ch)`).join("\n")}`;
 }
 
 function readmeSection(language, section) {
@@ -323,7 +341,7 @@ function typeBlock(language, symbol) {
 
 const HELP = `Touchque is an identity platform with two halves.
 - Workforce (a company's own people): Workforce SSO for work apps, Directory & lifecycle, VPN & servers (RADIUS), Shared accounts, Device trust, Threat protection, AI agents & MCP.
-- Customer & developer identity (a company's own app and customers): the 2FA API (phone approval with number matching, passkeys, offline sign; SDKs for Node, PHP, Go, Python), Touchque Login (hosted sign-up and sign-in for the company's customers, OpenID Connect; not employee SSO), Device risk, Safe Guard, Mobile SDK.
+- Customer & developer identity (a company's own app and customers): the 2FA API (phone approval with number matching, passkeys, offline sign; SDKs for Node, PHP, Go, Python), Touchque Login (hosted sign-up and sign-in for the company's customers, OpenID Connect; not employee SSO), Device risk (recognises browsers on sign-in pages), Safe Guard (Safe multisig wallet transactions run only after approvals signed on the approvers' phones), Mobile SDK (the company's own app approves).
 Which tool:
 - The person's own facts (organization, role, features, keys, webhook, action types, Login tenant and apps): the server instructions already say; touchque_whoami if they are missing.
 - How-to or concept: touchque_search_docs (one call; Turkish questions work).
@@ -331,9 +349,28 @@ Which tool:
 - Writing an integration: touchque_generate_integration, then touchque_check_integration.
 - A refused sign-in with a case code: touchque_explain_case.
 - Changes (action type, API key, redirect URI, test approval): only when asked; without confirm first, then confirm: true.
-Not in this server: prices, plans and billing (ask Touchque on support.touchque.com), usage numbers and request logs (dashboard), the .NET, Ruby and Java SDKs (not released yet).`;
+Not in this server: prices, plans and billing (ask Touchque on support.touchque.com), usage numbers and logs (dashboard → Overview → Usage, Logs), changing the webhook (dashboard → Developers → Webhooks), the .NET, Ruby and Java SDKs (not released yet).`;
 
 const changes = new Map(); // id → { gid, promise, label, startedAt }
+
+// A change goes ahead only with confirm: true AND the token the call without confirm gave for exactly
+// these arguments, on this connection, within ten minutes: the person was asked first.
+const confirmTokens = new Map(); // token → { gid, key, until }
+const confirmKey = (name, args) => JSON.stringify([name, ...Object.keys(args).filter((k) => !["confirm", "confirmToken"].includes(k)).sort().map((k) => [k, args[k]])]);
+function issueConfirm(ws, name, args) {
+  const token = crypto.randomBytes(9).toString("base64url");
+  for (const [k, v] of confirmTokens) if (v.until < Date.now()) confirmTokens.delete(k);
+  confirmTokens.set(token, { gid: ws.claims.gid, key: confirmKey(name, args), until: Date.now() + 600000 });
+  return token;
+}
+function confirmed(ws, name, args) {
+  if (args.confirm !== true) return false;
+  const hit = confirmTokens.get(String(args.confirmToken || ""));
+  if (!hit || hit.gid !== ws.claims.gid || hit.key !== confirmKey(name, args) || hit.until < Date.now()) return false;
+  confirmTokens.delete(String(args.confirmToken));
+  return true;
+}
+const askFirst = (ws, name, args, what) => text(`${what}\nAsk the person. If they say yes, call ${name} again with the same arguments plus confirm: true and confirmToken: "${issueConfirm(ws, name, args)}".`);
 
 function describeError(err) {
   if (err instanceof WorkspaceError) {
@@ -461,7 +498,17 @@ function changeResult(label, outcome, ws) {
 
 const waitingText = (label, r) => `${label}: waiting for the phone.${r.pending?.challengeCode ? ` Tell the person: "On your phone, pick ${r.pending.challengeCode}."` : " Tell the person to approve it in the Touchque app."} Then call touchque_wait with id ${r.id} (the phone has about 30 seconds).`;
 
+// 4.0 names, for clients that still hold the old tool list until they reconnect.
+const ALIASES = {
+  touchque_features: ["touchque_whoami", () => ({ detail: true })],
+  touchque_list_organizations: ["touchque_whoami", () => ({})],
+  touchque_change_status: ["touchque_wait", (a) => ({ id: a.changeId })],
+  touchque_test_approval_status: ["touchque_wait", (a) => ({ id: a.requestId })],
+  validate_integration: ["touchque_check_integration", (a) => a],
+};
+
 async function call(name, args, ws, core, config) {
+  if (ALIASES[name]) return call(ALIASES[name][0], ALIASES[name][1](args), ws, core, config);
   if (name === "touchque_help") return text(HELP);
 
   if (name === "touchque_whoami") {
@@ -483,6 +530,11 @@ async function call(name, args, ws, core, config) {
   if (name === "touchque_workspace_setup") {
     const ctx = await ws.context();
     const setup = await workspaceSetup(ws, ctx, { fresh: true });
+    if (args.actionType) {
+      if (!Array.isArray(setup.actionTypes)) return fail("Action types could not be read.");
+      const t = setup.actionTypes.find((x) => x.type === String(args.actionType).trim());
+      return text(t ? `${t.type} exists in ${clean(ctx.organization.name)}: "${clean(t.name)}", ${t.critical ? "critical" : "not critical"}, ${t.active === false ? "OFF (the guard refuses it until it is turned on: dashboard → Developers → Action types)" : "on"}.` : `${String(args.actionType).trim()} does not exist in ${clean(ctx.organization.name)} (${setup.actionTypes.length} action types). Define it: touchque_define_action_type, the dashboard → Developers → Action types, or the SDK at startup.`);
+    }
     const part = args.section && setup[args.section];
     return text(json(part ? { organization: ctx.organization.name, [args.section]: part, missing: setup.missing } : setup));
   }
@@ -490,7 +542,7 @@ async function call(name, args, ws, core, config) {
   if (name === "touchque_search_docs") {
     if (args.page) {
       const p = await docs.page(config.docsUrl, args.page, { section: args.section || null, lang: args.lang || "en" });
-      if (!p) return fail(`No docs page "${args.page}". Search with query instead.`);
+      if (!p) return fail(`No docs page "${args.page}". Pages:\n${(await docs.pageList(config.docsUrl)).join("\n")}`);
       return text(`# ${p.title}\n${p.url}\n\n${p.text}`);
     }
     const q = String(args.query || "").trim();
@@ -511,6 +563,7 @@ async function call(name, args, ws, core, config) {
       return {
         language: lang, label: s.label, package: s.package, published: Boolean(s.published), version: s.published || null, registry: s.registry,
         install: s.install || "Not released yet: use a published SDK if the stack allows, or the REST API (support.touchque.com/authentication).",
+        ...(s.extras && { extras: s.extras }),
         ...(s.import && { import: s.import }),
         ...(req && { requirements: req.replace(/^## [^\n]*\n/, "").trim().slice(0, 400) }),
         env: "TQ_API_KEY=tq_… and TQ_API_SECRET=… in the server's .env",
@@ -536,8 +589,11 @@ async function call(name, args, ws, core, config) {
     if (!sdk.published) before.push(`The ${sdk.label} SDK is not released yet: say so; prefer a released SDK (Node, PHP, Go, Python) if the stack allows.`);
     if (!(setup.apiKeys.keys || []).some((k) => k.status === "ACTIVE")) before.push("No active API key: touchque_create_api_key (owners and admins), then TQ_API_KEY / TQ_API_SECRET in .env.");
     if (["phone_approval", "passkeys", "offline", "silent_sign_ins"].includes(args.feature)) {
-      const action = args.action || (types[0] || "SEND_MONEY");
-      if (!types.includes(action)) before.push(`Action type ${action} does not exist yet; the guard refuses an unknown one. Create it once: touchque_define_action_type (with the person's yes), the dashboard (Developers → Action types), or at startup:\n  ${DEFINE_ACTION[args.language](action, exampleName(action))}`);
+      const action = args.action ? String(args.action).trim() : null;
+      const known = Array.isArray(setup.actionTypes) ? setup.actionTypes.find((t) => t.type === action) : null;
+      if (!action) before.push("Which action does the route protect? Pick an action type name (e.g. SEND_MONEY for a transfer) and call again with action, or define a new one.");
+      else if (!known) before.push(`Action type ${action} does not exist in this organization; the guard refuses an unknown one. Create it once: touchque_define_action_type (with the person's yes), the dashboard → Developers → Action types, or at startup:\n  ${DEFINE_ACTION[args.language](action, exampleName(action))}`);
+      else if (known.active === false) before.push(`Action type ${action} is turned off; the guard refuses it until it is on (dashboard → Developers → Action types).`);
     }
     if (args.feature === "touchque_login" && Array.isArray(setup.login.apps)) {
       const empty = setup.login.apps.filter((a) => !a.redirectUris.length);
@@ -546,15 +602,20 @@ async function call(name, args, ws, core, config) {
     const facts = {
       install: sdk.install || null,
       apiKey: (setup.apiKeys.keys || []).find((k) => k.status === "ACTIVE" && k.mine)?.keyId || null,
-      actionTypes: types,
+      actionTypes: types.length <= 12 ? types : `${types.length} (look one up: touchque_workspace_setup actionType)`,
       ...(args.feature === "webhooks" && { webhook: setup.webhook.url || "not set" }),
       ...(args.feature === "touchque_login" && { login: setup.login }),
       ...(args.feature === "passkeys" && { passkeyDomain: setup.passkey.rpId || "not set" }),
     };
-    const frontend = ["phone_approval", "passkeys", "offline"].includes(args.feature)
-      ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) or @touchque/react does this loop; see the README's relay section."
-      : "";
-    const sectionsText = cap(sectionsFor(args.language, args.feature), 9000);
+    const ui = ["phone_approval", "passkeys", "offline"].includes(args.feature);
+    const fe = args.frontend || (/react|next/i.test(String(args.framework || "")) ? "react" : null);
+    let frontend = ui ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web)." : "";
+    if (ui && fe && fe !== "none") {
+      const lang = fe === "react" ? "react" : "web";
+      const part = readmeSections(readme(lang)).filter((x) => /^(install|quick start|drop-in)/i.test(x.title)).map((x) => x.text).join("\n\n");
+      if (part) frontend += `\n\n## From the ${packageOf(lang)} README\n${cap(part, 3500)}`;
+    }
+    const sectionsText = cap(sectionsFor(args.language, args.feature), fe && fe !== "none" ? 6500 : 9000);
     return text(`# ${spec.label}, ${sdk.label}${args.framework ? ` (${args.framework})` : ""}\n${before.length ? `\nBefore this works:\n${before.map((b) => `- ${b}`).join("\n")}\n` : ""}\nWorkspace: ${json(facts)}\n\nSteps: read the person's code (sign-in, the action, the framework); install; keys in .env; guard the route as the README shows (keep the current sign-in working); then touchque_check_integration.${frontend}\nDocs: ${config.docsUrl}${spec.docs}\n\n## From the ${sdk.package} README\n${sectionsText}`);
   }
 
@@ -568,7 +629,7 @@ async function call(name, args, ws, core, config) {
   }
 
   if (name === "get_touchque_docs") {
-    if (!SDKS[args.language]) return fail(`Unknown language: ${args.language}`);
+    if (!DOC_LANGS.includes(args.language)) return fail(`Unknown language: ${args.language}. One of ${DOC_LANGS.join(", ")}`);
     if (!args.section) return text(readmeToc(args.language));
     const t = readmeSection(args.language, String(args.section));
     return t ? text(t) : fail(`No section matching "${args.section}". ${readmeToc(args.language)}`);
@@ -598,7 +659,7 @@ async function call(name, args, ws, core, config) {
 
   if (name === "touchque_send_test_approval") {
     const ctx = await ws.context();
-    if (!args.confirm) return text(`This sends a test approval to the Touchque app of ${ctx.user.email}. Ask the person; if yes, call again with confirm: true.`);
+    if (!confirmed(ws, name, args)) return askFirst(ws, name, args, `This sends a test approval to the Touchque app of ${clean(ctx.user.email)}.`);
     const r = await ws.postSso("/sso/mcp/touchque/test-approval", {});
     return text(`Sent to ${r.email}'s Touchque app.${r.challengeCode ? ` Tell the person: "On your phone, pick ${r.challengeCode}."` : ""} Then touchque_wait with id ${r.requestId}.`);
   }
@@ -612,7 +673,7 @@ async function call(name, args, ws, core, config) {
       const nm = String(args.name || exampleName(type)).slice(0, 255);
       const critical = args.critical !== false;
       const label = `Define action type ${type} ("${nm}"${critical ? ", critical" : ""}) in ${ctx.organization.name}`;
-      if (!args.confirm) return text(`${label}. Owners and admins only. Ask the person; if yes, call again with confirm: true.`);
+      if (!confirmed(ws, name, args)) return askFirst(ws, name, args, `${label}. Owners and admins only. The guard then accepts ${type}.`);
       try {
         await ws.dash("POST", "/v1/action-types", { type, name: nm, critical });
         setups.clear();
@@ -626,7 +687,7 @@ async function call(name, args, ws, core, config) {
       const label = `Create API key "${String(args.name).slice(0, 60)}" in ${ctx.organization.name}`;
       const setup = await workspaceSetup(ws, ctx).catch(() => null);
       if (setup && setup.apiKeys.youHaveAnActiveKey) return fail(`The person already has an active key here (${(setup.apiKeys.keys || []).filter((k) => k.mine && k.status === "ACTIVE").map((k) => k.keyId).join(", ")}). One active key per person: rotate or revoke it in the dashboard (Developers → API keys).`);
-      if (!args.confirm) return text(`${label}. Owners and admins only; Touchque asks ${ctx.user.email}'s phone, as the dashboard does. Ask the person; if yes, call again with confirm: true.`);
+      if (!confirmed(ws, name, args)) return askFirst(ws, name, args, `${label}. Owners and admins only; Touchque asks ${clean(ctx.user.email)}'s phone, as the dashboard does.`);
       const r = await startChange(ws, label, "POST", "/v1/credentials", { name: String(args.name).slice(0, 60), ...(args.expiresInDays && { expiresInDays: args.expiresInDays }) });
       return r.done ? changeResult(label, r.done, ws) : text(waitingText(label, r));
     }
@@ -641,7 +702,7 @@ async function call(name, args, ws, core, config) {
     const current = app.redirectUris || [];
     if (current.includes(uri.toString()) || current.includes(String(args.redirectUri))) return text(`${args.redirectUri} is already a redirect URI of ${app.name}.`);
     const label = `Add redirect URI ${args.redirectUri} to the Touchque Login app ${app.name} in ${ctx.organization.name}`;
-    if (!args.confirm) return text(`${label}. Ask the person; if yes, call again with confirm: true.`);
+    if (!confirmed(ws, name, args)) return askFirst(ws, name, args, `${label}. After it, Touchque Login may send this app's sign-ins (with their codes) to that address: only add an address the person controls.`);
     const r = await startChange(ws, label, "PATCH", `/v1/identity/clients/${encodeURIComponent(args.clientId)}`, { redirectUris: [...current, String(args.redirectUri)] });
     return r.done ? changeResult(label, r.done, ws) : text(waitingText(label, r));
   }

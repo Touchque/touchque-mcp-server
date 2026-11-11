@@ -18,7 +18,7 @@ const SDKS = {
     registry: "GitHub release tag (not on Packagist yet)", manifests: ["composer.json"],
   },
   go: { label: "Go", package: "github.com/Touchque/touchque-go/v4", import: "import \"github.com/Touchque/touchque-go/v4/touchque\"", published: "4.2.0", install: "go get github.com/Touchque/touchque-go/v4", registry: "Go modules", manifests: ["go.mod"] },
-  python: { label: "Python", package: "touchque-authenticator", import: "from touchque import TouchQue  # Flask: from touchque.contrib.flask import require_touchque", published: "4.2.0", install: "pip install touchque-authenticator", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
+  python: { label: "Python", package: "touchque-authenticator", import: "from touchque import TouchQue  # Flask: from touchque.contrib.flask import require_touchque", published: "4.2.0", install: "pip install touchque-authenticator", extras: "pip install \"touchque-authenticator[flask]\" (or [django], [fastapi]) for a framework adapter", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
   dotnet: { label: ".NET", package: "TouchQue.AspNetCore", published: null, install: null, registry: "not listed on NuGet yet", manifests: [".csproj", ".sln", "Program.cs"] },
   ruby: { label: "Ruby", package: "touchque", published: null, install: null, registry: "not on RubyGems yet", manifests: ["Gemfile"] },
   java: { label: "Java", package: "com.touchque:touchque-spring-boot-starter", published: null, install: null, registry: "not on Maven Central yet", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"] },

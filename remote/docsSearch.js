@@ -32,6 +32,9 @@ const decode = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
 // Elements whose whole subtree is page chrome, by class.
 const NOISE = /\b(docs-code-header|docs-code-tabs|docs-code-actions|docs-copy-btn|docs-code-lines|docs-try-btn|docs-toc-nav|docs-toc-item|docs-breadcrumb|docs-pager|docs-main-right|docs-right-card|alert-icon)\b/;
 const HEADING = /\b(docs-hero-title|docs-guide-h2|docs-section-title|docs-params-title|docs-faq-q)\b/;
+const BLOCK = new Set(["p", "div", "table", "ul", "ol", "section", "details", "summary", "dl", "dt", "dd", "h5", "h6", "figcaption", "blockquote", "label"]);
+// Inline elements that end a word when they close (a link or code next to text).
+const INLINE_GAP = new Set(["a", "code", "strong", "em", "b", "i", "small"]);
 const VOID = new Set(["br", "hr", "img", "input", "meta", "link", "path", "circle", "rect", "line", "polyline", "source"]);
 
 /** The page's <main> as text with "\n## " before every heading; code kept in fences. */
@@ -74,7 +77,7 @@ function htmlToText(html) {
       else if (tag === "tr") out += "\n| ";
       else if (tag === "td" || tag === "th") out += " ";
       else if (tag === "li") out += "\n- ";
-      else if (["p", "div", "table", "ul", "ol", "section"].includes(tag)) out += "\n";
+      else if (BLOCK.has(tag)) out += "\n";
       continue;
     }
     // closing: pop to the matching tag
@@ -90,7 +93,8 @@ function htmlToText(html) {
     if (el.heading) out += "\n";
     else if (tag === "pre") { out += "\n```\n"; pre = Math.max(0, pre - 1); }
     else if (tag === "td" || tag === "th") out += " |";
-    else if (["p", "div", "table", "ul", "ol", "section"].includes(tag)) out += "\n";
+    else if (BLOCK.has(tag)) out += "\n";
+    else if (!pre && INLINE_GAP.has(tag)) out += " ";
   }
   return out
     .split("\n")
@@ -148,6 +152,8 @@ const SYNONYMS = {
   zaman: "timeout expired", sure: "timeout expires", dolmus: "expired", asim: "timeout",
   guvenlik: "security", risk: "risk", cihaz: "device", tarayici: "browser",
   ajan: "agent", yapay: "ai", zeka: "ai",
+  ekran: "screen dialog ui", goster: "show display", pencere: "dialog", bilesen: "component", komponent: "component", arayuz: "ui frontend", sayfa: "page",
+  react: "react", tarayici: "browser frontend",
 };
 
 /** A crude stem: long words are cut to 6 letters, so tanımlarım ~ tanımlayın, signatures ~ signature. */
@@ -166,16 +172,21 @@ function tokens(text) {
   return out;
 }
 
+// Dictionary words that are also English words: never matched as a prefix.
+const SHARED = new Set(["risk", "plan", "internet", "qr", "rol", "tur", "sure", "kod", "geri", "yeni", "kur", "tanim"]);
+
 /** The English words for a Turkish word: exact, then the longest dictionary word it starts with. */
 function synonymsOf(x) {
   if (SYNONYMS[x.full]) return SYNONYMS[x.full];
   if (SYNONYMS[x.t]) return SYNONYMS[x.t];
   let best = null;
-  for (const k of Object.keys(SYNONYMS)) if (k.length >= 3 && x.full.startsWith(k) && (!best || k.length > best.length)) best = k;
+  for (const k of Object.keys(SYNONYMS)) if (k.length >= 3 && !SHARED.has(k) && x.full.startsWith(k) && (!best || k.length > best.length)) best = k;
   return best ? SYNONYMS[best] : null;
 }
 
-const looksTurkish = (q) => /[ğüşöçıİĞÜŞÖÇ]/.test(q) || tokens(q).some((x) => synonymsOf(x)) || /\b(nasil|nedir|neden|hangi|mi|mu|ne|var mi)\b/.test(fold(q));
+// Turkish: its letters, or its question and function words (folded).
+const TR_WORDS = new Set(["nasil", "nedir", "neden", "nerede", "hangi", "mi", "mu", "ne", "var", "yok", "icin", "ile", "bende", "benim", "miyim", "misin", "degil", "kac", "kadar", "bu", "bir", "ve", "ama", "gibi", "olur", "olarak", "yap", "yapar", "nasil", "lazim", "gerek"]);
+const looksTurkish = (q) => /[ğüşöçıİĞÜŞÖÇ]/.test(q) || String(q).split(/[^A-Za-z]+/).filter(Boolean).map(fold).filter((w) => TR_WORDS.has(w)).length >= 1;
 
 // ── Index ──────────────────────────────────────────────────────────────────
 
@@ -254,7 +265,8 @@ function parseLlms(text) {
   return pages;
 }
 
-const SDK_LANGS = { node: "Node.js", python: "Python", php: "PHP", go: "Go", dotnet: ".NET", ruby: "Ruby", java: "Java" };
+const SDK_LANGS = { node: "Node.js", python: "Python", php: "PHP", go: "Go", dotnet: ".NET", ruby: "Ruby", java: "Java", web: "@touchque/web", react: "@touchque/react" };
+const FRONTEND_Q = /\b(react|vue|svelte|angular|frontend|front-end|browser|tarayici|on yuz|onyuz|web sdk|@touchque\/web|jsx|component|komponent|bilesen)\b/;
 
 async function buildIndex(docsUrl) {
   let pages;
@@ -280,26 +292,44 @@ async function buildIndex(docsUrl) {
   return finish(index);
 }
 
+/**
+ * The index: built once, then refreshed in the background every hour while
+ * the last good one keeps answering. A failed or much smaller rebuild is
+ * dropped and tried again in five minutes.
+ */
 async function indexOf(docsUrl) {
-  if (cache.index && cache.until > Date.now() && cache.base === docsUrl) return cache.index;
-  if (cache.loading && cache.base === docsUrl) return cache.loading;
-  cache.base = docsUrl;
-  cache.loading = buildIndex(docsUrl)
-    .then((index) => {
-      cache = { index, until: Date.now() + TTL_MS, base: docsUrl, loading: null };
-      return index;
-    })
-    .catch((err) => {
-      cache.loading = null;
-      if (cache.index) return cache.index; // keep serving the last good index
-      throw err;
-    });
-  return cache.loading;
+  const fresh = cache.index && cache.base === docsUrl;
+  if (fresh && cache.until > Date.now()) return cache.index;
+  if (!cache.loading || cache.base !== docsUrl) {
+    cache.base = docsUrl;
+    const previous = fresh ? cache.index : null;
+    cache.loading = buildIndex(docsUrl)
+      .then((index) => {
+        if (previous && index.pages.length < previous.pages.length * 0.9) throw new Error(`docs index shrank from ${previous.pages.length} to ${index.pages.length} pages`);
+        cache = { index, until: Date.now() + TTL_MS, base: docsUrl, loading: null };
+        return index;
+      })
+      .catch((err) => {
+        cache.loading = null;
+        if (previous) {
+          cache.until = Date.now() + 5 * 60 * 1000;
+          return previous;
+        }
+        throw err;
+      });
+  }
+  return fresh ? cache.index : cache.loading;
+}
+
+/** Every docs page: "/slug  Title" (for an unknown page). */
+async function pageList(docsUrl) {
+  const index = await indexOf(docsUrl);
+  return [...new Map(index.pages.filter((p) => p.lang === "en").map((p) => [p.slug, `${p.slug}  ${p.title.replace(/\s*·\s*Touchque Docs\s*$/, "")}`])).values()];
 }
 
 // ── Search ─────────────────────────────────────────────────────────────────
 
-const PRICE = /\b(fiyat|ucret|price|pricing|cost|plan(lar)?|abonelik|subscription|billing|fatura|odeme)/;
+const PRICE = /\b(fiyat\w*|ucret\w*|price|prices|pricing|cost|costs|plans?|planlar\w*|abonelik\w*|subscription|billing|fatura\w*|odeme\w*|paket\w*)\b/;
 
 // Product and technical words: in a Turkish question they carry the meaning.
 // "How do I set it up" words say what the person wants to do, not what about: they count little.
@@ -378,12 +408,19 @@ async function search(docsUrl, query, { limit = 3, lang = null, sdk = null } = {
   const index = await indexOf(docsUrl);
   const terms = queryTerms(query);
   const turkish = lang ? lang === "tr" : looksTurkish(query);
-  const wantSdk = sdk || Object.keys(SDK_LANGS).find((l) => new RegExp(`\\b${l === "dotnet" ? "(\\.net|dotnet|c#)" : l === "node" ? "(node|express|nextjs|next\\.js|javascript|typescript)" : l}\\b`, "i").test(query)) || "node";
-  const note = PRICE.test(fold(query)) ? "Touchque does not publish prices or plans in its docs. For a quote, ask Touchque through the support chat on https://support.touchque.com or your Touchque contact; an organization's features are in its dashboard (Organization → Features)." : null;
+  const wantSdk = sdk || ["dotnet", "python", "php", "go", "ruby", "java", "node"].find((l) => new RegExp(`\\b${l === "dotnet" ? "(\\.net|dotnet|c#)" : l === "node" ? "(node|express|nextjs|next\\.js|javascript|typescript)" : l}\\b`, "i").test(query)) || "node";
+  const frontend = FRONTEND_Q.test(fold(query));
+  const f = fold(query);
+  const notes = [];
+  if (PRICE.test(f)) notes.push("Touchque does not publish prices or plans in its docs. For a quote, ask Touchque through the support chat on https://support.touchque.com or your Touchque contact; an organization's features are in its dashboard (Organization → Features).");
+  if (/\b(401|403)\b/.test(f) || /(signature|imza|hmac)/.test(f) && /(invalid|gecersiz|fail|hata|reject|red|tutmuyor)/.test(f)) {
+    notes.push("Touchque API status codes (docs /error-codes, /authentication): 401 = the API key is missing or wrong (x-api-key; check the key is active in the dashboard → Developers → API keys). 403 = the HMAC signature does not match, or the IP is blocked. Signature = HMAC-SHA256(API_SECRET, METHOD:PATH:timestamp:nonce:sha256(body)); for GET the body is an empty string; x-timestamp is Unix milliseconds within ±5 minutes; x-nonce is 16+ characters and new for every request. The SDKs sign for you.");
+  }
+  const note = notes.length ? notes.join("\n") : null;
   // A section's score is the better of its English and its Turkish version; it is shown in the question's language.
   const best = new Map(); // key → { s, en, tr }
   for (const d of index.docs) {
-    if (d.kind === "sdk" && d.sdk !== wantSdk) continue;
+    if (d.kind === "sdk" && d.sdk !== wantSdk && !(frontend && (d.sdk === "react" || d.sdk === "web"))) continue;
     const key = d.kind === "sdk" ? `${d.url}#${d.heading}` : `${d.slug}#${d.pos}`;
     const cur = best.get(key) || { s: 0 };
     cur[d.lang === "tr" ? "tr" : "en"] = d;
@@ -435,7 +472,7 @@ function _setIndex(index, base) {
   cache = { index, until: Date.now() + TTL_MS, base, loading: null };
 }
 
-module.exports = { search, page, htmlToText, splitSections, parseLlms, tokens, fold, looksTurkish, indexFromPages, _setIndex, clip };
+module.exports = { search, page, pageList, htmlToText, splitSections, parseLlms, tokens, fold, looksTurkish, indexFromPages, _setIndex, clip };
 // Legacy name kept for callers of 4.0.0.
 module.exports.searchDocs = async (docsUrl, query, { limit = 3 } = {}) => (await search(docsUrl, query, { limit })).hits.map((h) => ({ title: h.title, url: h.url, excerpt: h.text }));
 module.exports.parse = parseLlms;

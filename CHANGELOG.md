@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.1.1 (2026-11-11)
+
+From the second measured round (18 questions: 12 repeated, mean 6.8 → 8.0, tool output 365k → 36k
+characters, Touchque calls 33 → 16) and an adversarial review of 4.1.0.
+
+- Changes need the confirmToken that the call without confirm gave, for the same arguments, on the same
+  connection, within ten minutes (and confirm must be exactly true): a model cannot skip asking. The
+  instructions no longer claim every change asks the phone (API keys do).
+- English questions are no longer taken for Turkish ("risk", "plan", "internet" matched the dictionary);
+  Turkish is told by its letters and function words, and dictionary prefixes skip words English shares.
+- The facts say "Other organizations: none", mark active keys and turned-off action types, give the
+  dashboard paths (Webhooks, App user policy for the passkey domain, Usage and Logs), say when Touchque
+  Login could not be read instead of "not set up", carry their time, and keep member-controlled text on
+  one short line. "What is Touchque" is answered from a fuller summary (Safe Guard explained) with no call.
+- generate_integration no longer picks the newest action type as the default; it asks for the action,
+  flags a missing or turned-off one, caps the list, and adds the @touchque/react or @touchque/web part for
+  a frontend. workspace_setup looks up one action type. get_touchque_docs serves web and react (bundled).
+- Docs search: a short verified note for 401/403 and signature questions; browser SDK sections for
+  frontend questions; an unknown page lists the pages; the index refreshes in the background, backs off
+  after a failure and refuses a much smaller rebuild; words no longer run together across tags.
+- 4.0 tool names answer for clients that still hold the old list. Small fixes: pick_sdk gives the Python
+  extras; the checklist accepts guards that read the environment; get_sdk_types examples exist.
+
 ## 4.1.0 (2026-11-11)
 
 Shorter, smarter answers (owner: "it thinks a lot even for the smallest question"). Measured on 12 real

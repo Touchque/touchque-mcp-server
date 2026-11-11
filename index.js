@@ -142,7 +142,8 @@ const VALIDATION_PATTERNS = {
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.actionTypes.define(...)" },
     hardcodedSecret: /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
     // new TouchQue() with no options reads TQ_API_KEY / TQ_API_SECRET itself.
-    envVar: /process\.env\.|env\[|new\s+Touch[Qq]ue\s*\(\s*\)/,
+    // new TouchQue() with no options, and the guard with no client, read TQ_API_KEY / TQ_API_SECRET themselves.
+    envVar: /process\.env\.|env\[|new\s+Touch[Qq]ue\s*\(\s*\)|requireTouch[Qq]ue\s*\(\s*['"`][A-Z0-9_]+['"`]\s*\)|withTouch[Qq]ue\s*\(/,
     errorHandling: /catch|try\s*{|\.catch\s*\(/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequestId\b/,
@@ -164,7 +165,7 @@ const VALIDATION_PATTERNS = {
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
     hardcodedSecret: /api_secret\s*=\s*['"][a-zA-Z0-9]{10,}['"]|api_key\s*=\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
-    envVar: /os\.environ|os\.getenv\s*\(|\bTouch[Qq]ue\s*\(\s*\)/,
+    envVar: /os\.environ|os\.getenv\s*\(|\bTouch[Qq]ue\s*\(\s*\)|@require_touchque\s*\(|RequireTouch[Qq]ue\s*\(/,
     errorHandling: /try\s*:|except\b/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequest_id\b/,

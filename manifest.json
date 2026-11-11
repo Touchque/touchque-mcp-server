@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "touchque-mcp-server",
   "display_name": "TouchQue",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "description": "TouchQue for AI assistants and agents: accurate SDK docs and an integration validator, and, with an agent identity, phone approvals before an agent acts.",
   "long_description": "Gives AI coding assistants the current TouchQue SDK docs, types and an integration validator (no account, no network needed). With an AI agent's own TouchQue identity (TQ_AGENT_ID and its private key), the agent can ask a person to approve an action on their TouchQue phone, read the answer and hand the single-use approval token to the service that executes. The agent never approves anything itself.",
   "author": { "name": "TouchQue", "url": "https://touchque.com" },

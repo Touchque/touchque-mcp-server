@@ -238,7 +238,7 @@ function snapshotText(ctx, setup, ws, { detail = false } = {}) {
     if (setup.apiKeys.error) lines.push("API keys: could not be read.");
     else {
       const active = (setup.apiKeys.keys || []).filter((k) => k.status === "ACTIVE");
-      lines.push(`API keys (active): ${active.length ? active.map((k) => `${clean(k.keyId, 40)} "${clean(k.name, 60)}"${k.mine ? " (theirs)" : ` (by ${clean(k.createdBy)})`}, last used ${k.lastUsed}`).join("; ") : "none"}. Secrets show only when a key is made; a lost one is rotated in the dashboard → Developers → API keys; a person may create one new key per organization while one of theirs is active (rotate instead).`);
+      lines.push(`API keys (active): ${active.length ? active.map((k) => `${clean(k.keyId, 40)} "${clean(k.name, 60)}"${k.mine ? " (theirs)" : ` (by ${clean(k.createdBy)})`}, last used ${k.lastUsed}`).join("; ") : "none"}. Secrets show only when a key is made; a lost one is rotated in the dashboard → Developers → API keys; a person cannot create another key while one of theirs is active in this organization (rotate it instead).`);
     }
     if (setup.webhook.error) lines.push("Webhook: could not be read.");
     else {

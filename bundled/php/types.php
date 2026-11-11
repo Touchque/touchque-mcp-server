@@ -1,14 +1,14 @@
 <?php
-// TouchQue PHP SDK — bundled type/API reference for AI assistants.
-// Concatenation of touchque-php/src/{Config.php,TouchQue.php,Steps.php,ApprovalProof.php,Resources/Login.php,
-// Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchQueMiddleware.php,
-// Laravel/TouchQueRelay.php} plus the public part of src/Relay/RelayHandler.php.
+// Touchque PHP SDK — bundled type/API reference for AI assistants.
+// Concatenation of touchque-php/src/{Config.php,Touchque.php,Steps.php,ApprovalProof.php,Resources/Login.php,
+// Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchqueMiddleware.php,
+// Laravel/TouchqueRelay.php} plus the public part of src/Relay/RelayHandler.php.
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.
 
 
-namespace TouchQue;
+namespace Touchque;
 
-use TouchQue\Exceptions\TouchQueConfigException;
+use Touchque\Exceptions\TouchqueConfigException;
 
 class Config
 {
@@ -45,10 +45,10 @@ class Config
         $baseUrl = $baseUrl ?? (getenv('TQ_API_URL') ?: self::DEFAULT_BASE_URL);
 
         if (!$apiKey || !$apiSecret) {
-            throw new TouchQueConfigException('Set TQ_API_KEY and TQ_API_SECRET (or pass them to Config).');
+            throw new TouchqueConfigException('Set TQ_API_KEY and TQ_API_SECRET (or pass them to Config).');
         }
         if (strpos($apiKey, 'tq_') !== 0) {
-            throw new TouchQueConfigException('apiKey must start with "tq_". Did you accidentally swap apiKey and apiSecret?');
+            throw new TouchqueConfigException('apiKey must start with "tq_". Did you accidentally swap apiKey and apiSecret?');
         }
         self::assertSafeBaseUrl($baseUrl);
         $this->apiKey = $apiKey;
@@ -97,12 +97,12 @@ class Config
             return;
         }
         if ($scheme === 'http') {
-            throw new TouchQueConfigException(
+            throw new TouchqueConfigException(
                 "Refusing a plaintext http:// baseUrl for \"{$host}\". The API key and request "
                 . 'signature would be sent in the clear — use https://.'
             );
         }
-        throw new TouchQueConfigException("baseUrl must be http(s): {$baseUrl}");
+        throw new TouchqueConfigException("baseUrl must be http(s): {$baseUrl}");
     }
 
     public function getApiKey(): string
@@ -127,41 +127,41 @@ class Config
 }
 
 // ─────────────────────────────────────────────────────────────
-// From src/TouchQue.php — the TouchQue client class
+// From src/Touchque.php — the Touchque client class
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue;
+namespace Touchque;
 
-use TouchQue\Http\HttpClient;
-use TouchQue\Resources\Actions;
-use TouchQue\Resources\Agents;
-use TouchQue\Resources\Identity;
-use TouchQue\Resources\Mobile;
-use TouchQue\Resources\QrPairings;
-use TouchQue\Resources\DeviceRisk;
-use TouchQue\Resources\SafeGuard;
-use TouchQue\Resources\ActionTypes;
-use TouchQue\Resources\Auth;
-use TouchQue\Resources\Login;
-use TouchQue\Resources\Offline;
-use TouchQue\Resources\Risk;
-use TouchQue\Resources\Recovery;
-use TouchQue\Resources\Assist;
-use TouchQue\Resources\WebAuthn;
-use TouchQue\Resources\Webhook;
+use Touchque\Http\HttpClient;
+use Touchque\Resources\Actions;
+use Touchque\Resources\Agents;
+use Touchque\Resources\Identity;
+use Touchque\Resources\Mobile;
+use Touchque\Resources\QrPairings;
+use Touchque\Resources\DeviceRisk;
+use Touchque\Resources\SafeGuard;
+use Touchque\Resources\ActionTypes;
+use Touchque\Resources\Auth;
+use Touchque\Resources\Login;
+use Touchque\Resources\Offline;
+use Touchque\Resources\Risk;
+use Touchque\Resources\Recovery;
+use Touchque\Resources\Assist;
+use Touchque\Resources\WebAuthn;
+use Touchque\Resources\Webhook;
 
 /**
- * TouchQue SDK client.
+ * Touchque SDK client.
  *
  *     // .env: TQ_API_KEY=tq_...  TQ_API_SECRET=...
- *     $tq = new TouchQue();                                    // from the environment
- *     $tq = new TouchQue(new Config($apiKey, $apiSecret));      // explicit
+ *     $tq = new Touchque();                                    // from the environment
+ *     $tq = new Touchque(new Config($apiKey, $apiSecret));      // explicit
  *
- * One line per protected route — see `TouchQue\Laravel\TouchQueMiddleware`,
+ * One line per protected route — see `Touchque\Laravel\TouchqueMiddleware`,
  * or call `start()` / `check()` / `complete()` yourself for any framework.
  */
-class TouchQue
+class Touchque
 {
     public Auth $auth;
     public Login $login;
@@ -170,17 +170,17 @@ class TouchQue
     public Offline $offline;
     /** Action types: what users approve (LOGIN, SEND_MONEY…). Was `$actions` before 4.0. */
     public ActionTypes $actionTypes;
-    /** TouchQue Actions: your own code in the approval pipeline. */
+    /** Touchque Actions: your own code in the approval pipeline. */
     public Actions $actions;
-    /** Silent sign-ins: should this sign-in ask the phone, and which browsers TouchQue knows. */
+    /** Silent sign-ins: should this sign-in ask the phone, and which browsers Touchque knows. */
     public Risk $risk;
     /** Never Locked Out: move a user whose phone is gone to a new phone, with colleagues vouching. */
     public Recovery $recovery;
     /** Help desk: IT working on a person's account in the open, and checks on their phone before sensitive actions. */
     public Assist $assist;
-    /** AI agents as identities of their own: register (public key), suspend, revoke, kill switch. The agent itself uses TouchQueAgent. */
+    /** AI agents as identities of their own: register (public key), suspend, revoke, kill switch. The agent itself uses TouchqueAgent. */
     public Agents $agents;
-    /** TouchQue Login: your customers' accounts, roles, organizations, apps, connections (Management API). */
+    /** Touchque Login: your customers' accounts, roles, organizations, apps, connections (Management API). */
     public Identity $identity;
     /** Mobile SDK: your own iOS/Android app approves for your users (enrollment tokens, devices, settings). */
     public Mobile $mobile;
@@ -188,7 +188,7 @@ class TouchQue
     public QrPairings $qrPairings;
     /** Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on). */
     public DeviceRisk $deviceRisk;
-    /** Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard. */
+    /** Safe Guard: Safe transactions approved on the approver's phone, for TouchqueSafeGuard. */
     public SafeGuard $safeGuard;
 
     private Config $config;
@@ -231,9 +231,9 @@ class TouchQue
     /**
      * Starts an approval and returns immediately — show the step in your UI.
      * `waiting` + `number`: show the number, the user picks it on the phone.
-     * `enroll`: show `enroll['qrCodeDataUrl']` so the user links the TouchQue app first.
-     * `$browserProof` (silent sign-ins): the `X-TouchQue-Browser` header, passed through
-     * untouched; once the user approves, TouchQue knows this browser.
+     * `enroll`: show `enroll['qrCodeDataUrl']` so the user links the Touchque app first.
+     * `$browserProof` (silent sign-ins): the `X-Touchque-Browser` header, passed through
+     * untouched; once the user approves, Touchque knows this browser.
      */
     public function start(string $action, string $user, ?array $details = null, ?string $referenceId = null, ?string $ip = null, ?string $userAgent = null, ?string $browserProof = null): array
     {
@@ -261,11 +261,11 @@ class TouchQue
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue;
+namespace Touchque;
 
-use TouchQue\Exceptions\TouchQueAPIException;
-use TouchQue\Exceptions\TouchQueConfigException;
-use TouchQue\Exceptions\TouchQueException;
+use Touchque\Exceptions\TouchqueAPIException;
+use Touchque\Exceptions\TouchqueConfigException;
+use Touchque\Exceptions\TouchqueException;
 
 /**
  * The headless step-up flow shared by every integration (Laravel, or your
@@ -327,11 +327,11 @@ class Steps
      * Starts an approval for `$action` — never waits.
      *
      * `$browserProof` (silent sign-ins): the browser's device-bound key proof
-     * (`X-TouchQue-Browser`), passed through untouched. Once the user approves,
-     * TouchQue knows this browser.
+     * (`X-Touchque-Browser`), passed through untouched. Once the user approves,
+     * Touchque knows this browser.
      */
     public static function start(
-        TouchQue $client,
+        Touchque $client,
         string $action,
         string $user,
         ?array $details = null,
@@ -343,7 +343,7 @@ class Steps
         ?array $context = null
     ): array {
         if ($user === '') {
-            throw new TouchQueConfigException('start() needs the user id');
+            throw new TouchqueConfigException('start() needs the user id');
         }
         $norm = self::normalizeDetails($details);
         try {
@@ -373,7 +373,7 @@ class Steps
                 $step['canary'] = $canary;
             }
             return $step;
-        } catch (TouchQueAPIException $err) {
+        } catch (TouchqueAPIException $err) {
             $code = $err->getErrorCode() ?? ($err->getData()['error'] ?? null);
             $why = $err->getCaseCode() !== null ? ['caseCode' => $err->getCaseCode()] : [];
             if ($err->getStatus() === 404 && ($code === 'device_not_linked' || stripos($err->getMessage(), 'linked device') !== false)) {
@@ -389,7 +389,7 @@ class Steps
                 return ['state' => 'rate_limited', 'retryAfter' => $err->getRetryAfter()] + $why;
             }
             if ($err->getStatus() === 400 && ($code === 'unknown_action' || stripos($err->getMessage(), 'invalid action type') !== false)) {
-                throw new TouchQueConfigException(
+                throw new TouchqueConfigException(
                     "Unknown action \"$action\". Create it once with \$client->actionTypes->define('$action') "
                     . 'or in the Dashboard (Action Types).'
                 );
@@ -406,7 +406,7 @@ class Steps
     }
 
     /** First-time linking. Never unlinks a phone: a secret is only re-issued when the account is confirmed NOT linked. */
-    private static function enrollStep(TouchQue $client, string $user): array
+    private static function enrollStep(Touchque $client, string $user): array
     {
         try {
             $gen = $client->auth->generateSecret($user);
@@ -414,14 +414,14 @@ class Steps
                 'qrCodeDataUrl' => $gen['qrCodeDataUrl'] ?? null, 'recoveryCodes' => $gen['recoveryCodes'] ?? null,
                 'expiresAt' => $gen['expiresAt'] ?? null,
             ]];
-        } catch (TouchQueAPIException $err) {
+        } catch (TouchqueAPIException $err) {
             if ($err->getStatus() !== 409) {
                 throw $err;
             }
             $current = null;
             try {
                 $current = $client->auth->getUser($user);
-            } catch (TouchQueAPIException $e) {
+            } catch (TouchqueAPIException $e) {
                 // unknown user: fall through to reset below
             }
             if ($current && (!empty($current['used']) || !empty($current['deviceId']))) {
@@ -461,7 +461,7 @@ class Steps
     private const STATE_MAP = ['PENDING' => 'waiting', 'CONFIRMED' => 'approved', 'REJECTED' => 'rejected', 'EXPIRED' => 'expired'];
 
     /** Current state of a started approval. */
-    public static function check(TouchQue $client, string $requestId): array
+    public static function check(Touchque $client, string $requestId): array
     {
         $s = $client->login->status($requestId);
         $state = ($s['status'] === 'PENDING' && !empty($s['requiresPasskey']))
@@ -475,11 +475,11 @@ class Steps
 
     /**
      * Uses an approved request exactly once and checks it is for THIS user,
-     * action and transaction. Throws TouchQueException if it was already
+     * action and transaction. Throws TouchqueException if it was already
      * used, not approved, or approved for something else.
      */
     public static function complete(
-        TouchQue $client,
+        Touchque $client,
         string $requestId,
         string $user,
         string $action,
@@ -491,7 +491,7 @@ class Steps
         $sameDetails = self::detailsDigest($details) === self::detailsDigest($res['details'] ?? []);
         $sameRef = ($res['referenceId'] ?? null) === ($referenceId ?? null);
         if (!$sameUser || ($res['type'] ?? null) !== $action || !$sameDetails || !$sameRef) {
-            throw new TouchQueException('TouchQue: this approval is for a different user, action or transaction.');
+            throw new TouchqueException('Touchque: this approval is for a different user, action or transaction.');
         }
         $approval = [
             'requestId' => $requestId,
@@ -567,7 +567,7 @@ class Steps
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue;
+namespace Touchque;
 
 /**
  * Verifies the device-signed proof of an approval ("what you see is what you
@@ -576,7 +576,7 @@ namespace TouchQue;
  * action type, the number-match code and a digest of the transaction details
  * the user was shown. The proof arrives in the SUCCESS webhook
  * (`approvalProof`) and in `login->status($id)['approvalProof']`. Verifying it
- * does not require trusting TouchQue: it proves the enrolled phone signed
+ * does not require trusting Touchque: it proves the enrolled phone signed
  * exactly these details. Needs ext-openssl.
  */
 final class ApprovalProof
@@ -667,13 +667,13 @@ final class ApprovalProof
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Resources;
+namespace Touchque\Resources;
 
-use TouchQue\Http\HttpClient;
-use TouchQue\Exceptions\TouchQueTimeoutException;
-use TouchQue\Exceptions\TouchQueRejectedException;
-use TouchQue\Exceptions\TouchQuePasskeyRequiredError;
-use TouchQue\Exceptions\TouchQueConfigException;
+use Touchque\Http\HttpClient;
+use Touchque\Exceptions\TouchqueTimeoutException;
+use Touchque\Exceptions\TouchqueRejectedException;
+use Touchque\Exceptions\TouchquePasskeyRequiredError;
+use Touchque\Exceptions\TouchqueConfigException;
 
 class Login
 {
@@ -701,16 +701,16 @@ class Login
      * server-side state, never from browser input.
      *
      * `$browserProof` (silent sign-ins): the browser's device-bound key proof,
-     * exactly as the browser sent it (`X-TouchQue-Browser` header, made by
+     * exactly as the browser sent it (`X-Touchque-Browser` header, made by
      * `@touchque/web` with `browserKey: true`). When the user approves this
-     * request on the phone (or with a passkey), TouchQue remembers the
+     * request on the phone (or with a passkey), Touchque remembers the
      * browser, so a later `$tq->risk->check()` can let the same browser in
      * without asking. Pass it through untouched; an invalid proof only means
-     * "a browser TouchQue does not know".
+     * "a browser Touchque does not know".
      *
      * `$securityChanges`: when the user's sign-in security last changed in your
      * system, ['password' | 'mfa' | 'device' | 'email' | 'phone' => DateTimeInterface,
-     * ISO 8601 string or epoch milliseconds]. TouchQue adds what it saw itself;
+     * ISO 8601 string or epoch milliseconds]. Touchque adds what it saw itself;
      * access rules and Actions read the minutes since each
      * (`minutesSince.mfaChange`, `.deviceChange`, ...), e.g. refuse
      * `PAYOUT_CHANGE` within 24 hours of a 2FA change.
@@ -777,7 +777,7 @@ class Login
         }
         // Ask the person to type back on the phone a sign-in code another service sent them:
         // ['kind' => 'code', 'key' => CodeReply::newKey()['publicKey'], 'channel' => 'sms', 'target' => '+**********26'].
-        // status()['reply']['ct'] holds only the ciphertext: \TouchQue\CodeReply::open() opens it. Not with $qrPairing.
+        // status()['reply']['ct'] holds only the ciphertext: \Touchque\CodeReply::open() opens it. Not with $qrPairing.
         if ($reply !== null) {
             $payload['reply'] = $reply;
         }
@@ -800,7 +800,7 @@ class Login
         if ($browserProof !== null && $browserProof !== '') {
             $payload['browserProof'] = $browserProof;
         }
-        // For your TouchQue Actions only (event.context); never shown on the phone.
+        // For your Touchque Actions only (event.context); never shown on the phone.
         if ($context !== null && count($context) > 0) {
             $payload['context'] = $context;
         }
@@ -849,15 +849,15 @@ class Login
      *     $result = $tq->login->waitForApproval($sent['requestId'], 30000);
      *
      * @return array{approved: bool, status: string, requestId: string, assurance: ?string, confirmedVia: ?string, provisional: bool}
-     * @throws TouchQuePasskeyRequiredError when the user tapped Approve during a call and the
+     * @throws TouchquePasskeyRequiredError when the user tapped Approve during a call and the
      *   request now waits for a passkey (`reason` step_up).
-     * @throws TouchQueRejectedException when the user rejects it.
-     * @throws TouchQueTimeoutException when it expired or `$timeoutMs` (default 30 seconds) ran out.
+     * @throws TouchqueRejectedException when the user rejects it.
+     * @throws TouchqueTimeoutException when it expired or `$timeoutMs` (default 30 seconds) ran out.
      */
     public function waitForApproval(string $requestId, int $timeoutMs = 30000, int $pollIntervalMs = 400): array
     {
         if ($requestId === '') {
-            throw new TouchQueConfigException('waitForApproval() needs the request id');
+            throw new TouchqueConfigException('waitForApproval() needs the request id');
         }
         $start = microtime(true);
         while (true) {
@@ -875,17 +875,17 @@ class Login
                 ];
             }
             if ($status === 'REJECTED') {
-                throw new TouchQueRejectedException("Request $requestId was rejected by the user.");
+                throw new TouchqueRejectedException("Request $requestId was rejected by the user.");
             }
             if ($status === 'EXPIRED') {
-                throw new TouchQueTimeoutException("Request $requestId expired before it was approved.");
+                throw new TouchqueTimeoutException("Request $requestId expired before it was approved.");
             }
             // Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
             if ($status === 'PENDING' && !empty($statusResult['requiresPasskey'])) {
-                throw new TouchQuePasskeyRequiredError($requestId, 'step_up');
+                throw new TouchquePasskeyRequiredError($requestId, 'step_up');
             }
             if ((microtime(true) - $start) * 1000 > $timeoutMs) {
-                throw new TouchQueTimeoutException("Request $requestId was not approved within {$timeoutMs}ms");
+                throw new TouchqueTimeoutException("Request $requestId was not approved within {$timeoutMs}ms");
             }
             usleep(max(0, $pollIntervalMs) * 1000);
         }
@@ -906,11 +906,11 @@ class Login
      *         function (array $c) { if (isset($c['challengeCode'])) show("Pick {$c['challengeCode']} on your phone"); });
      *     // PHP 8: verify($user, 'SEND_MONEY', onChallenge: function (array $c) { ... })
      *
-     * @throws TouchQuePasskeyRequiredError when a phishing-resistant policy
+     * @throws TouchquePasskeyRequiredError when a phishing-resistant policy
      *   requires the request to be approved with a passkey (no push sent, `reason` policy), or the user
      *   tapped Approve during a call and the request now waits for a passkey (`reason` step_up).
-     * @throws TouchQueRejectedException when the user rejects it.
-     * @throws TouchQueTimeoutException on timeout or expiry.
+     * @throws TouchqueRejectedException when the user rejects it.
+     * @throws TouchqueTimeoutException on timeout or expiry.
      */
     public function verify(
         string $externalUsername,
@@ -933,7 +933,7 @@ class Login
         $requestResult = $this->request($externalUsername, $type, $referenceId, $clientIp, $userAgent, $requireBiometric, $requireNumberMatch, $details, $browserProof, $context, $challengeDigits, null, null, $securityChanges, $destination, $locale);
         $requestId = $requestResult['requestId'];
         if (!empty($requestResult['requiresPasskey'])) {
-            throw new TouchQuePasskeyRequiredError($requestId);
+            throw new TouchquePasskeyRequiredError($requestId);
         }
 
         // The number to show, before waiting: the phone asks the user for it.
@@ -948,7 +948,7 @@ class Login
                 $onChallenge($challenge);
             } catch (\Throwable $e) {
                 // The caller's callback must not stop the wait.
-                $this->http->log('warning', '[TouchQue] onChallenge failed: ' . \TouchQue\Config::describe($e));
+                $this->http->log('warning', '[Touchque] onChallenge failed: ' . \Touchque\Config::describe($e));
             }
         }
 
@@ -973,21 +973,21 @@ class Login
             }
 
             if ($status === 'REJECTED') {
-                throw new TouchQueRejectedException("Request $requestId was rejected by the user.");
+                throw new TouchqueRejectedException("Request $requestId was rejected by the user.");
             }
 
             if ($status === 'EXPIRED') {
-                throw new TouchQueTimeoutException("Request $requestId expired before it was approved.");
+                throw new TouchqueTimeoutException("Request $requestId expired before it was approved.");
             }
 
             // Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
             if ($status === 'PENDING' && !empty($statusResult['requiresPasskey'])) {
-                throw new TouchQuePasskeyRequiredError($requestId, 'step_up');
+                throw new TouchquePasskeyRequiredError($requestId, 'step_up');
             }
 
             $elapsed = (microtime(true) * 1000) - $startTime;
             if ($elapsed > $timeoutMs) {
-                throw new TouchQueTimeoutException("Login verification timed out after {$timeoutMs}ms");
+                throw new TouchqueTimeoutException("Login verification timed out after {$timeoutMs}ms");
             }
 
             usleep($pollInterval * 1000); // usleep takes microseconds
@@ -1009,7 +1009,7 @@ class Login
     /**
      * Uses an approved request exactly once. The first call on a CONFIRMED
      * request wins atomically; every later call (a replayed token, a retried
-     * form post) throws TouchQueAPIException with error code "already_used" (409).
+     * form post) throws TouchqueAPIException with error code "already_used" (409).
      */
     public function consume(string $requestId): array
     {
@@ -1021,7 +1021,7 @@ class Login
 
     /**
      * Reports a request you later learned was fraud — a chargeback, a
-     * confirmed account takeover, a scam the user was talked into. TouchQue's
+     * confirmed account takeover, a scam the user was talked into. Touchque's
      * risk engine learns from it (it is the strongest signal it gets) and the
      * report is kept in your audit log. The request's status does not change.
      * Safe to call more than once: a repeat answers `alreadyReported => true`.
@@ -1033,7 +1033,7 @@ class Login
     public function reportFraud(string $requestId, ?string $reason = null, ?string $note = null): array
     {
         if ($requestId === '') {
-            throw new TouchQueConfigException('reportFraud() needs the request id');
+            throw new TouchqueConfigException('reportFraud() needs the request id');
         }
         $payload = [];
         if ($reason !== null && $reason !== '') {
@@ -1051,10 +1051,10 @@ class Login
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Resources;
+namespace Touchque\Resources;
 
-use TouchQue\Http\HttpClient;
-use TouchQue\Exceptions\TouchQueAPIException;
+use Touchque\Http\HttpClient;
+use Touchque\Exceptions\TouchqueAPIException;
 
 /** Offline Sign — QR challenge / typed code approvals that work with the
  * phone offline (no internet on the device). */
@@ -1146,7 +1146,7 @@ class Offline
     }
 
     /**
-     * For checking typed time-based codes while your server cannot reach TouchQue (an outage):
+     * For checking typed time-based codes while your server cannot reach Touchque (an outage):
      * salted, slow digests of each user's next codes, never a key. Up to 1,000 users and 24,000 user-steps a call; `$steps` 1-480
      * (default 480, four hours) from `$fromStep` (default: the current 30-second step). Returns
      * `{ stepSeconds, fromStep, steps, notAfterStep, kdf, users: [{ externalUsername, fromStep, salt, digests }] }`
@@ -1168,7 +1168,7 @@ class Offline
 
     /**
      * Checks a typed code against one user's digests from `totpVerifiers()` without calling
-     * TouchQue. Returns the step the code belongs to (the current one or one either side), or
+     * Touchque. Returns the step the code belongs to (the current one or one either side), or
      * null. Accept each step once: remember the step you accepted for the user and refuse codes
      * for it or an older one. `$at`: Unix time (default now).
      */
@@ -1208,7 +1208,7 @@ class Offline
     {
         try {
             return $call();
-        } catch (TouchQueAPIException $err) {
+        } catch (TouchqueAPIException $err) {
             if ($err->getStatus() < 500) {
                 return [
                     'approved' => false,
@@ -1226,20 +1226,20 @@ class Offline
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Relay;
+namespace Touchque\Relay;
 
-use TouchQue\Exceptions\TouchQueAPIException;
-use TouchQue\Exceptions\TouchQuePasskeyRequiredError;
-use TouchQue\Exceptions\TouchQueRejectedException;
-use TouchQue\Exceptions\TouchQueTimeoutException;
-use TouchQue\Guard;
-use TouchQue\TouchQue;
+use Touchque\Exceptions\TouchqueAPIException;
+use Touchque\Exceptions\TouchquePasskeyRequiredError;
+use Touchque\Exceptions\TouchqueRejectedException;
+use Touchque\Exceptions\TouchqueTimeoutException;
+use Touchque\Guard;
+use Touchque\Touchque;
 
 /**
  * Framework-agnostic relay: the routes a frontend (`@touchque/web`) needs for
  * classic push 2FA, offline codes and passkeys, so you don't hand-write them.
  * Same routes and behaviour as the Node SDK's `touchqueRouter`. For Laravel
- * use `TouchQue\Laravel\TouchQueRelay`; anywhere else call handle() with the
+ * use `Touchque\Laravel\TouchqueRelay`; anywhere else call handle() with the
  * path relative to where you mount it and send the RelayResponse.
  *
  *   POST   /enroll/start                    (auth required) -> generateSecret response
@@ -1282,8 +1282,8 @@ use TouchQue\TouchQue;
  *                   ('requestId' is absent for 'offline-totp'). Mutate $response (headers, status);
  *                   the handler sets the body.
  *   silentSignIn    bool|array — silent sign-ins for POST /login (default false). When on, a new sign-in
- *                   whose browser sent its device-bound key proof (X-TouchQue-Browser, added by
- *                   `@touchque/web` with `browserKey: true`) first asks TouchQue whether anything about it
+ *                   whose browser sent its device-bound key proof (X-Touchque-Browser, added by
+ *                   `@touchque/web` with `browserKey: true`) first asks Touchque whether anything about it
  *                   is new. If nothing is, it succeeds at once with no push (onAuthenticated gets
  *                   'via' => 'silent', 'requestId' => 'silent'; the answer's assurance.method is 'silent').
  *                   Otherwise, and on any error, the usual push starts and its approval makes the browser
@@ -1293,7 +1293,7 @@ use TouchQue\TouchQue;
  */
 class RelayHandler
 {
-    private TouchQue $tq;
+    private Touchque $tq;
     /** @var callable */
     private $getUserId;
     /** @var callable|null */
@@ -1331,7 +1331,7 @@ class RelayHandler
         'GET /passkey/credentials' => 'passkeyCredentials',
     ];
 
-    public function __construct(TouchQue $tq, array $options)
+    public function __construct(Touchque $tq, array $options)
     {
         if (!isset($options['getUserId']) || !is_callable($options['getUserId'])) {
             throw new \InvalidArgumentException('RelayHandler: the "getUserId" option is required and must be callable.');
@@ -1359,7 +1359,7 @@ class RelayHandler
 
         if ($this->getLoginUser === null && !self::$warnedPreAuth) {
             self::$warnedPreAuth = true;
-            $tq->log('warning', '[TouchQue] RelayHandler: POST /login takes the username from the request body'
+            $tq->log('warning', '[Touchque] RelayHandler: POST /login takes the username from the request body'
                 . ($this->offlineEnabled ? ', and so do the offline routes' : '; the offline routes are disabled until you set it')
                 . '. Set "getLoginUser" to bind them to your first factor (password step) so they cannot be used against arbitrary users.');
         }
@@ -1406,12 +1406,12 @@ class RelayHandler
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Relay;
+namespace Touchque\Relay;
 
 /**
  * What RelayHandler wants sent back: an HTTP status, a JSON body and headers.
  * Framework adapters turn it into their own response (see
- * TouchQue\Laravel\TouchQueRelay); in plain PHP call send().
+ * Touchque\Laravel\TouchqueRelay); in plain PHP call send().
  *
  * `onAuthenticated` receives the pending success response and may change it
  * (e.g. addHeader('Set-Cookie', ...)); the handler sets the body afterwards.
@@ -1519,7 +1519,7 @@ class RelayResponse
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Relay;
+namespace Touchque\Relay;
 
 /**
  * Counter storage for FixedWindowLimiter.
@@ -1545,17 +1545,17 @@ interface RateLimitStore
 }
 
 // ─────────────────────────────────────────────────────────────
-// From src/Laravel/TouchQueMiddleware.php — ->middleware('touchque:ACTION')
+// From src/Laravel/TouchqueMiddleware.php — ->middleware('touchque:ACTION')
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Laravel;
+namespace Touchque\Laravel;
 
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use TouchQue\Guard;
-use TouchQue\TouchQue;
+use Touchque\Guard;
+use Touchque\Touchque;
 
 /**
  * Laravel: one line per protected route.
@@ -1566,17 +1566,17 @@ use TouchQue\TouchQue;
  * Register the alias in `bootstrap/app.php` (Laravel 11+) or
  * `app/Http/Kernel.php` (`$middlewareAliases`):
  *
- *     $middleware->alias(['touchque' => \TouchQue\Laravel\TouchQueMiddleware::class]);
+ *     $middleware->alias(['touchque' => \Touchque\Laravel\TouchqueMiddleware::class]);
  *
- * `TouchQue` is constructor-injected, so Laravel's container resolves it
+ * `Touchque` is constructor-injected, so Laravel's container resolves it
  * automatically — bind it once in a service provider:
  *
- *     $this->app->singleton(TouchQue::class, fn () => new TouchQue());
+ *     $this->app->singleton(Touchque::class, fn () => new Touchque());
  *
  * Until the user approves on their phone this answers
  * `202 {"touchque": step, "token": "..."}`. Your page shows the step in its
  * own design and sends the same request again with header
- * `X-TouchQue-Token: <token>`. Once approved the route runs ONCE, with
+ * `X-Touchque-Token: <token>`. Once approved the route runs ONCE, with
  * `$request->touchque` set to the approval.
  *
  * What the phone shows (an amount, a payee): put the name of a Request
@@ -1593,20 +1593,20 @@ use TouchQue\TouchQue;
  * `resolveUser()` to return whoever just passed your password check.
  *
  * Silent sign-ins (default off): with `silentSignIn` on, a new attempt whose
- * browser sent its device-bound key proof (`X-TouchQue-Browser`, added by
- * `@touchque/web` with `browserKey: true`) first asks TouchQue whether
+ * browser sent its device-bound key proof (`X-Touchque-Browser`, added by
+ * `@touchque/web` with `browserKey: true`) first asks Touchque whether
  * anything about it is new. If nothing is, the route runs at once with no
  * push (`touchque` approval with `assurance.method` `silent` and `reasons`).
  * Otherwise, and on any error, the usual push starts and its approval makes
  * the browser known. Turn it on in a subclass
  * (`protected $silentSignIn = true;`) or when binding the middleware:
  *
- *     $this->app->bind(TouchQueMiddleware::class, fn ($app) => new TouchQueMiddleware(
- *         $app->make(TouchQue::class), ['silentSignIn' => ['maxAgeSeconds' => 8 * 3600]]));
+ *     $this->app->bind(TouchqueMiddleware::class, fn ($app) => new TouchqueMiddleware(
+ *         $app->make(Touchque::class), ['silentSignIn' => ['maxAgeSeconds' => 8 * 3600]]));
  */
-class TouchQueMiddleware
+class TouchqueMiddleware
 {
-    private TouchQue $touchQue;
+    private Touchque $touchque;
 
     /**
      * Silent sign-ins: `false` (default), `true`, or `['maxAgeSeconds' => int]`
@@ -1618,7 +1618,7 @@ class TouchQueMiddleware
     protected $silentSignIn = false;
 
     /**
-     * For your TouchQue Actions only (`event.context`): a callable taking the
+     * For your Touchque Actions only (`event.context`): a callable taking the
      * Request and returning an array (roles, plan, amount…). Never shown on
      * the phone. Or override `resolveContext()`.
      *
@@ -1627,16 +1627,16 @@ class TouchQueMiddleware
     protected $context = null;
 
     /** @param array $options ['silentSignIn' => bool|array, 'context' => callable(Request): array] */
-    public function __construct(TouchQue $touchQue, array $options = [])
+    public function __construct(Touchque $touchque, array $options = [])
     {
-        $this->touchQue = $touchQue;
+        $this->touchque = $touchque;
         if (isset($options['context'])) {
             $this->context = $options['context'];
         }
         if (array_key_exists('silentSignIn', $options)) {
             $this->silentSignIn = $options['silentSignIn'];
         }
-        Guard::assertSilentSignInOption($this->silentSignIn, 'TouchQueMiddleware');
+        Guard::assertSilentSignInOption($this->silentSignIn, 'TouchqueMiddleware');
     }
 
     public function handle(Request $request, Closure $next, string $action, ?string $detailsMethod = null)
@@ -1648,7 +1648,7 @@ class TouchQueMiddleware
             // one; method_exists() does not see macros. A name that is neither must not approve
             // without the details the route meant the phone to show.
             if (!method_exists($request, $detailsMethod) && !$request::hasMacro($detailsMethod)) {
-                $this->touchQue->log('error', "[TouchQue] TouchQueMiddleware: the Request has no method or macro \"{$detailsMethod}\" for the details");
+                $this->touchque->log('error', "[Touchque] TouchqueMiddleware: the Request has no method or macro \"{$detailsMethod}\" for the details");
                 return new JsonResponse([
                     'touchque' => ['state' => 'blocked', 'reason' => 'misconfigured'],
                     'error' => ['code' => 'misconfigured', 'message' => 'Two-factor approval is not configured correctly.'],
@@ -1662,7 +1662,7 @@ class TouchQueMiddleware
         $silent = Guard::silentInputFromHeaders($this->silentSignIn, $header);
 
         $result = Guard::run(
-            $this->touchQue,
+            $this->touchque,
             $user,
             $action,
             $details,
@@ -1708,7 +1708,7 @@ class TouchQueMiddleware
         return $user->email ?? (method_exists($user, 'getAuthIdentifier') ? (string)$user->getAuthIdentifier() : null) ?? $user->username ?? null;
     }
 
-    /** What your TouchQue Actions get as `event.context` (default: the `context` option, or none). */
+    /** What your Touchque Actions get as `event.context` (default: the `context` option, or none). */
     protected function resolveContext(Request $request): ?array
     {
         return $this->context ? ($this->context)($request) : null;
@@ -1716,61 +1716,61 @@ class TouchQueMiddleware
 }
 
 // ─────────────────────────────────────────────────────────────
-// From src/Laravel/TouchQueRelay.php — TouchQueRelay::routes($router, 'touchque')
+// From src/Laravel/TouchqueRelay.php — TouchqueRelay::routes($router, 'touchque')
 // ─────────────────────────────────────────────────────────────
 
 
-namespace TouchQue\Laravel;
+namespace Touchque\Laravel;
 
 use Illuminate\Contracts\Routing\Registrar;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use TouchQue\Relay\RelayHandler;
-use TouchQue\Relay\RelayResponse;
-use TouchQue\TouchQue;
+use Touchque\Relay\RelayHandler;
+use Touchque\Relay\RelayResponse;
+use Touchque\Touchque;
 
 /**
  * Laravel: every relay route a frontend (`@touchque/web`) needs — POST /login,
  * enrollment, offline codes, passkey ceremonies — as one controller. See
- * `TouchQue\Relay\RelayHandler` for the routes, options and security rules.
+ * `Touchque\Relay\RelayHandler` for the routes, options and security rules.
  *
  * Bind it once in a service provider with your options (the callables get the
  * Illuminate `Request`; `onAuthenticated` also gets the pending
  * `RelayResponse`, whose headers you may change):
  *
- *     $this->app->singleton(TouchQueRelay::class, fn ($app) => new TouchQueRelay($app->make(TouchQue::class), [
+ *     $this->app->singleton(TouchqueRelay::class, fn ($app) => new TouchqueRelay($app->make(Touchque::class), [
  *         'getLoginUser' => fn (Request $r) => $r->session()->get('password_verified_user'),
  *         'onAuthenticated' => function (Request $r, RelayResponse $res, array $info) {
  *             $r->session()->regenerate();
  *             $r->session()->put('touchque_user', $info['externalUsername']);
  *         },
- *         // Silent sign-ins: a known browser (X-TouchQue-Browser) with nothing new skips the push.
+ *         // Silent sign-ins: a known browser (X-Touchque-Browser) with nothing new skips the push.
  *         'silentSignIn' => true,
  *     ]));
  *
  * and register the routes, e.g. in routes/web.php (session middleware needed
  * for getLoginUser/onAuthenticated):
  *
- *     TouchQueRelay::routes(app('router'), 'touchque');
+ *     TouchqueRelay::routes(app('router'), 'touchque');
  *
  * Routes point at this class (no closures), so `php artisan route:cache` works.
  * Without a `getUserId` option the signed-in user comes from Laravel's own auth
  * (`$request->user()`, tried as `->email`, `->getAuthIdentifier()`, `->username`),
- * like TouchQueMiddleware. `$request->ip()` must be the real client: configure
+ * like TouchqueMiddleware. `$request->ip()` must be the real client: configure
  * TrustProxies behind a load balancer.
  */
-class TouchQueRelay
+class TouchqueRelay
 {
     private RelayHandler $handler;
 
-    public function __construct(TouchQue $touchQue, array $options = [])
+    public function __construct(Touchque $touchque, array $options = [])
     {
         if (!isset($options['getUserId'])) {
             $options['getUserId'] = function (Request $request): ?string {
                 return $this->resolveUser($request);
             };
         }
-        $this->handler = new RelayHandler($touchQue, $options);
+        $this->handler = new RelayHandler($touchque, $options);
     }
 
     /**

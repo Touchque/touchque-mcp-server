@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.2.0 (2026-11-11)
+
+SDK 5.0 (sdks e2506e7, published the same day: npm @touchque/node 5.0.0, @touchque/web and
+@touchque/react 2.0.0, PyPI 5.0.0, Go /v5, PHP tag v5.0.0): every name is spelled Touchque.
+
+- The bundled READMEs and types are 5.0, including the new "Action types" section of every server SDK
+  (generate_integration includes it for phone approval); scripts/sync-bundled.js reads the renamed files
+  by their exact names.
+- pick_sdk: Node, PHP, Go and Python 5.0.0 with their install commands and import lines (Touchque,
+  requireTouchque, use Touchque\Touchque, /v5); web and react 2.0.0; .NET, Ruby and Java not on their
+  registries yet.
+- The checklist reports the 5.0 names and still accepts 4.x code (TouchQue); for Go it suggests /v5.
+- Texts say Touchque everywhere (agent.js, prompts, README); kept on purpose: TouchQueGovernance and
+  TouchQueSafeGuard (signed and deployed names).
+
 ## 4.1.3 (2026-11-11)
 
 - Docs search keeps the target of a link to another docs page ("see Offline sign (/offline-sign)"), so a

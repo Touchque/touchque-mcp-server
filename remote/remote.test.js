@@ -212,7 +212,7 @@ test("search: Turkish questions find the right section and are answered in Turki
 test("SDK docs and types come a part at a time", () => {
   assert.match(tools41.readmeToc("node"), /- Install \(/);
   assert.match(tools41.readmeSection("node", "webhooks"), /^## Webhooks/);
-  assert.ok(tools41.typeNames("node").includes("TouchQueConfig"));
+  assert.ok(tools41.typeNames("node").includes("TouchqueConfig"));
   const block = tools41.typeBlock("node", "LoginRequestOptions");
   assert.ok(block && block.length < 8200 && /\{[\s\S]*\}/.test(block));
   for (const lang of ["python", "go", "php"]) assert.ok(tools41.typeNames(lang).length > 5, lang);

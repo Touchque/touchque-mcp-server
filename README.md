@@ -118,13 +118,13 @@ than assuming Node.
 
 | Language | Package | Guard | Relay router (routes `@touchque/web` calls) |
 |---|---|---|---|
-| Node | `@touchque/node` | `requireTouchQue('ACTION', opts)` | `touchqueRouter(tq, { getUserId, getLoginUser })` |
+| Node | `@touchque/node` | `requireTouchque('ACTION', opts)` | `touchqueRouter(tq, { getUserId, getLoginUser })` |
 | Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` | `touchque_relay_blueprint` (Flask), `touchque_relay_router` (FastAPI), `touchque_relay_view` / `touchque_relay_urls` (Django), `RelayHandler` |
-| PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` | `TouchQueRelay::routes($router, 'touchque')` (Laravel), `TouchQue\Relay\RelayHandler` |
-| Go | `github.com/Touchque/touchque-go/v4` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
-| .NET | `TouchQue.AspNetCore` | `.RequireTouchQue("ACTION")`, `[RequireTouchQue("ACTION")]` | `app.MapTouchQueRelay("/touchque", new RelayOptions<HttpContext> { GetUserId, GetLoginUser })` |
-| Ruby | `touchque` | `require_touchque "ACTION"` (Rails), `TouchQue::Guard.run` | `TouchQue::Rack::Relay.new(get_user_id:, get_login_user:)` |
-| Java | `com.touchque:touchque-spring-boot-starter` | `@RequireTouchQue("ACTION")` (Spring Boot), `Guard.run` | a `RelayOptions<HttpServletRequest>` bean, or `new RelayHandler<>(tq, options)` |
+| PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` | `TouchqueRelay::routes($router, 'touchque')` (Laravel), `Touchque\Relay\RelayHandler` |
+| Go | `github.com/Touchque/touchque-go/v5` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
+| .NET | `Touchque.AspNetCore` | `.RequireTouchque("ACTION")`, `[RequireTouchque("ACTION")]` | `app.MapTouchqueRelay("/touchque", new RelayOptions<HttpContext> { GetUserId, GetLoginUser })` |
+| Ruby | `touchque` | `require_touchque "ACTION"` (Rails), `Touchque::Guard.run` | `Touchque::Rack::Relay.new(get_user_id:, get_login_user:)` |
+| Java | `com.touchque:touchque-spring-boot-starter` | `@RequireTouchque("ACTION")` (Spring Boot), `Guard.run` | a `RelayOptions<HttpServletRequest>` bean, or `new RelayHandler<>(tq, options)` |
 
 The docs, types, prompts and validator cover the SDK 3.2.0 API: the relay
 routers above, device-proof verification (`verifyApprovalProof` /
@@ -136,7 +136,7 @@ end-user address goes to the risk engine (Next.js `ip` / `trustedProxyHops`,
 Go `RequireOptions.IP`), the `PASSKEY_ENROLL` approval before adding a
 passkey, and relay polls outside the push rate limit. They are current for
 SDK 4.0.0: action types under `tq.actionTypes` (Python `action_types`, PHP
-`actionTypes`, Go `ActionTypes`) now that `tq.actions` is TouchQue Actions,
+`actionTypes`, Go `ActionTypes`) now that `tq.actions` is Touchque Actions,
 the Go module path `/v4`, `context` for Actions, `onChallenge` for the
 blocking `verify()`, "Why?" case codes, silent sign-ins, Never Locked Out
 recovery and the Vishing Shield.

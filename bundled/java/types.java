@@ -1,25 +1,25 @@
-// TouchQue Java SDK and Spring Boot starter — bundled type/API reference for AI assistants.
-// Concatenation of touchque-java/src/main/java/com/touchque/{TouchQueOptions,TouchQueClient,flow/Step,
+// Touchque Java SDK and Spring Boot starter — bundled type/API reference for AI assistants.
+// Concatenation of touchque-java/src/main/java/com/touchque/{TouchqueOptions,TouchqueClient,flow/Step,
 // flow/StartOptions,flow/CompleteExpectations,flow/Approval,crypto/ApprovalProof,resources/Login,
 // resources/LoginRequestOptions,relay/RelayOptions}.java, the public parts of flow/Guard.java and
-// relay/RelayHandler.java, and the starter's com/touchque/spring/{RequireTouchQue,TouchQueGuardOptions,
-// TouchQueWebhookListener,TouchQueSpring}.java (package and import lines left out).
+// relay/RelayHandler.java, and the starter's com/touchque/spring/{RequireTouchque,TouchqueGuardOptions,
+// TouchqueWebhookListener,TouchqueSpring}.java (package and import lines left out).
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.
 
 // ─────────────────────────────────────────────────────────────
-// package com.touchque — TouchQueOptions
+// package com.touchque — TouchqueOptions
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Settings of a {@link TouchQueClient}. Anything left null falls back to the environment:
+ * Settings of a {@link TouchqueClient}. Anything left null falls back to the environment:
  * {@code TQ_API_KEY}, {@code TQ_API_SECRET} and {@code TQ_API_URL} (default
  * {@code https://api.touchque.com}).
  *
  * <pre>{@code
- * var tq = new TouchQueClient(new TouchQueOptions().apiKey("tq_...").apiSecret("..."));
+ * var tq = new TouchqueClient(new TouchqueOptions().apiKey("tq_...").apiSecret("..."));
  * }</pre>
  */
-public final class TouchQueOptions {
+public final class TouchqueOptions {
     public static final String DEFAULT_BASE_URL = "https://api.touchque.com";
 
     private String apiKey;
@@ -31,25 +31,25 @@ public final class TouchQueOptions {
     private boolean debug;
 
     /** Your API key from the dashboard ({@code tq_…}). */
-    public TouchQueOptions apiKey(String value) {
+    public TouchqueOptions apiKey(String value) {
         this.apiKey = value;
         return this;
     }
 
     /** Your API secret. Signs every request and verifies webhooks; never send it to a browser or an app. */
-    public TouchQueOptions apiSecret(String value) {
+    public TouchqueOptions apiSecret(String value) {
         this.apiSecret = value;
         return this;
     }
 
     /** The API's address. Plain http is accepted only for localhost. */
-    public TouchQueOptions baseUrl(String value) {
+    public TouchqueOptions baseUrl(String value) {
         this.baseUrl = value;
         return this;
     }
 
     /** Timeout of one HTTP request (default 10 seconds). */
-    public TouchQueOptions timeout(Duration value) {
+    public TouchqueOptions timeout(Duration value) {
         this.timeout = value;
         return this;
     }
@@ -58,7 +58,7 @@ public final class TouchQueOptions {
      * Your own HttpClient. Configure it NOT to follow redirects
      * ({@code HttpClient.Redirect.NEVER}): a redirect could replay the signed headers to another host.
      */
-    public TouchQueOptions httpClient(HttpClient value) {
+    public TouchqueOptions httpClient(HttpClient value) {
         this.httpClient = value;
         return this;
     }
@@ -69,13 +69,13 @@ public final class TouchQueOptions {
      * nothing is logged. Lines carry an error's class, code and message, never the error object, a
      * request or a user.
      */
-    public TouchQueOptions logger(System.Logger value) {
+    public TouchqueOptions logger(System.Logger value) {
         this.logger = value;
         return this;
     }
 
     /** With no {@link #logger}: write those lines to System.Logger {@code "touchque"} (local development). */
-    public TouchQueOptions debug(boolean value) {
+    public TouchqueOptions debug(boolean value) {
         this.debug = value;
         return this;
     }
@@ -118,10 +118,10 @@ public final class TouchQueOptions {
         String url = baseUrl != null ? baseUrl : System.getenv("TQ_API_URL");
         if (url == null || url.isEmpty()) url = DEFAULT_BASE_URL;
         if (key == null || key.isEmpty() || secret == null || secret.isEmpty()) {
-            throw new TouchQueConfigException("Set TQ_API_KEY and TQ_API_SECRET (or apiKey and apiSecret in TouchQueOptions).");
+            throw new TouchqueConfigException("Set TQ_API_KEY and TQ_API_SECRET (or apiKey and apiSecret in TouchqueOptions).");
         }
         if (!key.startsWith("tq_")) {
-            throw new TouchQueConfigException("apiKey must start with \"tq_\". Did you accidentally swap apiKey and apiSecret?");
+            throw new TouchqueConfigException("apiKey must start with \"tq_\". Did you accidentally swap apiKey and apiSecret?");
         }
         assertSafeBaseUrl(url, "baseUrl");
         return new Resolved(key, secret, url.replaceAll("/+$", ""), timeout, httpClient, new SdkLog(logger, debug));
@@ -133,17 +133,17 @@ public final class TouchQueOptions {
         try {
             uri = URI.create(url);
         } catch (IllegalArgumentException e) {
-            throw new TouchQueConfigException(name + " is not a valid URL: " + url);
+            throw new TouchqueConfigException(name + " is not a valid URL: " + url);
         }
         String scheme = uri.getScheme();
-        if (scheme == null || uri.getHost() == null) throw new TouchQueConfigException(name + " is not a valid URL: " + url);
+        if (scheme == null || uri.getHost() == null) throw new TouchqueConfigException(name + " is not a valid URL: " + url);
         if (scheme.equalsIgnoreCase("https")) return;
         if (scheme.equalsIgnoreCase("http")) {
             if (isLoopback(uri.getHost())) return;
-            throw new TouchQueConfigException("Refusing a plaintext http:// " + name + " for \"" + uri.getHost()
+            throw new TouchqueConfigException("Refusing a plaintext http:// " + name + " for \"" + uri.getHost()
                     + "\". The API key and request signature would be sent in the clear: use https://.");
         }
-        throw new TouchQueConfigException(name + " must be http(s): " + url);
+        throw new TouchqueConfigException(name + " must be http(s): " + url);
     }
 
     public static boolean isLoopback(String host) {
@@ -153,25 +153,25 @@ public final class TouchQueOptions {
 }
 
 // ─────────────────────────────────────────────────────────────
-// package com.touchque — TouchQueClient (start/check/complete/protect and the resources)
+// package com.touchque — TouchqueClient (start/check/complete/protect and the resources)
 // ─────────────────────────────────────────────────────────────
 
 /**
- * The TouchQue client. Every call is signed with your API secret, so it belongs on your server;
+ * The Touchque client. Every call is signed with your API secret, so it belongs on your server;
  * browser pieces relay through it.
  *
  * <pre>{@code
  * // TQ_API_KEY=tq_...  TQ_API_SECRET=...
- * var tq = new TouchQueClient();
+ * var tq = new TouchqueClient();
  * var step = tq.start("SEND_MONEY", new StartOptions("jane@acme.com").details(List.of(LoginDetail.of("Amount", "250 EUR"))));
  * }</pre>
  *
  * Thread-safe; create one and reuse it (in Spring Boot the starter makes it a bean).
  */
-public final class TouchQueClient {
-    public static final String DEFAULT_BASE_URL = TouchQueOptions.DEFAULT_BASE_URL;
+public final class TouchqueClient {
+    public static final String DEFAULT_BASE_URL = TouchqueOptions.DEFAULT_BASE_URL;
 
-    private final TouchQueHttp http;
+    private final TouchqueHttp http;
     private final Auth auth;
     private final Login login;
     private final WebAuthn webauthn;
@@ -190,14 +190,14 @@ public final class TouchQueClient {
     private final SafeGuard safeGuard;
 
     /** A client from the environment ({@code TQ_API_KEY}, {@code TQ_API_SECRET}, {@code TQ_API_URL}). */
-    public TouchQueClient() {
-        this(new TouchQueOptions());
+    public TouchqueClient() {
+        this(new TouchqueOptions());
     }
 
     /** @param options anything left null falls back to the environment */
-    public TouchQueClient(TouchQueOptions options) {
-        TouchQueOptions.Resolved r = options.resolve();
-        this.http = new TouchQueHttp(r.apiKey(), r.apiSecret(), r.baseUrl(), r.timeout(), r.httpClient(), r.log());
+    public TouchqueClient(TouchqueOptions options) {
+        TouchqueOptions.Resolved r = options.resolve();
+        this.http = new TouchqueHttp(r.apiKey(), r.apiSecret(), r.baseUrl(), r.timeout(), r.httpClient(), r.log());
         this.auth = new Auth(http);
         this.login = new Login(http);
         this.webauthn = new WebAuthn(http);
@@ -246,12 +246,12 @@ public final class TouchQueClient {
         return actionTypes;
     }
 
-    /** TouchQue Actions: your own code in the approval pipeline (deploy, test, dry run, logs). */
+    /** Touchque Actions: your own code in the approval pipeline (deploy, test, dry run, logs). */
     public Actions actions() {
         return actions;
     }
 
-    /** Silent sign-ins: should this sign-in ask the phone, and which browsers TouchQue knows. */
+    /** Silent sign-ins: should this sign-in ask the phone, and which browsers Touchque knows. */
     public Risk risk() {
         return risk;
     }
@@ -266,12 +266,12 @@ public final class TouchQueClient {
         return assist;
     }
 
-    /** AI agents as identities of their own. The agent itself uses {@link com.touchque.agents.TouchQueAgent}. */
+    /** AI agents as identities of their own. The agent itself uses {@link com.touchque.agents.TouchqueAgent}. */
     public Agents agents() {
         return agents;
     }
 
-    /** TouchQue Login: your customers' accounts, roles, organizations, apps, connections (Management API). */
+    /** Touchque Login: your customers' accounts, roles, organizations, apps, connections (Management API). */
     public Identity identity() {
         return identity;
     }
@@ -291,13 +291,13 @@ public final class TouchQueClient {
         return deviceRisk;
     }
 
-    /** Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard. */
+    /** Safe Guard: Safe transactions approved on the approver's phone, for TouchqueSafeGuard. */
     public SafeGuard safeGuard() {
         return safeGuard;
     }
 
     /** Internal: the signed HTTP client. */
-    public TouchQueHttp http() {
+    public TouchqueHttp http() {
         return http;
     }
 
@@ -313,7 +313,7 @@ public final class TouchQueClient {
     /**
      * Starts an approval and returns at once: show the step in your UI. {@code waiting} with
      * {@code number}: show the number, the user picks it on the phone. {@code enroll}: show
-     * {@code enroll.qrCodeDataUrl} so the user links the TouchQue app first.
+     * {@code enroll.qrCodeDataUrl} so the user links the Touchque app first.
      */
     public Step start(String action, StartOptions options) {
         return Steps.start(this, action, options);
@@ -328,8 +328,8 @@ public final class TouchQueClient {
      * Uses an approved request exactly once, after checking it is for this user, action and
      * transaction. Call it right before doing the protected thing.
      *
-     * @throws TouchQueApprovalMismatchException the approval is for a different user, action or transaction
-     * @throws TouchQueApiException             409 already_used, not_approved, rejected, expired or revoked
+     * @throws TouchqueApprovalMismatchException the approval is for a different user, action or transaction
+     * @throws TouchqueApiException             409 already_used, not_approved, rejected, expired or revoked
      */
     public Approval complete(String requestId, CompleteExpectations expect) {
         return Steps.complete(this, requestId, expect);
@@ -449,13 +449,13 @@ public final class StartOptions {
         return this;
     }
 
-    /** Silent sign-ins: the {@code X-TouchQue-Browser} header, passed through untouched. */
+    /** Silent sign-ins: the {@code X-Touchque-Browser} header, passed through untouched. */
     public StartOptions browserProof(String v) {
         this.browserProof = v;
         return this;
     }
 
-    /** For your TouchQue Actions only ({@code event.context}). */
+    /** For your Touchque Actions only ({@code event.context}). */
     public StartOptions context(Map<String, Object> v) {
         this.context = v;
         return this;
@@ -468,7 +468,7 @@ public final class StartOptions {
     }
 }
 
-/** What an approved request must be for (checked by {@code TouchQueClient.complete}). */
+/** What an approved request must be for (checked by {@code TouchqueClient.complete}). */
 public record CompleteExpectations(String user, String action, List<LoginDetail> details, String referenceId) {
     public static CompleteExpectations of(String user, String action) {
         return new CompleteExpectations(user, action, null, null);
@@ -481,7 +481,7 @@ public record CompleteExpectations(String user, String action, List<LoginDetail>
  * showed ({@link com.touchque.crypto.ApprovalProof}). {@code provisional}: Vishing Shield, approved
  * during a call; let the user in, but treat the session as limited: critical actions are refused
  * until APPROVAL_RECONFIRMED, and APPROVAL_REVOKED means end it. {@code reasons}: silent sign-ins,
- * why TouchQue let this known browser in (nothing went to the phone).
+ * why Touchque let this known browser in (nothing went to the phone).
  */
 public record Approval(String requestId, String user, String action, Assurance assurance, String confirmedVia, JsonNode approvalProof,
                        Boolean provisional, Boolean revoked, String revokeReason, String reconfirmedAt, List<RiskReason> reasons) {
@@ -492,20 +492,20 @@ public record Approval(String requestId, String user, String action, Assurance a
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Framework-agnostic step-up guard (the Spring starter's {@code @RequireTouchQue} is a thin wrapper
- * over it). Contract, the same in every TouchQue server SDK:
+ * Framework-agnostic step-up guard (the Spring starter's {@code @RequireTouchque} is a thin wrapper
+ * over it). Contract, the same in every Touchque server SDK:
  * <ul>
  * <li>1st request: 202 {@code {"touchque": step, "token": ...}}; show the step in your UI;</li>
- * <li>repeat with the token (header {@code X-TouchQue-Token}): 202 while waiting, then the protected action runs once;</li>
+ * <li>repeat with the token (header {@code X-Touchque-Token}): 202 while waiting, then the protected action runs once;</li>
  * <li>refused: 403 / 408 / 423 / 429 {@code {"touchque": {"state": ...}}}.</li>
  * </ul>
  */
 public final class Guard {
-    public static final String TOKEN_HEADER = "X-TouchQue-Token";
-    public static final String OFFLINE_HEADER = "X-TouchQue-Offline";
-    public static final String CODE_HEADER = "X-TouchQue-Code";
-    public static final String CODE_TYPE_HEADER = "X-TouchQue-Code-Type";
-    public static final String BROWSER_HEADER = "X-TouchQue-Browser";
+    public static final String TOKEN_HEADER = "X-Touchque-Token";
+    public static final String OFFLINE_HEADER = "X-Touchque-Offline";
+    public static final String CODE_HEADER = "X-Touchque-Code";
+    public static final String CODE_TYPE_HEADER = "X-Touchque-Code-Type";
+    public static final String BROWSER_HEADER = "X-Touchque-Browser";
 
     private static final long TOKEN_TTL_MS = 10 * 60 * 1000;
     /** A real proof is a few hundred characters; anything far larger is not one. */
@@ -520,7 +520,7 @@ public final class Guard {
     private Guard() {
     }
 
-    /** Silent sign-ins for a guard or relay: {@code maxAgeSeconds} is your own limit on how long ago the last phone approval in that browser may be (0 = always ask; null = TouchQue's). */
+    /** Silent sign-ins for a guard or relay: {@code maxAgeSeconds} is your own limit on how long ago the last phone approval in that browser may be (0 = always ask; null = Touchque's). */
     public record SilentSignIn(Integer maxAgeSeconds) {
         public static SilentSignIn on() {
             return new SilentSignIn(null);
@@ -570,25 +570,25 @@ public final class Guard {
             return this;
         }
 
-        /** {@code X-TouchQue-Token}: the token from the last answer. */
+        /** {@code X-Touchque-Token}: the token from the last answer. */
         public Input token(String v) {
             this.token = v;
             return this;
         }
 
-        /** {@code X-TouchQue-Offline: 1}: switch to offline approval. */
+        /** {@code X-Touchque-Offline: 1}: switch to offline approval. */
         public Input offline(boolean v) {
             this.offline = v;
             return this;
         }
 
-        /** {@code X-TouchQue-Code}: the code from the phone. */
+        /** {@code X-Touchque-Code}: the code from the phone. */
         public Input code(String v) {
             this.code = v;
             return this;
         }
 
-        /** {@code X-TouchQue-Code-Type}: totp for the rolling time-based code. */
+        /** {@code X-Touchque-Code-Type}: totp for the rolling time-based code. */
         public Input codeType(String v) {
             this.codeType = v;
             return this;
@@ -600,7 +600,7 @@ public final class Guard {
             return this;
         }
 
-        /** {@code X-TouchQue-Browser}: the browser's device-bound key proof. */
+        /** {@code X-Touchque-Browser}: the browser's device-bound key proof. */
         public Input browserProof(String v) {
             this.browserProof = v;
             return this;
@@ -612,7 +612,7 @@ public final class Guard {
             return this;
         }
 
-        /** For your TouchQue Actions only ({@code event.context}). */
+        /** For your Touchque Actions only ({@code event.context}). */
         public Input context(Map<String, Object> v) {
             this.context = v;
             return this;
@@ -645,14 +645,14 @@ public final class Guard {
      * user/action/details, still waiting, and no offline switch or typed code. It can only read the
      * status, so relays do not count it against the per-user push limit.
      */
-    public static boolean isStatusPoll(TouchQueClient client, Input input) {
+    public static boolean isStatusPoll(TouchqueClient client, Input input) {
         if (empty(input.user) || empty(input.token) || input.offline || !empty(input.code)) return false;
         ObjectNode claims = Steps.verifyGuardToken(client.apiSecret(), input.token);
         if (claims == null || empty(Json.str(claims, "rid"))) return false;
         return bound(claims, input) && WAITING.contains(String.valueOf(Json.str(claims, "st")));
     }
 
-    public static Result run(TouchQueClient client, Input input);  // implementation omitted
+    public static Result run(TouchqueClient client, Input input);  // implementation omitted
     // ... private helpers omitted
 }
 
@@ -665,7 +665,7 @@ public final class Guard {
  * holds a hardware key (Secure Enclave / Android Keystore), every approval is signed over the request
  * id, the action type, the number-match code and a digest of the details the user was shown. The
  * proof arrives in the SUCCESS webhook ({@code approvalProof}) and in the consumed approval.
- * Verifying it does not require trusting TouchQue.
+ * Verifying it does not require trusting Touchque.
  */
 public final class ApprovalProof {
     private static final String MESSAGE_PREFIX = "touchque-approve:v2";
@@ -758,10 +758,10 @@ public final class Login {
     /** Reasons accepted by {@link #reportFraud}. */
     public static final List<String> FRAUD_REASONS = List.of("chargeback", "account_takeover", "social_engineering", "other");
 
-    private final TouchQueHttp http;
+    private final TouchqueHttp http;
 
     /** Internal: use {@code tq.login()}. */
-    public Login(TouchQueHttp http) {
+    public Login(TouchqueHttp http) {
         this.http = http;
     }
 
@@ -777,12 +777,12 @@ public final class Login {
      * {@code telemetryToken} for the {@code @touchque/web} widget.
      */
     public RequestResult request(LoginRequestOptions options) {
-        return TouchQueHttp.to(http.post("/login/request", options.toJson()), RequestResult.class);
+        return TouchqueHttp.to(http.post("/login/request", options.toJson()), RequestResult.class);
     }
 
     /** Where a request is now: PENDING, CONFIRMED, REJECTED or EXPIRED. */
     public Status status(String requestId) {
-        return TouchQueHttp.to(http.get("/login/status/" + TouchQueHttp.seg(requestId)), Status.class);
+        return TouchqueHttp.to(http.get("/login/status/" + TouchqueHttp.seg(requestId)), Status.class);
     }
 
     /** Asks the phone and waits for the answer. */
@@ -795,19 +795,19 @@ public final class Login {
      * option, a workspace policy, a critical action or the risk engine) the user picks a number on
      * the phone: {@code onChallenge} runs right after the request exists and before any waiting.
      *
-     * @throws TouchQuePasskeyRequiredException only a passkey can approve (policy), or the user tapped Approve during a call (step_up)
-     * @throws TouchQueRejectedException the user rejected it
-     * @throws TouchQueTimeoutException it expired or the timeout passed
+     * @throws TouchquePasskeyRequiredException only a passkey can approve (policy), or the user tapped Approve during a call (step_up)
+     * @throws TouchqueRejectedException the user rejected it
+     * @throws TouchqueTimeoutException it expired or the timeout passed
      */
     public VerifyResult verify(LoginRequestOptions options) {
-        RequestResult sent = TouchQueHttp.to(http.post("/login/request", options.toJson(false)), RequestResult.class);
-        if (sent.requiresPasskey()) throw new TouchQuePasskeyRequiredException(sent.requestId(), "policy");
+        RequestResult sent = TouchqueHttp.to(http.post("/login/request", options.toJson(false)), RequestResult.class);
+        if (sent.requiresPasskey()) throw new TouchquePasskeyRequiredException(sent.requestId(), "policy");
         if (options.onChallenge() != null) {
             try {
                 options.onChallenge().accept(new VerifyChallenge(sent.requestId(), emptyToNull(sent.challengeCode()), sent.expiresAt(), sent.reasons(), sent.caseCode()));
             } catch (RuntimeException e) {
                 // The caller's callback must not stop the wait.
-                http.log().warn("[TouchQue] onChallenge failed: " + SdkLog.describe(e));
+                http.log().warn("[Touchque] onChallenge failed: " + SdkLog.describe(e));
             }
         }
         return waitFor(sent.requestId(), sent.challengeCode(),
@@ -829,16 +829,16 @@ public final class Login {
                     // Vishing Shield: approved during a call; critical actions wait for the phone to re-confirm.
                     return new VerifyResult(true, s.status(), requestId, emptyToNull(challengeCode), s.assurance(), s.confirmedVia(), s.provisional());
                 case "REJECTED":
-                    throw new TouchQueRejectedException(requestId);
+                    throw new TouchqueRejectedException(requestId);
                 case "EXPIRED":
-                    throw new TouchQueTimeoutException("TouchQue: request '" + requestId + "' expired before it was approved.", requestId);
+                    throw new TouchqueTimeoutException("Touchque: request '" + requestId + "' expired before it was approved.", requestId);
                 default:
                     break;
             }
             // Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
-            if ("PENDING".equals(s.status()) && s.requiresPasskey()) throw new TouchQuePasskeyRequiredException(requestId, "step_up");
+            if ("PENDING".equals(s.status()) && s.requiresPasskey()) throw new TouchquePasskeyRequiredException(requestId, "step_up");
             if (Instant.now().plus(interval).isAfter(deadline)) {
-                throw new TouchQueTimeoutException("TouchQue: request '" + requestId + "' was not approved within " + timeout.toSeconds()
+                throw new TouchqueTimeoutException("Touchque: request '" + requestId + "' was not approved within " + timeout.toSeconds()
                         + "s. The user did not respond in time.", requestId);
             }
             sleep(interval);
@@ -850,7 +850,7 @@ public final class Login {
             Thread.sleep(d.toMillis());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new TouchQueNetworkException("interrupted", e);
+            throw new TouchqueNetworkException("interrupted", e);
         }
     }
 
@@ -866,12 +866,12 @@ public final class Login {
     /**
      * Uses an approved request exactly once. The first call on a CONFIRMED request wins
      * atomically; every later call (a replayed token, a retried form post) throws
-     * {@link com.touchque.TouchQueApiException} with code {@code already_used} (409). The answer
+     * {@link com.touchque.TouchqueApiException} with code {@code already_used} (409). The answer
      * has {@code approvalProof}, the phone's signature over what it showed, when the phone has a
      * hardware key.
      */
     public JsonNode consume(String requestId) {
-        return http.post("/login/" + TouchQueHttp.seg(requestId) + "/consume", Json.object());
+        return http.post("/login/" + TouchqueHttp.seg(requestId) + "/consume", Json.object());
     }
 
     /**
@@ -883,11 +883,11 @@ public final class Login {
      * @param note   free text for your audit log, at most 500 characters
      */
     public JsonNode reportFraud(String requestId, String reason, String note) {
-        if (requestId == null || requestId.isEmpty()) throw new TouchQueConfigException("reportFraud() needs the request id");
+        if (requestId == null || requestId.isEmpty()) throw new TouchqueConfigException("reportFraud() needs the request id");
         ObjectNode body = Json.object();
         Json.put(body, "reason", reason);
         Json.put(body, "note", note);
-        return http.post("/login/" + TouchQueHttp.seg(requestId) + "/report-fraud", body);
+        return http.post("/login/" + TouchqueHttp.seg(requestId) + "/report-fraud", body);
     }
 
     /** What {@code onChallenge} receives as soon as the request exists. {@code challengeCode} is the number to show, or null. */
@@ -1053,14 +1053,14 @@ public final class LoginRequestOptions {
 
     /**
      * Silent sign-ins: the browser's device-bound key proof exactly as the browser sent it
-     * ({@code X-TouchQue-Browser}). Once the user approves this request, TouchQue knows the browser.
+     * ({@code X-Touchque-Browser}). Once the user approves this request, Touchque knows the browser.
      */
     public LoginRequestOptions browserProof(String v) {
         this.browserProof = v;
         return this;
     }
 
-    /** For your TouchQue Actions only ({@code event.context}); never shown on the phone. Any JSON object up to 4 KB. */
+    /** For your Touchque Actions only ({@code event.context}); never shown on the phone. Any JSON object up to 4 KB. */
     public LoginRequestOptions context(Map<String, Object> v) {
         this.context = v;
         return this;
@@ -1078,7 +1078,7 @@ public final class LoginRequestOptions {
         return this;
     }
 
-    /** {@code tr} (default) or {@code en}: the language of the rows TouchQue adds. */
+    /** {@code tr} (default) or {@code en}: the language of the rows Touchque adds. */
     public LoginRequestOptions locale(String v) {
         this.locale = v;
         return this;
@@ -1124,7 +1124,7 @@ public final class LoginRequestOptions {
     }
 
     ObjectNode toJson(boolean withWaitFields) {
-        if (externalUsername == null || externalUsername.isEmpty()) throw new TouchQueConfigException("A login request needs the user (externalUsername)");
+        if (externalUsername == null || externalUsername.isEmpty()) throw new TouchqueConfigException("A login request needs the user (externalUsername)");
         ObjectNode body = Json.object();
         body.put("externalUsername", externalUsername);
         body.put("type", type == null || type.isEmpty() ? "LOGIN" : type);
@@ -1231,7 +1231,7 @@ public final class RelayOptions<T> {
 
     /**
      * Silent sign-ins for /login (default off): a new sign-in whose browser sent its device-bound key
-     * proof (X-TouchQue-Browser) first asks TouchQue whether anything about it is new; if nothing is,
+     * proof (X-Touchque-Browser) first asks Touchque whether anything about it is new; if nothing is,
      * it succeeds at once with no push.
      */
     public RelayOptions<T> silentSignIn(Guard.SilentSignIn v) {
@@ -1267,18 +1267,18 @@ public final class RelayHandler<T> {
     /** Reserved action: the approval on the phone that unlocks adding a passkey. */
     private static final String PASSKEY_ENROLL_ACTION = "PASSKEY_ENROLL";
 
-    private final TouchQueClient tq;
+    private final TouchqueClient tq;
     private final RelayOptions<T> o;
     private final RateLimit.Limiter limiter;
     private final boolean offlineEnabled;
 
-    public RelayHandler(TouchQueClient client, RelayOptions<T> options) {
+    public RelayHandler(TouchqueClient client, RelayOptions<T> options) {
         this.tq = client;
         this.o = options;
         this.limiter = options.rateLimit == null ? null : new RateLimit.Limiter(options.rateLimit);
         this.offlineEnabled = options.getLoginUser != null || options.allowOfflineWithoutFirstFactor;
         if (options.getLoginUser == null) {
-            client.http().log().warn("[TouchQue] RelayHandler: POST /login takes the username from the request body"
+            client.http().log().warn("[Touchque] RelayHandler: POST /login takes the username from the request body"
                     + (offlineEnabled ? ", and so do the offline routes" : "; the offline routes are disabled until you set it")
                     + ". Set getLoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.");
         }
@@ -1330,59 +1330,59 @@ public final class RelayHandler<T> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// package com.touchque.spring (touchque-spring-boot-starter) — @RequireTouchQue and its options
+// package com.touchque.spring (touchque-spring-boot-starter) — @RequireTouchque and its options
 // ─────────────────────────────────────────────────────────────
 
 /**
  * One line per protected controller method (or every method of a controller). Until the user
  * approves on their phone this answers {@code 202 {"touchque": step, "token": "..."}}; your page
  * shows the step in its own design and sends the same request again with header
- * {@code X-TouchQue-Token}. Once approved the method runs ONCE; a parameter of type
+ * {@code X-Touchque-Token}. Once approved the method runs ONCE; a parameter of type
  * {@link com.touchque.flow.Approval} receives the approval.
  *
  * <pre>{@code
  * @PostMapping("/transfer")
- * @RequireTouchQue("SEND_MONEY")
+ * @RequireTouchque("SEND_MONEY")
  * Receipt transfer(@RequestBody Transfer t, Approval approval) { … }
  * }</pre>
  *
  * Who approves is the signed-in user (email, else sub, else name). For transaction details, a
- * login route's user or silent sign-ins, declare a {@link TouchQueGuardOptions} bean for the action.
+ * login route's user or silent sign-ins, declare a {@link TouchqueGuardOptions} bean for the action.
  */
 @Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
-public @interface RequireTouchQue {
+public @interface RequireTouchque {
     /** The action type (LOGIN, SEND_MONEY…). */
     String value();
 }
 
 /**
- * How {@link RequireTouchQue} runs for one action. Declare it as a bean:
+ * How {@link RequireTouchque} runs for one action. Declare it as a bean:
  *
  * <pre>{@code
  * @Bean
- * TouchQueGuardOptions sendMoney() {
- *     return TouchQueGuardOptions.forAction("SEND_MONEY")
+ * TouchqueGuardOptions sendMoney() {
+ *     return TouchqueGuardOptions.forAction("SEND_MONEY")
  *         .details(c -> List.of(LoginDetail.of("Amount", c.argument(Transfer.class).amount())));
  * }
  * }</pre>
  */
-public final class TouchQueGuardOptions {
+public final class TouchqueGuardOptions {
     private final String action;
-    private Function<TouchQueGuardContext, String> user;
-    private Function<TouchQueGuardContext, List<LoginDetail>> details;
-    private Function<TouchQueGuardContext, String> referenceId;
-    private Function<TouchQueGuardContext, Map<String, Object>> context;
+    private Function<TouchqueGuardContext, String> user;
+    private Function<TouchqueGuardContext, List<LoginDetail>> details;
+    private Function<TouchqueGuardContext, String> referenceId;
+    private Function<TouchqueGuardContext, Map<String, Object>> context;
     private Guard.SilentSignIn silentSignIn;
     private boolean enroll = true;
 
-    private TouchQueGuardOptions(String action) {
+    private TouchqueGuardOptions(String action) {
         this.action = action;
     }
 
-    public static TouchQueGuardOptions forAction(String action) {
-        return new TouchQueGuardOptions(action);
+    public static TouchqueGuardOptions forAction(String action) {
+        return new TouchqueGuardOptions(action);
     }
 
     public String action() {
@@ -1390,57 +1390,57 @@ public final class TouchQueGuardOptions {
     }
 
     /** Who approves (default: the signed-in user). For a login route, return whoever just passed your password check. */
-    public TouchQueGuardOptions user(Function<TouchQueGuardContext, String> v) {
+    public TouchqueGuardOptions user(Function<TouchqueGuardContext, String> v) {
         this.user = v;
         return this;
     }
 
     /** Transaction details shown on the phone. Build them from server-side state or validated input. */
-    public TouchQueGuardOptions details(Function<TouchQueGuardContext, List<LoginDetail>> v) {
+    public TouchqueGuardOptions details(Function<TouchqueGuardContext, List<LoginDetail>> v) {
         this.details = v;
         return this;
     }
 
-    public TouchQueGuardOptions referenceId(Function<TouchQueGuardContext, String> v) {
+    public TouchqueGuardOptions referenceId(Function<TouchqueGuardContext, String> v) {
         this.referenceId = v;
         return this;
     }
 
-    /** For your TouchQue Actions only ({@code event.context}): roles, plan, amount… Never shown on the phone. */
-    public TouchQueGuardOptions context(Function<TouchQueGuardContext, Map<String, Object>> v) {
+    /** For your Touchque Actions only ({@code event.context}): roles, plan, amount… Never shown on the phone. */
+    public TouchqueGuardOptions context(Function<TouchqueGuardContext, Map<String, Object>> v) {
         this.context = v;
         return this;
     }
 
     /**
      * Silent sign-ins (default off): a new attempt whose browser sent its device-bound key proof
-     * ({@code X-TouchQue-Browser}) first asks TouchQue whether anything is new; if nothing is, the
+     * ({@code X-Touchque-Browser}) first asks Touchque whether anything is new; if nothing is, the
      * method runs at once with no push.
      */
-    public TouchQueGuardOptions silentSignIn(Guard.SilentSignIn v) {
+    public TouchqueGuardOptions silentSignIn(Guard.SilentSignIn v) {
         this.silentSignIn = v;
         return this;
     }
 
     /** False: never show the first-time linking QR. */
-    public TouchQueGuardOptions enroll(boolean v) {
+    public TouchqueGuardOptions enroll(boolean v) {
         this.enroll = v;
         return this;
     }
 
-    Function<TouchQueGuardContext, String> user() {
+    Function<TouchqueGuardContext, String> user() {
         return user;
     }
 
-    Function<TouchQueGuardContext, List<LoginDetail>> details() {
+    Function<TouchqueGuardContext, List<LoginDetail>> details() {
         return details;
     }
 
-    Function<TouchQueGuardContext, String> referenceId() {
+    Function<TouchqueGuardContext, String> referenceId() {
         return referenceId;
     }
 
-    Function<TouchQueGuardContext, Map<String, Object>> context() {
+    Function<TouchqueGuardContext, Map<String, Object>> context() {
         return context;
     }
 
@@ -1462,13 +1462,13 @@ public final class TouchQueGuardOptions {
  * <ul>
  * <li>bad signature or too old → 401, the listener is not called;</li>
  * <li>a replay of a delivery already accepted → 200 {@code {"received":true,"duplicate":true}}, not called again;</li>
- * <li>otherwise the listener runs and the answer is 200 {@code {"received":true}} (500 when it throws, so TouchQue retries;
+ * <li>otherwise the listener runs and the answer is 200 {@code {"received":true}} (500 when it throws, so Touchque retries;
  * the jti is released through {@code Webhook.ReplayCache.release}, so the retry runs the listener again).</li>
  * </ul>
  *
  * <pre>{@code
  * @Bean
- * TouchQueWebhookListener webhooks(Sessions sessions) {
+ * TouchqueWebhookListener webhooks(Sessions sessions) {
  *     return (event, request) -> {
  *         if (Webhook.EVENT_APPROVAL_REVOKED.equals(event.path("event").asText())) sessions.end(event.path("requestId").asText());
  *     };
@@ -1476,23 +1476,23 @@ public final class TouchQueGuardOptions {
  * }</pre>
  */
 @FunctionalInterface
-public interface TouchQueWebhookListener {
+public interface TouchqueWebhookListener {
     void onEvent(ObjectNode event, HttpServletRequest request) throws Exception;
 }
 
 /** Request helpers shared by the starter's pieces. */
-public final class TouchQueSpring {
-    /** Request attribute holding the {@link Approval} set by {@link RequireTouchQue}. */
+public final class TouchqueSpring {
+    /** Request attribute holding the {@link Approval} set by {@link RequireTouchque}. */
     public static final String APPROVAL_ATTRIBUTE = "com.touchque.approval";
     /** Request attribute holding the checked {@link McpAuth.Claims} of an MCP request. */
     public static final String MCP_CLAIMS_ATTRIBUTE = "com.touchque.mcpClaims";
 
-    private static final boolean SECURITY = ClassUtils.isPresent("org.springframework.security.core.Authentication", TouchQueSpring.class.getClassLoader());
+    private static final boolean SECURITY = ClassUtils.isPresent("org.springframework.security.core.Authentication", TouchqueSpring.class.getClassLoader());
 
-    private TouchQueSpring() {
+    private TouchqueSpring() {
     }
 
-    /** The approval of the current request (set by {@link RequireTouchQue}), or null. */
+    /** The approval of the current request (set by {@link RequireTouchque}), or null. */
     public static Approval approval(HttpServletRequest request) {
         return request.getAttribute(APPROVAL_ATTRIBUTE) instanceof Approval a ? a : null;
     }
@@ -1502,7 +1502,7 @@ public final class TouchQueSpring {
         return request.getAttribute(MCP_CLAIMS_ATTRIBUTE) instanceof McpAuth.Claims c ? c : null;
     }
 
-    /** The signed-in user as TouchQue knows them: the email claim, else sub, else the principal's name. */
+    /** The signed-in user as Touchque knows them: the email claim, else sub, else the principal's name. */
     public static String user(HttpServletRequest request) {
         Principal p = request.getUserPrincipal();
         if (p == null) return null;

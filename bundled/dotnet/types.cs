@@ -1,19 +1,19 @@
-// TouchQue .NET SDK — bundled type/API reference for AI assistants.
-// Concatenation of touchque-dotnet/src/TouchQue/{TouchQueOptions.cs,TouchQueClient.cs,Flow/Steps.cs,Flow/Guard.cs,
+// Touchque .NET SDK — bundled type/API reference for AI assistants.
+// Concatenation of touchque-dotnet/src/Touchque/{TouchqueOptions.cs,TouchqueClient.cs,Flow/Steps.cs,Flow/Guard.cs,
 // Crypto/ApprovalProof.cs,Resources/Login.cs} plus the public part of Relay/RelayHandler.cs, and
-// src/TouchQue.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchQue.cs,TouchQueRelayEndpoints.cs}.
+// src/Touchque.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchque.cs,TouchqueRelayEndpoints.cs}.
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.
 
 using Microsoft.Extensions.Logging;
 
-namespace TouchQue;
+namespace Touchque;
 
 /// <summary>
-/// Settings of a <see cref="TouchQueClient"/>. Anything left null falls back to the
+/// Settings of a <see cref="TouchqueClient"/>. Anything left null falls back to the
 /// environment: <c>TQ_API_KEY</c>, <c>TQ_API_SECRET</c> and <c>TQ_API_URL</c>
 /// (default <c>https://api.touchque.com</c>).
 /// </summary>
-public sealed class TouchQueOptions
+public sealed class TouchqueOptions
 {
     public const string DefaultBaseUrl = "https://api.touchque.com";
 
@@ -48,11 +48,11 @@ public sealed class TouchQueOptions
         if (string.IsNullOrEmpty(baseUrl)) baseUrl = DefaultBaseUrl;
         if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
         {
-            throw new TouchQueConfigException("Set TQ_API_KEY and TQ_API_SECRET (or ApiKey and ApiSecret in TouchQueOptions).");
+            throw new TouchqueConfigException("Set TQ_API_KEY and TQ_API_SECRET (or ApiKey and ApiSecret in TouchqueOptions).");
         }
         if (!apiKey.StartsWith("tq_", StringComparison.Ordinal))
         {
-            throw new TouchQueConfigException("ApiKey must start with \"tq_\". Did you accidentally swap ApiKey and ApiSecret?");
+            throw new TouchqueConfigException("ApiKey must start with \"tq_\". Did you accidentally swap ApiKey and ApiSecret?");
         }
         AssertSafeBaseUrl(baseUrl, "BaseUrl");
         return new ResolvedOptions(apiKey, apiSecret, baseUrl.TrimEnd('/'), Timeout, new Internal.SdkLog(Logger, Debug));
@@ -63,16 +63,16 @@ public sealed class TouchQueOptions
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            throw new TouchQueConfigException($"{name} is not a valid URL: {url}");
+            throw new TouchqueConfigException($"{name} is not a valid URL: {url}");
         }
         if (uri.Scheme == Uri.UriSchemeHttps) return;
         if (uri.Scheme == Uri.UriSchemeHttp)
         {
             if (IsLoopback(uri.Host)) return;
-            throw new TouchQueConfigException(
+            throw new TouchqueConfigException(
                 $"Refusing a plaintext http:// {name} for \"{uri.Host}\". The API key and request signature would be sent in the clear: use https://.");
         }
-        throw new TouchQueConfigException($"{name} must be http(s): {url}");
+        throw new TouchqueConfigException($"{name} must be http(s): {url}");
     }
 
     internal static bool IsLoopback(string host)
@@ -85,41 +85,41 @@ public sealed class TouchQueOptions
 internal sealed record ResolvedOptions(string ApiKey, string ApiSecret, string BaseUrl, TimeSpan Timeout, Internal.SdkLog Log);
 
 // ─────────────────────────────────────────────────────────────
-// From TouchQueClient.cs — the client (StartAsync/CheckAsync/CompleteAsync and the resources)
+// From TouchqueClient.cs — the client (StartAsync/CheckAsync/CompleteAsync and the resources)
 // ─────────────────────────────────────────────────────────────
 
-using TouchQue.Internal;
+using Touchque.Internal;
 
-namespace TouchQue;
+namespace Touchque;
 
 /// <summary>
-/// The TouchQue client. Every call is signed with your API secret, so it belongs on
+/// The Touchque client. Every call is signed with your API secret, so it belongs on
 /// your server; browser pieces relay through it.
 /// <code>
 /// // TQ_API_KEY=tq_…  TQ_API_SECRET=…
-/// var tq = new TouchQueClient();
+/// var tq = new TouchqueClient();
 /// var step = await tq.StartAsync("SEND_MONEY", new StartOptions { User = "jane@acme.com", Details = [("Amount", "250 EUR")] });
 /// </code>
-/// Thread-safe; create one and reuse it (in ASP.NET Core, <c>services.AddTouchQue()</c>).
+/// Thread-safe; create one and reuse it (in ASP.NET Core, <c>services.AddTouchque()</c>).
 /// </summary>
-public sealed class TouchQueClient
+public sealed class TouchqueClient
 {
-    public const string DefaultBaseUrl = TouchQueOptions.DefaultBaseUrl;
+    public const string DefaultBaseUrl = TouchqueOptions.DefaultBaseUrl;
 
-    private readonly TouchQueHttp _http;
+    private readonly TouchqueHttp _http;
 
     /// <summary>A client from the environment (<c>TQ_API_KEY</c>, <c>TQ_API_SECRET</c>, <c>TQ_API_URL</c>).</summary>
-    public TouchQueClient() : this(new TouchQueOptions()) { }
+    public TouchqueClient() : this(new TouchqueOptions()) { }
 
     /// <param name="options">Anything left null falls back to the environment.</param>
     /// <param name="httpClient">
     /// Your own HttpClient (e.g. from IHttpClientFactory). Configure it NOT to follow
     /// redirects: a redirect could replay the signed headers to another host.
     /// </param>
-    public TouchQueClient(TouchQueOptions options, HttpClient? httpClient = null)
+    public TouchqueClient(TouchqueOptions options, HttpClient? httpClient = null)
     {
         var resolved = options.Resolve();
-        _http = new TouchQueHttp(resolved, httpClient);
+        _http = new TouchqueHttp(resolved, httpClient);
         Auth = new AuthResource(_http);
         Login = new LoginResource(_http);
         WebAuthn = new WebAuthnResource(_http);
@@ -156,10 +156,10 @@ public sealed class TouchQueClient
     /// <summary>Action types: what users approve (LOGIN, SEND_MONEY…).</summary>
     public ActionTypesResource ActionTypes { get; }
 
-    /// <summary>TouchQue Actions: your own code in the approval pipeline (deploy, test, dry run, logs).</summary>
+    /// <summary>Touchque Actions: your own code in the approval pipeline (deploy, test, dry run, logs).</summary>
     public ActionsResource Actions { get; }
 
-    /// <summary>Silent sign-ins: should this sign-in ask the phone, and which browsers TouchQue knows.</summary>
+    /// <summary>Silent sign-ins: should this sign-in ask the phone, and which browsers Touchque knows.</summary>
     public RiskResource Risk { get; }
 
     /// <summary>Never Locked Out: move a user whose phone is gone to a new phone, with colleagues vouching.</summary>
@@ -168,10 +168,10 @@ public sealed class TouchQueClient
     /// <summary>Help desk: IT working on a person's account in the open, and checks on their phone before sensitive actions.</summary>
     public AssistResource Assist { get; }
 
-    /// <summary>AI agents as identities of their own. The agent itself uses <see cref="TouchQueAgent"/>.</summary>
+    /// <summary>AI agents as identities of their own. The agent itself uses <see cref="TouchqueAgent"/>.</summary>
     public AgentsResource Agents { get; }
 
-    /// <summary>TouchQue Login: your customers' accounts, roles, organizations, apps, connections (Management API).</summary>
+    /// <summary>Touchque Login: your customers' accounts, roles, organizations, apps, connections (Management API).</summary>
     public IdentityResource Identity { get; }
 
     /// <summary>Mobile SDK: your own iOS/Android app approves for your users.</summary>
@@ -183,7 +183,7 @@ public sealed class TouchQueClient
     /// <summary>Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on).</summary>
     public DeviceRiskResource DeviceRisk { get; }
 
-    /// <summary>Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard.</summary>
+    /// <summary>Safe Guard: Safe transactions approved on the approver's phone, for TouchqueSafeGuard.</summary>
     public SafeGuardResource SafeGuard { get; }
 
     internal string ApiSecret => _http.ApiSecret;
@@ -195,7 +195,7 @@ public sealed class TouchQueClient
     /// <summary>
     /// Starts an approval and returns at once: show the step in your UI. <c>waiting</c>
     /// with <c>Number</c>: show the number, the user picks it on the phone. <c>enroll</c>:
-    /// show <c>Enroll.QrCodeDataUrl</c> so the user links the TouchQue app first.
+    /// show <c>Enroll.QrCodeDataUrl</c> so the user links the Touchque app first.
     /// </summary>
     public Task<Step> StartAsync(string action, StartOptions options, CancellationToken ct = default) =>
         Steps.StartAsync(this, action, options, ct);
@@ -208,8 +208,8 @@ public sealed class TouchQueClient
     /// Uses an approved request exactly once, after checking it is for this user, action
     /// and transaction. Call it right before doing the protected thing.
     /// </summary>
-    /// <exception cref="TouchQueApprovalMismatchException">The approval is for a different user, action or transaction.</exception>
-    /// <exception cref="TouchQueApiException">409 already_used, not_approved, rejected, expired or revoked.</exception>
+    /// <exception cref="TouchqueApprovalMismatchException">The approval is for a different user, action or transaction.</exception>
+    /// <exception cref="TouchqueApiException">409 already_used, not_approved, rejected, expired or revoked.</exception>
     public Task<Approval> CompleteAsync(string requestId, CompleteExpectations expect, CancellationToken ct = default) =>
         Steps.CompleteAsync(this, requestId, expect, ct);
 
@@ -232,9 +232,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using TouchQue.Internal;
+using Touchque.Internal;
 
-namespace TouchQue;
+namespace Touchque;
 
 /// <summary>
 /// What the user has to see while an approval runs, safe to send to the browser
@@ -291,7 +291,7 @@ public sealed record Approval
     public Assurance? Assurance { get; init; }
     /// <summary>DEVICE, WEBAUTHN, OFFLINE_CODE, OFFLINE_TOTP or SILENT.</summary>
     public string? ConfirmedVia { get; init; }
-    /// <summary>The phone's signature over what it showed (<see cref="TouchQue.ApprovalProof"/>).</summary>
+    /// <summary>The phone's signature over what it showed (<see cref="Touchque.ApprovalProof"/>).</summary>
     public JsonObject? ApprovalProof { get; init; }
     /// <summary>
     /// Vishing Shield: approved during a call. Let the user in, but treat the session as
@@ -301,7 +301,7 @@ public sealed record Approval
     public bool? Revoked { get; init; }
     public string? RevokeReason { get; init; }
     public string? ReconfirmedAt { get; init; }
-    /// <summary>Silent sign-ins: why TouchQue let this known browser in (nothing went to the phone).</summary>
+    /// <summary>Silent sign-ins: why Touchque let this known browser in (nothing went to the phone).</summary>
     public IReadOnlyList<RiskReason>? Reasons { get; init; }
 }
 
@@ -315,15 +315,15 @@ public sealed record StartOptions
     /// <summary>The end user's IP.</summary>
     public string? Ip { get; init; }
     public string? UserAgent { get; init; }
-    /// <summary>Silent sign-ins: the <c>X-TouchQue-Browser</c> header, passed through untouched.</summary>
+    /// <summary>Silent sign-ins: the <c>X-Touchque-Browser</c> header, passed through untouched.</summary>
     public string? BrowserProof { get; init; }
-    /// <summary>For your TouchQue Actions only (<c>event.context</c>).</summary>
+    /// <summary>For your Touchque Actions only (<c>event.context</c>).</summary>
     public IReadOnlyDictionary<string, object?>? Context { get; init; }
     /// <summary>False: never show the first-time linking QR (a typed username proves nothing).</summary>
     public bool Enroll { get; init; } = true;
 }
 
-/// <summary>What an approved request must be for (checked by <see cref="TouchQueClient.CompleteAsync"/>).</summary>
+/// <summary>What an approved request must be for (checked by <see cref="TouchqueClient.CompleteAsync"/>).</summary>
 public sealed record CompleteExpectations
 {
     public required string User { get; init; }
@@ -343,10 +343,10 @@ internal static class Steps
         ["PENDING"] = "waiting", ["CONFIRMED"] = "approved", ["REJECTED"] = "rejected", ["EXPIRED"] = "expired",
     };
 
-    public static async Task<Step> StartAsync(TouchQueClient client, string action, StartOptions o, CancellationToken ct)
+    public static async Task<Step> StartAsync(TouchqueClient client, string action, StartOptions o, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(o.User)) throw new TouchQueConfigException("StartAsync() needs the user id");
-        var norm = TouchQue.Details.Normalize(o.Details);
+        if (string.IsNullOrEmpty(o.User)) throw new TouchqueConfigException("StartAsync() needs the user id");
+        var norm = Touchque.Details.Normalize(o.Details);
         var details = norm.Count > 0 ? norm : null;
         try
         {
@@ -383,7 +383,7 @@ internal static class Steps
                 Canary = canary,
             };
         }
-        catch (TouchQueApiException e)
+        catch (TouchqueApiException e)
         {
             var code = e.Code ?? e.Error;
             var caseCode = e.CaseCode;
@@ -395,7 +395,7 @@ internal static class Steps
             if (e.Status == 429) return new Step { State = "rate_limited", RetryAfter = e.RetryAfter, CaseCode = caseCode };
             if (e.Status == 400 && (code == "unknown_action" || e.Message.Contains("invalid action type", StringComparison.OrdinalIgnoreCase)))
             {
-                throw new TouchQueConfigException($"Unknown action \"{action}\". Create it once with client.ActionTypes.DefineAsync(\"{action}\") or in the dashboard (Action Types).");
+                throw new TouchqueConfigException($"Unknown action \"{action}\". Create it once with client.ActionTypes.DefineAsync(\"{action}\") or in the dashboard (Action Types).");
             }
             if (e.Status == 403)
             {
@@ -410,21 +410,21 @@ internal static class Steps
     }
 
     /// <summary>First-time linking. Never unlinks a phone: a secret is only re-issued when the account is confirmed NOT linked.</summary>
-    private static async Task<Step> EnrollStepAsync(TouchQueClient client, string user, CancellationToken ct)
+    private static async Task<Step> EnrollStepAsync(TouchqueClient client, string user, CancellationToken ct)
     {
         try
         {
             var gen = await client.Auth.GenerateSecretAsync(user, ct).ConfigureAwait(false);
             return new Step { State = "enroll", Enroll = new StepEnroll { QrCodeDataUrl = gen.QrCodeDataUrl, RecoveryCodes = gen.RecoveryCodes, ExpiresAt = gen.ExpiresAt } };
         }
-        catch (TouchQueApiException e) when (e.Status == 409)
+        catch (TouchqueApiException e) when (e.Status == 409)
         {
-            TouchQueUser? current = null;
+            TouchqueUser? current = null;
             try
             {
                 current = await client.Auth.GetUserAsync(user, ct).ConfigureAwait(false);
             }
-            catch (TouchQueApiException)
+            catch (TouchqueApiException)
             {
                 // unknown user: reset below
             }
@@ -437,23 +437,23 @@ internal static class Steps
         }
     }
 
-    public static async Task<Step> CheckAsync(TouchQueClient client, string requestId, CancellationToken ct)
+    public static async Task<Step> CheckAsync(TouchqueClient client, string requestId, CancellationToken ct)
     {
         var s = await client.Login.StatusAsync(requestId, ct).ConfigureAwait(false);
         var state = s.Status == "PENDING" && s.RequiresPasskey ? "passkey_required" : StateMap.GetValueOrDefault(s.Status, "waiting");
         return new Step { State = state, RequestId = requestId, Assurance = state == "approved" ? s.Assurance : null };
     }
 
-    public static async Task<Approval> CompleteAsync(TouchQueClient client, string requestId, CompleteExpectations expect, CancellationToken ct)
+    public static async Task<Approval> CompleteAsync(TouchqueClient client, string requestId, CompleteExpectations expect, CancellationToken ct)
     {
         var res = await client.Login.ConsumeAsync(requestId, ct).ConfigureAwait(false);
         var sameUser = string.Equals(res.ExternalUsername, expect.User, StringComparison.OrdinalIgnoreCase);
-        var sameDetails = TouchQue.Details.Digest(expect.Details) == TouchQue.Details.Digest(res.Details);
+        var sameDetails = Touchque.Details.Digest(expect.Details) == Touchque.Details.Digest(res.Details);
         // An empty reference is no reference: StartAsync does not send one, so Touchque keeps null.
         var sameRef = (string.IsNullOrEmpty(res.ReferenceId) ? null : res.ReferenceId) == (string.IsNullOrEmpty(expect.ReferenceId) ? null : expect.ReferenceId);
         if (!sameUser || res.Type != expect.Action || !sameDetails || !sameRef)
         {
-            throw new TouchQueApprovalMismatchException("this approval is for a different user, action or transaction.");
+            throw new TouchqueApprovalMismatchException("this approval is for a different user, action or transaction.");
         }
         return new Approval
         {
@@ -514,9 +514,9 @@ internal static class StepJson
 // ─────────────────────────────────────────────────────────────
 
 using System.Text.Json.Nodes;
-using TouchQue.Internal;
+using Touchque.Internal;
 
-namespace TouchQue;
+namespace Touchque;
 
 /// <summary>Silent sign-ins for a guard or relay: off by default.</summary>
 public sealed record SilentSignInOptions
@@ -536,21 +536,21 @@ public sealed record GuardInput
     /// <summary>The end user's IP.</summary>
     public string? Ip { get; init; }
     public string? UserAgent { get; init; }
-    /// <summary><c>X-TouchQue-Token</c>: the token from the last answer.</summary>
+    /// <summary><c>X-Touchque-Token</c>: the token from the last answer.</summary>
     public string? Token { get; init; }
-    /// <summary><c>X-TouchQue-Offline: 1</c>: switch to offline approval.</summary>
+    /// <summary><c>X-Touchque-Offline: 1</c>: switch to offline approval.</summary>
     public bool Offline { get; init; }
-    /// <summary><c>X-TouchQue-Code</c>: the code from the phone.</summary>
+    /// <summary><c>X-Touchque-Code</c>: the code from the phone.</summary>
     public string? Code { get; init; }
-    /// <summary><c>X-TouchQue-Code-Type</c>: totp for the rolling time-based code.</summary>
+    /// <summary><c>X-Touchque-Code-Type</c>: totp for the rolling time-based code.</summary>
     public string? CodeType { get; init; }
     /// <summary>False: never show the first-time linking QR.</summary>
     public bool Enroll { get; init; } = true;
-    /// <summary><c>X-TouchQue-Browser</c>: the browser's device-bound key proof.</summary>
+    /// <summary><c>X-Touchque-Browser</c>: the browser's device-bound key proof.</summary>
     public string? BrowserProof { get; init; }
     /// <summary>Null: silent sign-ins off.</summary>
     public SilentSignInOptions? SilentSignIn { get; init; }
-    /// <summary>For your TouchQue Actions only (<c>event.context</c>).</summary>
+    /// <summary>For your Touchque Actions only (<c>event.context</c>).</summary>
     public IReadOnlyDictionary<string, object?>? Context { get; init; }
 }
 
@@ -571,21 +571,21 @@ public sealed record GuardResult
 }
 
 /// <summary>
-/// Framework-agnostic step-up guard (ASP.NET Core's <c>RequireTouchQue</c> is a thin
-/// wrapper over it). Contract, the same in every TouchQue server SDK:
+/// Framework-agnostic step-up guard (ASP.NET Core's <c>RequireTouchque</c> is a thin
+/// wrapper over it). Contract, the same in every Touchque server SDK:
 /// <list type="bullet">
 /// <item>1st request → 202 <c>{"touchque": step, "token": ...}</c>: show the step in your UI;</item>
-/// <item>repeat with the token (header <c>X-TouchQue-Token</c>) → 202 while waiting, then the protected action runs once;</item>
+/// <item>repeat with the token (header <c>X-Touchque-Token</c>) → 202 while waiting, then the protected action runs once;</item>
 /// <item>refused → 403 / 408 / 423 / 429 <c>{"touchque": {"state": ...}}</c>.</item>
 /// </list>
 /// </summary>
 public static class Guard
 {
-    public const string TokenHeader = "X-TouchQue-Token";
-    public const string OfflineHeader = "X-TouchQue-Offline";
-    public const string CodeHeader = "X-TouchQue-Code";
-    public const string CodeTypeHeader = "X-TouchQue-Code-Type";
-    public const string BrowserHeader = "X-TouchQue-Browser";
+    public const string TokenHeader = "X-Touchque-Token";
+    public const string OfflineHeader = "X-Touchque-Offline";
+    public const string CodeHeader = "X-Touchque-Code";
+    public const string CodeTypeHeader = "X-Touchque-Code-Type";
+    public const string BrowserHeader = "X-Touchque-Browser";
 
     private const long TokenTtlMs = 10 * 60 * 1000;
     /// <summary>A real proof is a few hundred characters; anything far larger is not one.</summary>
@@ -605,7 +605,7 @@ public static class Guard
     /// code. It can only read the status, so relays do not count it against the
     /// per-user push limit.
     /// </summary>
-    public static bool IsStatusPoll(TouchQueClient client, GuardInput input)
+    public static bool IsStatusPoll(TouchqueClient client, GuardInput input)
     {
         if (string.IsNullOrEmpty(input.User) || string.IsNullOrEmpty(input.Token) || input.Offline || !string.IsNullOrEmpty(input.Code)) return false;
         var claims = Steps.VerifyGuardToken(client.ApiSecret, input.Token);
@@ -619,12 +619,12 @@ public static class Guard
 
     /// <summary>
     /// Runs one step of the guard. Silent sign-ins: with <see cref="GuardInput.SilentSignIn"/>
-    /// set, a new attempt that carries a browser proof first asks TouchQue
+    /// set, a new attempt that carries a browser proof first asks Touchque
     /// (<c>Risk.CheckAsync</c>); when it answers exactly <c>prompt: false</c> the guard
     /// approves at once with no push (<c>assurance.method</c> silent, <c>ConfirmedVia</c>
     /// SILENT, <c>RequestId</c> silent). Otherwise, and on any error, the usual push starts.
     /// </summary>
-    public static async Task<GuardResult> RunAsync(TouchQueClient client, GuardInput input, CancellationToken ct = default)
+    public static async Task<GuardResult> RunAsync(TouchqueClient client, GuardInput input, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(input.User))
         {
@@ -717,7 +717,7 @@ public static class Guard
                     };
                     return Issue(new Step { State = "offline", Offline = offline }, new JsonObject { ["rid"] = rid, ["n"] = offline.ChallengeCode ?? n });
                 }
-                catch (TouchQueApiException e)
+                catch (TouchqueApiException e)
                 {
                     var code = e.Code ?? e.Error;
                     if (e.Status == 409 && code == "request_rejected") return Issue(new Step { State = "rejected", RequestId = rid, Reason = "request_rejected" });
@@ -745,7 +745,7 @@ public static class Guard
                         }, ct).ConfigureAwait(false);
                         return new GuardResult { Status = 200, Approved = approval };
                     }
-                    catch (TouchQueApiException e) when (e.Status == 409)
+                    catch (TouchqueApiException e) when (e.Status == 409)
                     {
                         return Issue(new Step { State = "expired", Reason = e.Code ?? "already_used" });
                     }
@@ -782,15 +782,15 @@ public static class Guard
             }, ct).ConfigureAwait(false);
             return Issue(step);
         }
-        catch (TouchQueConfigException e)
+        catch (TouchqueConfigException e)
         {
-            client.Log.Error("[TouchQue] " + e.Message);
+            client.Log.Error("[Touchque] " + e.Message);
             return Error(500, new Step { State = "blocked", Reason = "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.");
         }
         // A mismatch here means Touchque holds another transaction than this request: fail closed, never a 500.
-        catch (Exception e) when (e is TouchQueNetworkException or TouchQueApiException or TouchQueApprovalMismatchException)
+        catch (Exception e) when (e is TouchqueNetworkException or TouchqueApiException or TouchqueApprovalMismatchException)
         {
-            client.Log.Error("[TouchQue] approval failed: " + SdkLog.Describe(e));
+            client.Log.Error("[Touchque] approval failed: " + SdkLog.Describe(e));
             return Error(503, new Step { State = "blocked", Reason = "unavailable" }, "unavailable", "Two-factor approval is temporarily unavailable.");
         }
     }
@@ -803,10 +803,10 @@ public static class Guard
     };
 
     /// <summary>
-    /// Asks TouchQue whether this known browser may sign in without the phone. Fails
+    /// Asks Touchque whether this known browser may sign in without the phone. Fails
     /// closed: only an answer of exactly <c>prompt: false</c> approves.
     /// </summary>
-    private static async Task<Approval?> SilentApprovalAsync(TouchQueClient client, GuardInput input, string proof, CancellationToken ct)
+    private static async Task<Approval?> SilentApprovalAsync(TouchqueClient client, GuardInput input, string proof, CancellationToken ct)
     {
         try
         {
@@ -821,13 +821,13 @@ public static class Guard
                 RequestId = "silent", User = input.User!, Action = input.Action,
                 Assurance = new Assurance { PhishingResistant = false, Method = "silent" },
                 ConfirmedVia = "SILENT",
-                // Nothing was sent to the phone; why TouchQue let this known browser in.
+                // Nothing was sent to the phone; why Touchque let this known browser in.
                 Reasons = res.Reasons,
             };
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            client.Log.Warn("[TouchQue] silent sign-in check failed, asking the phone: " + SdkLog.Describe(e));
+            client.Log.Warn("[Touchque] silent sign-in check failed, asking the phone: " + SdkLog.Describe(e));
             return null;
         }
     }
@@ -840,9 +840,9 @@ public static class Guard
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
-using TouchQue.Internal;
+using Touchque.Internal;
 
-namespace TouchQue;
+namespace Touchque;
 
 /// <summary>Transaction details the way the API normalizes and digests them.</summary>
 public static class Details
@@ -916,7 +916,7 @@ public sealed record ApprovalProofOptions
 /// every approval is signed over the request id, the action type, the number-match
 /// code and a digest of the details the user was shown. The proof arrives in the
 /// SUCCESS webhook (<c>approvalProof</c>) and in the consumed approval. Verifying it
-/// does not require trusting TouchQue.
+/// does not require trusting Touchque.
 /// </summary>
 public static class ApprovalProof
 {
@@ -965,9 +965,9 @@ public static class ApprovalProof
 // ─────────────────────────────────────────────────────────────
 
 using System.Text.Json.Nodes;
-using TouchQue.Internal;
+using Touchque.Internal;
 
-namespace TouchQue;
+namespace Touchque;
 
 /// <summary>Push approvals on the user's phone: request, status, wait, use once, report fraud.</summary>
 public sealed class LoginResource
@@ -975,9 +975,9 @@ public sealed class LoginResource
     /// <summary>Reasons accepted by <see cref="ReportFraudAsync"/>.</summary>
     public static readonly IReadOnlyList<string> FraudReasons = new[] { "chargeback", "account_takeover", "social_engineering", "other" };
 
-    private readonly TouchQueHttp _http;
+    private readonly TouchqueHttp _http;
 
-    internal LoginResource(TouchQueHttp http) => _http = http;
+    internal LoginResource(TouchqueHttp http) => _http = http;
 
     /// <summary>A push to the user's phone (returns at once; see <see cref="VerifyAsync(LoginRequestOptions, CancellationToken)"/> to wait).</summary>
     public Task<LoginRequestResult> RequestAsync(string externalUsername, string type = "LOGIN", CancellationToken ct = default) =>
@@ -995,7 +995,7 @@ public sealed class LoginResource
 
     /// <summary>Where a request is now: PENDING, CONFIRMED, REJECTED or EXPIRED.</summary>
     public Task<LoginStatus> StatusAsync(string requestId, CancellationToken ct = default) =>
-        _http.GetAsync<LoginStatus>("/login/status/" + TouchQueHttp.Seg(requestId), null, ct);
+        _http.GetAsync<LoginStatus>("/login/status/" + TouchqueHttp.Seg(requestId), null, ct);
 
     /// <summary>Asks the phone and waits for the answer.</summary>
     public Task<VerifyResult> VerifyAsync(string externalUsername, string type = "LOGIN", CancellationToken ct = default) =>
@@ -1008,15 +1008,15 @@ public sealed class LoginResource
     /// runs right after the request exists and before any waiting. Show
     /// <c>ChallengeCode</c> to the user now; the phone asks for it.
     /// </summary>
-    /// <exception cref="TouchQuePasskeyRequiredException">Only a passkey can approve (policy), or the user tapped Approve during a call (step_up).</exception>
-    /// <exception cref="TouchQueRejectedException">The user rejected it.</exception>
-    /// <exception cref="TouchQueTimeoutException">It expired or <see cref="LoginRequestOptions.Timeout"/> passed.</exception>
+    /// <exception cref="TouchquePasskeyRequiredException">Only a passkey can approve (policy), or the user tapped Approve during a call (step_up).</exception>
+    /// <exception cref="TouchqueRejectedException">The user rejected it.</exception>
+    /// <exception cref="TouchqueTimeoutException">It expired or <see cref="LoginRequestOptions.Timeout"/> passed.</exception>
     public async Task<VerifyResult> VerifyAsync(LoginRequestOptions options, CancellationToken ct = default)
     {
         var sent = await RequestAsync(options, ct).ConfigureAwait(false);
         if (sent.RequiresPasskey)
         {
-            throw new TouchQuePasskeyRequiredException(sent.RequestId);
+            throw new TouchquePasskeyRequiredException(sent.RequestId);
         }
         if (options.OnChallenge is { } onChallenge)
         {
@@ -1034,7 +1034,7 @@ public sealed class LoginResource
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 // The caller's callback must not stop the wait.
-                _http.Log.Warn("[TouchQue] OnChallenge failed: " + SdkLog.Describe(e));
+                _http.Log.Warn("[Touchque] OnChallenge failed: " + SdkLog.Describe(e));
             }
         }
         return await WaitAsync(sent.RequestId, sent.ChallengeCode, options.Timeout ?? TimeSpan.FromSeconds(30), options.PollInterval ?? TimeSpan.FromMilliseconds(400), ct).ConfigureAwait(false);
@@ -1065,19 +1065,19 @@ public sealed class LoginResource
                         Provisional = s.Provisional,
                     };
                 case "REJECTED":
-                    throw new TouchQueRejectedException(requestId);
+                    throw new TouchqueRejectedException(requestId);
                 case "EXPIRED":
-                    throw new TouchQueTimeoutException($"TouchQue: request '{requestId}' expired before it was approved.", requestId);
+                    throw new TouchqueTimeoutException($"Touchque: request '{requestId}' expired before it was approved.", requestId);
             }
             // Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
             if (s.Status == "PENDING" && s.RequiresPasskey)
             {
-                throw new TouchQuePasskeyRequiredException(requestId, "step_up");
+                throw new TouchquePasskeyRequiredException(requestId, "step_up");
             }
             if (DateTimeOffset.UtcNow + interval > deadline)
             {
-                throw new TouchQueTimeoutException(
-                    $"TouchQue: request '{requestId}' was not approved within {timeout.TotalSeconds:0}s. The user did not respond in time.", requestId);
+                throw new TouchqueTimeoutException(
+                    $"Touchque: request '{requestId}' was not approved within {timeout.TotalSeconds:0}s. The user did not respond in time.", requestId);
             }
             await Task.Delay(interval, ct).ConfigureAwait(false);
         }
@@ -1090,10 +1090,10 @@ public sealed class LoginResource
     /// <summary>
     /// Uses an approved request exactly once. The first call on a CONFIRMED request
     /// wins atomically; every later call (a replayed token, a retried form post)
-    /// throws <see cref="TouchQueApiException"/> with code <c>already_used</c> (409).
+    /// throws <see cref="TouchqueApiException"/> with code <c>already_used</c> (409).
     /// </summary>
     public Task<ConsumeResult> ConsumeAsync(string requestId, CancellationToken ct = default) =>
-        _http.PostAsync<ConsumeResult>("/login/" + TouchQueHttp.Seg(requestId) + "/consume", new JsonObject(), ct);
+        _http.PostAsync<ConsumeResult>("/login/" + TouchqueHttp.Seg(requestId) + "/consume", new JsonObject(), ct);
 
     /// <summary>
     /// Reports a request you later learned was fraud (a chargeback, a confirmed
@@ -1105,9 +1105,9 @@ public sealed class LoginResource
     /// <param name="note">Free text for your audit log, at most 500 characters.</param>
     public Task<FraudReport> ReportFraudAsync(string requestId, string? reason = null, string? note = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(requestId)) throw new TouchQueConfigException("ReportFraudAsync() needs the request id");
+        if (string.IsNullOrEmpty(requestId)) throw new TouchqueConfigException("ReportFraudAsync() needs the request id");
         var body = new JsonObject().Put("reason", reason).Put("note", note);
-        return _http.PostAsync<FraudReport>("/login/" + TouchQueHttp.Seg(requestId) + "/report-fraud", body, ct);
+        return _http.PostAsync<FraudReport>("/login/" + TouchqueHttp.Seg(requestId) + "/report-fraud", body, ct);
     }
 }
 
@@ -1151,7 +1151,7 @@ public sealed record LoginRequestOptions
     public string? DeviceRiskRequestId { get; init; }
 
     /// <summary>
-    /// A browser pairing by QR code (<see cref="TouchQueClient.QrPairings"/>), scanned and confirmed on the phone:
+    /// A browser pairing by QR code (<see cref="TouchqueClient.QrPairings"/>), scanned and confirmed on the phone:
     /// only the phone that scanned it is asked, once, with number matching, for the user it scanned for.
     /// </summary>
     public string? QrPairing { get; init; }
@@ -1168,12 +1168,12 @@ public sealed record LoginRequestOptions
 
     /// <summary>
     /// Silent sign-ins: the browser's device-bound key proof exactly as the browser
-    /// sent it (<c>X-TouchQue-Browser</c>). Once the user approves this request,
-    /// TouchQue knows the browser.
+    /// sent it (<c>X-Touchque-Browser</c>). Once the user approves this request,
+    /// Touchque knows the browser.
     /// </summary>
     public string? BrowserProof { get; init; }
 
-    /// <summary>For your TouchQue Actions only (<c>event.context</c>); never shown on the phone. Any JSON object up to 4 KB.</summary>
+    /// <summary>For your Touchque Actions only (<c>event.context</c>); never shown on the phone. Any JSON object up to 4 KB.</summary>
     public IReadOnlyDictionary<string, object?>? Context { get; init; }
 
     /// <summary>When the user's sign-in security last changed in your system.</summary>
@@ -1182,7 +1182,7 @@ public sealed record LoginRequestOptions
     /// <summary>Where the action sends money or value (shown in full on the phone; do not repeat it in Details).</summary>
     public Destination? Destination { get; init; }
 
-    /// <summary><c>tr</c> (default) or <c>en</c>: the language of the rows TouchQue adds.</summary>
+    /// <summary><c>tr</c> (default) or <c>en</c>: the language of the rows Touchque adds.</summary>
     public string? Locale { get; init; }
 
     /// <summary>VerifyAsync only: how long to wait (default 30 seconds; with a longer <see cref="ExpiresIn"/>, set it to match).</summary>
@@ -1200,7 +1200,7 @@ public sealed record LoginRequestOptions
 
     internal JsonObject ToJson()
     {
-        if (string.IsNullOrEmpty(ExternalUsername)) throw new TouchQueConfigException("A login request needs the user (ExternalUsername)");
+        if (string.IsNullOrEmpty(ExternalUsername)) throw new TouchqueConfigException("A login request needs the user (ExternalUsername)");
         var body = new JsonObject { ["externalUsername"] = ExternalUsername, ["type"] = string.IsNullOrEmpty(Type) ? "LOGIN" : Type };
         body.Put("referenceId", ReferenceId).Put("clientIp", ClientIp).Put("userAgent", UserAgent);
         if (RequireBiometric) body["requireBiometric"] = true;
@@ -1241,7 +1241,7 @@ public sealed record VerifyChallenge
     public string? CaseCode { get; init; }
 }
 
-public sealed record LoginRequestResult : TouchQueObject
+public sealed record LoginRequestResult : TouchqueObject
 {
     public string RequestId { get; init; } = "";
     /// <summary>The number to show the user with number matching (null otherwise).</summary>
@@ -1263,7 +1263,7 @@ public sealed record LoginRequestResult : TouchQueObject
     public DestinationCheck? Destination { get; init; }
 }
 
-public sealed record LoginStatus : TouchQueObject
+public sealed record LoginStatus : TouchqueObject
 {
     /// <summary>PENDING, CONFIRMED, REJECTED or EXPIRED.</summary>
     public string Status { get; init; } = "";
@@ -1286,7 +1286,7 @@ public sealed record LoginStatus : TouchQueObject
     public LoginReply? Reply { get; init; }
 }
 
-public sealed record VerifyResult : TouchQueObject
+public sealed record VerifyResult : TouchqueObject
 {
     public bool Approved { get; init; }
     public string Status { get; init; } = "";
@@ -1298,7 +1298,7 @@ public sealed record VerifyResult : TouchQueObject
     public bool Provisional { get; init; }
 }
 
-public sealed record ConsumeResult : TouchQueObject
+public sealed record ConsumeResult : TouchqueObject
 {
     public bool Consumed { get; init; }
     public string RequestId { get; init; } = "";
@@ -1316,7 +1316,7 @@ public sealed record ConsumeResult : TouchQueObject
     public string? RevokeReason { get; init; }
 }
 
-public sealed record FraudReport : TouchQueObject
+public sealed record FraudReport : TouchqueObject
 {
     public bool Reported { get; init; }
     public bool AlreadyReported { get; init; }
@@ -1328,9 +1328,9 @@ public sealed record FraudReport : TouchQueObject
 // ─────────────────────────────────────────────────────────────
 
 using System.Text.Json.Nodes;
-using TouchQue.Internal;
+using Touchque.Internal;
 
-namespace TouchQue.Relay;
+namespace Touchque.Relay;
 
 /// <summary>
 /// What the relay wants sent back: a status, a JSON body and headers.
@@ -1427,7 +1427,7 @@ public sealed record RelayOptions<TRequest>
 
     /// <summary>
     /// Silent sign-ins for /login (default off): a new sign-in whose browser sent its
-    /// device-bound key proof (X-TouchQue-Browser) first asks TouchQue whether anything
+    /// device-bound key proof (X-Touchque-Browser) first asks Touchque whether anything
     /// about it is new; if nothing is, it succeeds at once with no push.
     /// </summary>
     public SilentSignInOptions? SilentSignIn { get; init; }
@@ -1463,12 +1463,12 @@ public sealed class RelayHandler<TRequest>
 
     private static int _warned;
 
-    private readonly TouchQueClient _tq;
+    private readonly TouchqueClient _tq;
     private readonly RelayOptions<TRequest> _o;
     private readonly FixedWindowLimiter? _limiter;
     private readonly bool _offlineEnabled;
 
-    public RelayHandler(TouchQueClient client, RelayOptions<TRequest> options)
+    public RelayHandler(TouchqueClient client, RelayOptions<TRequest> options)
     {
         _tq = client;
         _o = options;
@@ -1476,7 +1476,7 @@ public sealed class RelayHandler<TRequest>
         _offlineEnabled = options.GetLoginUser is not null || options.AllowOfflineWithoutFirstFactor;
         if (options.GetLoginUser is null && Interlocked.Exchange(ref _warned, 1) == 0)
         {
-            client.Log.Warn("[TouchQue] RelayHandler: POST /login takes the username from the request body"
+            client.Log.Warn("[Touchque] RelayHandler: POST /login takes the username from the request body"
                 + (_offlineEnabled ? ", and so do the offline routes" : "; the offline routes are disabled until you set it")
                 + ". Set GetLoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.");
         }
@@ -1516,7 +1516,7 @@ public sealed class RelayHandler<TRequest>
 }
 
 // ─────────────────────────────────────────────────────────────
-// From TouchQue.AspNetCore/ServiceCollectionExtensions.cs — services.AddTouchQue()
+// From Touchque.AspNetCore/ServiceCollectionExtensions.cs — services.AddTouchque()
 // ─────────────────────────────────────────────────────────────
 
 using System.Security.Claims;
@@ -1525,34 +1525,34 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
-namespace TouchQue.AspNetCore;
+namespace Touchque.AspNetCore;
 
-/// <summary>Registers TouchQue in an ASP.NET Core (or any Microsoft.Extensions.Hosting) app.</summary>
-public static class TouchQueServiceCollectionExtensions
+/// <summary>Registers Touchque in an ASP.NET Core (or any Microsoft.Extensions.Hosting) app.</summary>
+public static class TouchqueServiceCollectionExtensions
 {
     /// <summary>The named HttpClient the client uses (IHttpClientFactory).</summary>
-    public const string HttpClientName = "TouchQue";
+    public const string HttpClientName = "Touchque";
 
     /// <summary>
-    /// Registers <see cref="TouchQueClient"/> as a singleton, its options (from
+    /// Registers <see cref="TouchqueClient"/> as a singleton, its options (from
     /// <paramref name="configure"/>, then the environment: TQ_API_KEY, TQ_API_SECRET,
     /// TQ_API_URL), an in-process <see cref="IWebhookReplayCache"/>, and the named
-    /// HttpClient <c>TouchQue</c> (never following redirects; connections recycled every 5
+    /// HttpClient <c>Touchque</c> (never following redirects; connections recycled every 5
     /// minutes). The returned builder adds handlers (logging, a proxy). Do not add a retry
     /// handler: every request is signed with a one-time nonce, so a replay is refused;
-    /// retry <see cref="TouchQueNetworkException"/> at the call site instead.
+    /// retry <see cref="TouchqueNetworkException"/> at the call site instead.
     /// </summary>
-    public static IHttpClientBuilder AddTouchQue(this IServiceCollection services, Action<TouchQueOptions>? configure = null)
+    public static IHttpClientBuilder AddTouchque(this IServiceCollection services, Action<TouchqueOptions>? configure = null)
     {
-        var options = services.AddOptions<TouchQueOptions>();
+        var options = services.AddOptions<TouchqueOptions>();
         if (configure is not null) options.Configure(configure);
         services.TryAddSingleton<IWebhookReplayCache, MemoryReplayCache>();
         services.TryAddSingleton(sp =>
         {
-            var o = sp.GetRequiredService<IOptions<TouchQueOptions>>().Value;
+            var o = sp.GetRequiredService<IOptions<TouchqueOptions>>().Value;
             var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient(HttpClientName);
-            http.Timeout = Timeout.InfiniteTimeSpan; // the client applies TouchQueOptions.Timeout per request
-            return new TouchQueClient(o, http);
+            http.Timeout = Timeout.InfiniteTimeSpan; // the client applies TouchqueOptions.Timeout per request
+            return new TouchqueClient(o, http);
         });
         return services.AddHttpClient(HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -1564,24 +1564,24 @@ public static class TouchQueServiceCollectionExtensions
 }
 
 /// <summary>Helpers shared by the ASP.NET Core integrations.</summary>
-public static class TouchQueHttpContextExtensions
+public static class TouchqueHttpContextExtensions
 {
-    internal const string ApprovalKey = "TouchQue.Approval";
-    internal const string McpClaimsKey = "TouchQue.McpClaims";
+    internal const string ApprovalKey = "Touchque.Approval";
+    internal const string McpClaimsKey = "Touchque.McpClaims";
 
-    /// <summary>The approval of the current request (set by <c>RequireTouchQue</c>), or null.</summary>
-    public static Approval? GetTouchQueApproval(this HttpContext context) =>
+    /// <summary>The approval of the current request (set by <c>RequireTouchque</c>), or null.</summary>
+    public static Approval? GetTouchqueApproval(this HttpContext context) =>
         context.Items.TryGetValue(ApprovalKey, out var a) ? a as Approval : null;
 
-    /// <summary>The checked MCP token of the current request (set by <c>RequireTouchQueMcp</c>), or null.</summary>
-    public static McpAuthClaims? GetTouchQueMcpClaims(this HttpContext context) =>
+    /// <summary>The checked MCP token of the current request (set by <c>RequireTouchqueMcp</c>), or null.</summary>
+    public static McpAuthClaims? GetTouchqueMcpClaims(this HttpContext context) =>
         context.Items.TryGetValue(McpClaimsKey, out var c) ? c as McpAuthClaims : null;
 
     /// <summary>
-    /// The signed-in user as TouchQue knows them: the email claim, else the name
+    /// The signed-in user as Touchque knows them: the email claim, else the name
     /// identifier (sub), else the name.
     /// </summary>
-    public static string? TouchQueUser(this ClaimsPrincipal? user)
+    public static string? TouchqueUser(this ClaimsPrincipal? user)
     {
         if (user?.Identity?.IsAuthenticated != true) return null;
         return First(user, "email", ClaimTypes.Email) ?? First(user, "sub", ClaimTypes.NameIdentifier) ?? First(user, "name", ClaimTypes.Name) ?? user.Identity?.Name;
@@ -1601,7 +1601,7 @@ public static class TouchQueHttpContextExtensions
     /// The END user's IP (IPv4-mapped addresses as IPv4). Behind a proxy, add
     /// <c>app.UseForwardedHeaders()</c> with your proxy as a known proxy first.
     /// </summary>
-    public static string? TouchQueClientIp(this HttpContext context)
+    public static string? TouchqueClientIp(this HttpContext context)
     {
         var ip = context.Connection.RemoteIpAddress;
         if (ip is null) return null;
@@ -1617,7 +1617,7 @@ public static class TouchQueHttpContextExtensions
 }
 
 // ─────────────────────────────────────────────────────────────
-// From TouchQue.AspNetCore/RequireTouchQue.cs — .RequireTouchQue("ACTION") / [RequireTouchQue("ACTION")]
+// From Touchque.AspNetCore/RequireTouchque.cs — .RequireTouchque("ACTION") / [RequireTouchque("ACTION")]
 // ─────────────────────────────────────────────────────────────
 
 using Microsoft.AspNetCore.Builder;
@@ -1626,12 +1626,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace TouchQue.AspNetCore;
+namespace Touchque.AspNetCore;
 
 /// <summary>What a guard callback sees: the request and, on a minimal API endpoint, its bound arguments.</summary>
-public sealed class TouchQueGuardContext
+public sealed class TouchqueGuardContext
 {
-    internal TouchQueGuardContext(HttpContext httpContext, IReadOnlyList<object?> arguments)
+    internal TouchqueGuardContext(HttpContext httpContext, IReadOnlyList<object?> arguments)
     {
         HttpContext = httpContext;
         Arguments = arguments;
@@ -1646,23 +1646,23 @@ public sealed class TouchQueGuardContext
     public T? Argument<T>() => Arguments.OfType<T>().FirstOrDefault();
 }
 
-/// <summary>Options of <c>RequireTouchQue</c>.</summary>
-public sealed class TouchQueGuardOptions
+/// <summary>Options of <c>RequireTouchque</c>.</summary>
+public sealed class TouchqueGuardOptions
 {
     /// <summary>Who approves (default: the signed-in user's email, else sub, else name). For a login route, return whoever just passed your password check.</summary>
-    public Func<TouchQueGuardContext, string?>? User { get; set; }
+    public Func<TouchqueGuardContext, string?>? User { get; set; }
 
     /// <summary>Transaction details shown on the phone. Build them from server-side state or validated input.</summary>
-    public Func<TouchQueGuardContext, IReadOnlyList<LoginDetail>?>? Details { get; set; }
+    public Func<TouchqueGuardContext, IReadOnlyList<LoginDetail>?>? Details { get; set; }
 
-    public Func<TouchQueGuardContext, string?>? ReferenceId { get; set; }
+    public Func<TouchqueGuardContext, string?>? ReferenceId { get; set; }
 
-    /// <summary>For your TouchQue Actions only (<c>event.context</c>): roles, plan, amount… Never shown on the phone.</summary>
-    public Func<TouchQueGuardContext, IReadOnlyDictionary<string, object?>?>? Context { get; set; }
+    /// <summary>For your Touchque Actions only (<c>event.context</c>): roles, plan, amount… Never shown on the phone.</summary>
+    public Func<TouchqueGuardContext, IReadOnlyDictionary<string, object?>?>? Context { get; set; }
 
     /// <summary>
     /// Silent sign-ins (default off): a new attempt whose browser sent its device-bound
-    /// key proof (<c>X-TouchQue-Browser</c>) first asks TouchQue whether anything is new;
+    /// key proof (<c>X-Touchque-Browser</c>) first asks Touchque whether anything is new;
     /// if nothing is, the endpoint runs at once with no push.
     /// </summary>
     public SilentSignInOptions? SilentSignIn { get; set; }
@@ -1674,46 +1674,46 @@ public sealed class TouchQueGuardOptions
 /// <summary>
 /// One line per protected endpoint. Until the user approves on their phone this answers
 /// <c>202 {"touchque": step, "token": "..."}</c>; your page shows the step in its own
-/// design and sends the same request again with header <c>X-TouchQue-Token</c>. Once
-/// approved the endpoint runs ONCE, with <c>HttpContext.GetTouchQueApproval()</c> set.
+/// design and sends the same request again with header <c>X-Touchque-Token</c>. Once
+/// approved the endpoint runs ONCE, with <c>HttpContext.GetTouchqueApproval()</c> set.
 /// <code>
 /// app.MapPost("/transfer", (Transfer t, HttpContext http) => …)
 ///    .RequireAuthorization()
-///    .RequireTouchQue("SEND_MONEY", o => o.Details = c => [("Amount", c.Argument&lt;Transfer&gt;()!.Amount)]);
+///    .RequireTouchque("SEND_MONEY", o => o.Details = c => [("Amount", c.Argument&lt;Transfer&gt;()!.Amount)]);
 /// </code>
 /// </summary>
-public static class RequireTouchQueExtensions
+public static class RequireTouchqueExtensions
 {
-    public static TBuilder RequireTouchQue<TBuilder>(this TBuilder builder, string action, Action<TouchQueGuardOptions>? configure = null)
+    public static TBuilder RequireTouchque<TBuilder>(this TBuilder builder, string action, Action<TouchqueGuardOptions>? configure = null)
         where TBuilder : IEndpointConventionBuilder
     {
-        var options = new TouchQueGuardOptions();
+        var options = new TouchqueGuardOptions();
         configure?.Invoke(options);
         builder.AddEndpointFilter(async (ctx, next) =>
         {
-            var guardContext = new TouchQueGuardContext(ctx.HttpContext, ctx.Arguments.ToList());
-            var result = await TouchQueGuardRunner.RunAsync(guardContext, action, options).ConfigureAwait(false);
+            var guardContext = new TouchqueGuardContext(ctx.HttpContext, ctx.Arguments.ToList());
+            var result = await TouchqueGuardRunner.RunAsync(guardContext, action, options).ConfigureAwait(false);
             return result is null ? await next(ctx).ConfigureAwait(false) : result;
         });
         return builder;
     }
 }
 
-internal static class TouchQueGuardRunner
+internal static class TouchqueGuardRunner
 {
     /// <summary>Null: approved, run the endpoint. Otherwise the answer to send.</summary>
-    public static async Task<IResult?> RunAsync(TouchQueGuardContext context, string action, TouchQueGuardOptions options)
+    public static async Task<IResult?> RunAsync(TouchqueGuardContext context, string action, TouchqueGuardOptions options)
     {
         var http = context.HttpContext;
-        var client = http.RequestServices.GetRequiredService<TouchQueClient>();
+        var client = http.RequestServices.GetRequiredService<TouchqueClient>();
         var req = http.Request;
         var result = await Guard.RunAsync(client, new GuardInput
         {
-            User = options.User is null ? http.User.TouchQueUser() : options.User(context),
+            User = options.User is null ? http.User.TouchqueUser() : options.User(context),
             Action = action,
             Details = options.Details?.Invoke(context),
             ReferenceId = options.ReferenceId?.Invoke(context),
-            Ip = http.TouchQueClientIp(),
+            Ip = http.TouchqueClientIp(),
             UserAgent = req.Header("User-Agent"),
             Token = req.Header(Guard.TokenHeader),
             Offline = req.Header(Guard.OfflineHeader) is "1" or "true",
@@ -1726,7 +1726,7 @@ internal static class TouchQueGuardRunner
         }, http.RequestAborted).ConfigureAwait(false);
         if (result.Approved is not null)
         {
-            http.Items[TouchQueHttpContextExtensions.ApprovalKey] = result.Approved;
+            http.Items[TouchqueHttpContextExtensions.ApprovalKey] = result.Approved;
             return null;
         }
         http.Response.Headers.CacheControl = "no-store";
@@ -1736,45 +1736,45 @@ internal static class TouchQueGuardRunner
 }
 
 /// <summary>
-/// MVC: <c>[RequireTouchQue("SEND_MONEY")]</c> on a controller action. Until the user
+/// MVC: <c>[RequireTouchque("SEND_MONEY")]</c> on a controller action. Until the user
 /// approves on the phone it answers 202 with the step; once approved the action runs
-/// once with <c>HttpContext.GetTouchQueApproval()</c> set. For details, a login user or
-/// silent sign-ins, register a named <see cref="TouchQueGuardOptions"/> with
-/// <c>services.Configure&lt;TouchQueGuardOptions&gt;("SEND_MONEY", o => …)</c> (the name is the action).
+/// once with <c>HttpContext.GetTouchqueApproval()</c> set. For details, a login user or
+/// silent sign-ins, register a named <see cref="TouchqueGuardOptions"/> with
+/// <c>services.Configure&lt;TouchqueGuardOptions&gt;("SEND_MONEY", o => …)</c> (the name is the action).
 /// </summary>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false)]
-public sealed class RequireTouchQueAttribute : Attribute, IAsyncActionFilter
+public sealed class RequireTouchqueAttribute : Attribute, IAsyncActionFilter
 {
-    public RequireTouchQueAttribute(string action) => Action = action;
+    public RequireTouchqueAttribute(string action) => Action = action;
 
     public string Action { get; }
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
-        var options = context.HttpContext.RequestServices.GetService<Microsoft.Extensions.Options.IOptionsMonitor<TouchQueGuardOptions>>()?.Get(Action)
-            ?? new TouchQueGuardOptions();
-        var guardContext = new TouchQueGuardContext(context.HttpContext, context.ActionArguments.Values.ToList());
-        var result = await TouchQueGuardRunner.RunAsync(guardContext, Action, options).ConfigureAwait(false);
+        var options = context.HttpContext.RequestServices.GetService<Microsoft.Extensions.Options.IOptionsMonitor<TouchqueGuardOptions>>()?.Get(Action)
+            ?? new TouchqueGuardOptions();
+        var guardContext = new TouchqueGuardContext(context.HttpContext, context.ActionArguments.Values.ToList());
+        var result = await TouchqueGuardRunner.RunAsync(guardContext, Action, options).ConfigureAwait(false);
         if (result is null)
         {
             await next().ConfigureAwait(false);
             return;
         }
-        context.Result = new TouchQueResultAdapter(result);
+        context.Result = new TouchqueResultAdapter(result);
     }
 
-    private sealed class TouchQueResultAdapter : IActionResult
+    private sealed class TouchqueResultAdapter : IActionResult
     {
         private readonly IResult _result;
 
-        public TouchQueResultAdapter(IResult result) => _result = result;
+        public TouchqueResultAdapter(IResult result) => _result = result;
 
         public Task ExecuteResultAsync(ActionContext context) => _result.ExecuteAsync(context.HttpContext);
     }
 }
 
 // ─────────────────────────────────────────────────────────────
-// From TouchQue.AspNetCore/TouchQueRelayEndpoints.cs — app.MapTouchQueRelay("/touchque", options)
+// From Touchque.AspNetCore/TouchqueRelayEndpoints.cs — app.MapTouchqueRelay("/touchque", options)
 // ─────────────────────────────────────────────────────────────
 
 using System.Text.Json;
@@ -1783,18 +1783,18 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using TouchQue.Relay;
+using Touchque.Relay;
 
-namespace TouchQue.AspNetCore;
+namespace Touchque.AspNetCore;
 
 /// <summary>
 /// Every relay route a frontend (<c>@touchque/web</c>) needs: POST /login, enrollment,
 /// offline codes and the passkey ceremonies. See <see cref="RelayHandler{TRequest}"/> for the
 /// routes and security rules.
 /// <code>
-/// app.MapTouchQueRelay("/touchque", new RelayOptions&lt;HttpContext&gt;
+/// app.MapTouchqueRelay("/touchque", new RelayOptions&lt;HttpContext&gt;
 /// {
-///     GetUserId = http => http.User.TouchQueUser(),
+///     GetUserId = http => http.User.TouchqueUser(),
 ///     GetLoginUser = http => http.Session.GetString("password_verified_user"),
 ///     OnAuthenticated = async (http, response, info) => { /* sign the user in */ },
 ///     SilentSignIn = new(),
@@ -1803,17 +1803,17 @@ namespace TouchQue.AspNetCore;
 /// The client IP is <c>HttpContext.Connection.RemoteIpAddress</c>: behind a load balancer,
 /// add <c>app.UseForwardedHeaders()</c> with your proxy as a known proxy first.
 /// </summary>
-public static class TouchQueRelayEndpoints
+public static class TouchqueRelayEndpoints
 {
     private const int MaxBodyBytes = 64 * 1024;
 
-    public static RouteGroupBuilder MapTouchQueRelay(this IEndpointRouteBuilder endpoints, string prefix, RelayOptions<HttpContext>? options = null)
+    public static RouteGroupBuilder MapTouchqueRelay(this IEndpointRouteBuilder endpoints, string prefix, RelayOptions<HttpContext>? options = null)
     {
-        var client = endpoints.ServiceProvider.GetRequiredService<TouchQueClient>();
-        var handler = new RelayHandler<HttpContext>(client, options ?? new RelayOptions<HttpContext> { GetUserId = http => http.User.TouchQueUser() });
+        var client = endpoints.ServiceProvider.GetRequiredService<TouchqueClient>();
+        var handler = new RelayHandler<HttpContext>(client, options ?? new RelayOptions<HttpContext> { GetUserId = http => http.User.TouchqueUser() });
         var group = endpoints.MapGroup(prefix);
         // Each route hands the relay its own path: request.Path also holds the prefixes of the
-        // groups this one is mapped on (app.MapGroup("/api").MapTouchQueRelay("/touchque")).
+        // groups this one is mapped on (app.MapGroup("/api").MapTouchqueRelay("/touchque")).
         foreach (var path in new[]
         {
             "/enroll/start", "/login", "/offline/challenge", "/offline/verify", "/offline/totp", "/passkey/authenticate/options",
@@ -1854,7 +1854,7 @@ public static class TouchQueRelayEndpoints
             Method = request.Method,
             Path = path,
             Body = body,
-            Ip = http.TouchQueClientIp() ?? "",
+            Ip = http.TouchqueClientIp() ?? "",
             UserAgent = request.Header("User-Agent"),
             Header = request.Header,
             Native = http,
@@ -1867,6 +1867,6 @@ public static class TouchQueRelayEndpoints
         http.Response.StatusCode = response.Status;
         foreach (var (name, value) in response.Headers) http.Response.Headers.Append(name, value);
         http.Response.ContentType = "application/json; charset=utf-8";
-        await http.Response.WriteAsync(response.Body.ToJsonString(TouchQue.Internal.Json.Options), http.RequestAborted).ConfigureAwait(false);
+        await http.Response.WriteAsync(response.Body.ToJsonString(Touchque.Internal.Json.Options), http.RequestAborted).ConfigureAwait(false);
     }
 }

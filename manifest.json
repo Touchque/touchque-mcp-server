@@ -1,11 +1,11 @@
 {
   "manifest_version": "0.3",
   "name": "touchque-mcp-server",
-  "display_name": "TouchQue",
-  "version": "4.1.3",
-  "description": "TouchQue for AI assistants and agents: accurate SDK docs and an integration validator, and, with an agent identity, phone approvals before an agent acts.",
-  "long_description": "Gives AI coding assistants the current TouchQue SDK docs, types and an integration validator (no account, no network needed). With an AI agent's own TouchQue identity (TQ_AGENT_ID and its private key), the agent can ask a person to approve an action on their TouchQue phone, read the answer and hand the single-use approval token to the service that executes. The agent never approves anything itself.",
-  "author": { "name": "TouchQue", "url": "https://touchque.com" },
+  "display_name": "Touchque",
+  "version": "4.2.0",
+  "description": "Touchque for AI assistants and agents: accurate SDK docs and an integration validator, and, with an agent identity, phone approvals before an agent acts.",
+  "long_description": "Gives AI coding assistants the current Touchque SDK docs, types and an integration validator (no account, no network needed). With an AI agent's own Touchque identity (TQ_AGENT_ID and its private key), the agent can ask a person to approve an action on their Touchque phone, read the answer and hand the single-use approval token to the service that executes. The agent never approves anything itself.",
+  "author": { "name": "Touchque", "url": "https://touchque.com" },
   "homepage": "https://touchque.com",
   "documentation": "https://support.touchque.com/agents",
   "repository": { "type": "git", "url": "https://github.com/Touchque/touchque-mcp-server" },
@@ -26,12 +26,12 @@
   },
   "tools": [
     { "name": "touchque_help", "description": "Start here: what this server does and which tool to call next." },
-    { "name": "get_touchque_docs", "description": "The official TouchQue SDK README for Node, Python, PHP, Go, .NET, Ruby or Java." },
-    { "name": "get_sdk_types", "description": "The TouchQue SDK's type and class reference." },
-    { "name": "ping_touchque_api", "description": "Checks that a TouchQue backend answers." },
+    { "name": "get_touchque_docs", "description": "The official Touchque SDK README for Node, Python, PHP, Go, .NET, Ruby or Java." },
+    { "name": "get_sdk_types", "description": "The Touchque SDK's type and class reference." },
+    { "name": "ping_touchque_api", "description": "Checks that a Touchque backend answers." },
     { "name": "validate_integration", "description": "Checks a snippet against the current step-up model and security practice." },
-    { "name": "touchque_agent_whoami", "description": "Who this AI agent is in TouchQue and what it may ask for (agent identity needed)." },
-    { "name": "touchque_request_approval", "description": "Asks a person to approve an action on their TouchQue phone (agent identity needed)." },
+    { "name": "touchque_agent_whoami", "description": "Who this AI agent is in Touchque and what it may ask for (agent identity needed)." },
+    { "name": "touchque_request_approval", "description": "Asks a person to approve an action on their Touchque phone (agent identity needed)." },
     { "name": "touchque_get_approval", "description": "The person's answer, with the single-use approval token once approved (agent identity needed)." },
     { "name": "touchque_request_mandate", "description": "Asks a person to approve a series of requests at once (agent identity needed)." },
     { "name": "touchque_get_mandate", "description": "A mandate's state and what is left (agent identity needed)." }
@@ -41,7 +41,7 @@
     "agent_id": {
       "type": "string",
       "title": "Agent ID",
-      "description": "The agent's agt_… id from TouchQue (Developers → AI agents). Leave empty for the docs tools only.",
+      "description": "The agent's agt_… id from Touchque (Developers → AI agents). Leave empty for the docs tools only.",
       "required": false
     },
     "agent_key": {
@@ -53,8 +53,8 @@
     },
     "api_url": {
       "type": "string",
-      "title": "TouchQue API",
-      "description": "Only for a self-hosted or local TouchQue.",
+      "title": "Touchque API",
+      "description": "Only for a self-hosted or local Touchque.",
       "default": "https://api.touchque.com",
       "required": false
     }

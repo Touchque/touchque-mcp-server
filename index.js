@@ -21,7 +21,7 @@ const {
 // examples.
 //
 // It reads and validates code you paste in, and fetches your own backend's
-// health — it never touches a real TouchQue account or holds a secret, so
+// health — it never touches a real Touchque account or holds a secret, so
 // there is nothing here that needs gating with an API key.
 //
 // IMPORTANT — client compatibility: not every MCP client renders every MCP
@@ -42,7 +42,7 @@ const {
 const { version: PACKAGE_VERSION } = require("./package.json");
 const { agentFromEnv, approvalAfter, describeApproval } = require("./agent");
 
-// TouchQue as a tool for an AI agent (agent.js): with TQ_AGENT_ID and
+// Touchque as a tool for an AI agent (agent.js): with TQ_AGENT_ID and
 // TQ_AGENT_KEY set (the agent's own identity from tq.agents.create, never a
 // tq_ API key), the agent can ask a person to approve an action on their
 // phone, check the answer and ask for a mandate. Without them this stays the
@@ -54,7 +54,7 @@ try {
   AGENT = agentFromEnv();
 } catch (err) {
   AGENT_CONFIG_ERROR = err.message;
-  console.error(`⚠️ TouchQue agent tools are off: ${err.message}`);
+  console.error(`⚠️ Touchque agent tools are off: ${err.message}`);
 }
 
 const DOCS_DIR = path.join(__dirname, "bundled");
@@ -68,7 +68,7 @@ const DOCS_DIR = path.join(__dirname, "bundled");
 const DOCS_BASE_URL = process.env.DOCS_BASE_URL || null;
 
 // All 7 server SDKs share the same API (start/check/complete, the
-// requireTouchQue-equivalent framework adapter, guard tokens) — this map is
+// requireTouchque-equivalent framework adapter, guard tokens) — this map is
 // what makes every doc/type/validation tool "language-aware" instead of
 // hardcoded to Node. Add a language here (and its bundled/<lang>/ files,
 // from scripts/sync-bundled.js) when another SDK ships.
@@ -86,11 +86,11 @@ const LANGUAGES = {
     frameworks: ["laravel", "other"],
   },
   go: {
-    label: "Go", package: "github.com/Touchque/touchque-go/v4", typesFile: "types.go", typesMime: "text/x-go",
+    label: "Go", package: "github.com/Touchque/touchque-go/v5", typesFile: "types.go", typesMime: "text/x-go",
     frameworks: ["net-http", "other"],
   },
   dotnet: {
-    label: ".NET", package: "TouchQue.AspNetCore", typesFile: "types.cs", typesMime: "text/x-csharp",
+    label: ".NET", package: "Touchque.AspNetCore", typesFile: "types.cs", typesMime: "text/x-csharp",
     frameworks: ["aspnetcore", "other"],
   },
   ruby: {
@@ -131,18 +131,18 @@ const FRAMEWORK_LANGUAGE = {
 // 7th scored check (see goOptionsMissingUser below). The `proof*` entries
 // drive the unscored device-proof advisories (SDK 3.2.0).
 // SDK 5.0 spells every name Touchque (requireTouchque, Touchque\\, RequireTouchque…); 4.x and older
-// spell them TouchQue. Until 5.0 is on every registry, the patterns take both (Touch[Qq]ue).
+// spell them Touchque. Until 5.0 is on every registry, the patterns take both (Touch[Qq]ue).
 const VALIDATION_PATTERNS = {
   node: {
-    guardName: "requireTouchQue/withTouchQue/touchqueRouter",
+    guardName: "requireTouchque/withTouchque/touchqueRouter",
     import: /require\s*\(\s*['"]@touchque\/node['"]\s*\)|from\s+['"]@touchque\/node['"]/,
     stepUpGuard: /requireTouch[Qq]ue\s*\(|withTouch[Qq]ue\s*\(|touchqueRouter\s*\(/,
     legacyGuard: /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.actionTypes.define(...)" },
     hardcodedSecret: /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
-    // new TouchQue() with no options reads TQ_API_KEY / TQ_API_SECRET itself.
-    // new TouchQue() with no options, and the guard with no client, read TQ_API_KEY / TQ_API_SECRET themselves.
+    // new Touchque() with no options reads TQ_API_KEY / TQ_API_SECRET itself.
+    // new Touchque() with no options, and the guard with no client, read TQ_API_KEY / TQ_API_SECRET themselves.
     envVar: /process\.env\.|env\[|new\s+Touch[Qq]ue\s*\(\s*\)|requireTouch[Qq]ue\s*\(\s*['"`][A-Z0-9_]+['"`]\s*\)|withTouch[Qq]ue\s*\(/,
     errorHandling: /catch|try\s*{|\.catch\s*\(/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
@@ -155,7 +155,7 @@ const VALIDATION_PATTERNS = {
     },
   },
   python: {
-    guardName: "@require_touchque / RequireTouchQue / relay (touchque_relay_blueprint/_router/_view/_urls, RelayHandler)",
+    guardName: "@require_touchque / RequireTouchque / relay (touchque_relay_blueprint/_router/_view/_urls, RelayHandler)",
     import: /from\s+touchque(\.\w+)*\s+import|import\s+touchque\b/,
     // The relay adapters (Flask blueprint, FastAPI router, Django view/urls)
     // and the framework-agnostic RelayHandler run the same guard for POST
@@ -177,12 +177,12 @@ const VALIDATION_PATTERNS = {
     },
   },
   php: {
-    guardName: "->middleware('touchque:...') / TouchQueRelay::routes / RelayHandler",
+    guardName: "->middleware('touchque:...') / TouchqueRelay::routes / RelayHandler",
     // Laravel usage often references the middleware only by its string
     // alias ('touchque:SEND_MONEY') in the route file — the actual `use
-    // TouchQue\...` import/registration lives in bootstrap/app.php or a
+    // Touchque\...` import/registration lives in bootstrap/app.php or a
     // service provider, not necessarily in the same file. Treat the alias
-    // (and the relay's TouchQueRelay::routes() call in routes/web.php)
+    // (and the relay's TouchqueRelay::routes() call in routes/web.php)
     // itself as evidence of SDK usage too, not just a literal `use` line.
     import: /use\s+Touch[Qq]ue\\|Touch[Qq]ue\\\\Touch[Qq]ue|->middleware\s*\(\s*['"]touchque:|Touch[Qq]ueMiddleware|Touch[Qq]ueRelay::routes\s*\(/,
     stepUpGuard: /->middleware\s*\(\s*['"]touchque:|Touch[Qq]ueMiddleware|Touch[Qq]ueRelay::routes\s*\(|new\s+\\?(?:Touch[Qq]ue\\Laravel\\)?Touch[Qq]ueRelay\s*\(|new\s+\\?(?:Touch[Qq]ue\\Relay\\)?RelayHandler\s*\(/,
@@ -198,7 +198,7 @@ const VALIDATION_PATTERNS = {
     // PHP's `true` is case-insensitive.
     proofUnpinned: /['"]allowUnpinnedKey['"]\s*=>\s*true\b/i,
     proofNames: {
-      verify: "TouchQue\\ApprovalProof::verify($proof, ['requestId' => ..., 'type' => ..., 'details' => ..., 'challengeCode' => ..., 'expectedPublicKey' => ...])",
+      verify: "Touchque\\ApprovalProof::verify($proof, ['requestId' => ..., 'type' => ..., 'details' => ..., 'challengeCode' => ..., 'expectedPublicKey' => ...])",
       unpinned: "'allowUnpinnedKey' => true", pin: "'expectedPublicKey'", storedKey: "$proof['publicKey']",
     },
   },
@@ -222,14 +222,14 @@ const VALIDATION_PATTERNS = {
     },
   },
   dotnet: {
-    guardName: ".RequireTouchQue(\"ACTION\") / [RequireTouchQue(\"ACTION\")] / MapTouchQueRelay",
+    guardName: ".RequireTouchque(\"ACTION\") / [RequireTouchque(\"ACTION\")] / MapTouchqueRelay",
     import: /using\s+Touch[Qq]ue(?:\.AspNetCore|\.Relay)?\s*;|\bAddTouch[Qq]ue\s*\(/,
     stepUpGuard: /\.RequireTouch[Qq]ue\s*\(|\[RequireTouch[Qq]ue\s*\(|\bMapTouch[Qq]ueRelay\s*\(|\bnew\s+RelayHandler\s*</,
     legacyGuard: null,
     syncVerify: /\.Login\.VerifyAsync\s*\(/,
     oldActionTypes: { re: /\.Actions\s*\.\s*DefineAsync\s*\(/, now: "tq.ActionTypes.DefineAsync(...)" },
     hardcodedSecret: /ApiKey\s*=\s*"tq_[a-zA-Z0-9]{6,}"|ApiSecret\s*=\s*"[a-zA-Z0-9]{10,}"/,
-    // AddTouchQue() and new TouchQueClient() read TQ_API_KEY / TQ_API_SECRET themselves.
+    // AddTouchque() and new TouchqueClient() read TQ_API_KEY / TQ_API_SECRET themselves.
     envVar: /Environment\.GetEnvironmentVariable\s*\(|Configuration\[|\bAddTouch[Qq]ue\s*\(\s*\)|new\s+Touch[Qq]ueClient\s*\(\s*\)/,
     errorHandling: /try\s*{|catch\s*\(/,
     offlineChallenge: /\.Offline\s*\.\s*ChallengeAsync\s*\(/,
@@ -242,14 +242,14 @@ const VALIDATION_PATTERNS = {
     },
   },
   ruby: {
-    guardName: "require_touchque / TouchQue::Rack::Relay / TouchQue::Guard.run",
+    guardName: "require_touchque / Touchque::Rack::Relay / Touchque::Guard.run",
     import: /require\s+['"]touchque|\bTouch[Qq]ue::|gem\s+['"]touchque['"]|\binclude\s+Touch[Qq]ue::/,
     stepUpGuard: /\brequire_touchque\s+['"]|Touch[Qq]ue::Rack::Relay\.new\s*\(|Touch[Qq]ue::Guard\.run\s*\(|Touch[Qq]ue::RelayHandler\.new\s*\(/,
     legacyGuard: null,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
     hardcodedSecret: /api_key:\s*['"]tq_[a-zA-Z0-9]{6,}['"]|api_secret:\s*['"][a-zA-Z0-9]{10,}['"]/,
-    // TouchQue.client reads config.touchque, credentials.touchque, then the environment.
+    // Touchque.client reads config.touchque, credentials.touchque, then the environment.
     envVar: /ENV\[|ENV\.fetch\s*\(|credentials|Touch[Qq]ue\.client\b|\brequire_touchque\b/,
     errorHandling: /\brescue\b/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
@@ -257,19 +257,19 @@ const VALIDATION_PATTERNS = {
     proofVerify: /\bApprovalProof\.verify\s*\(/,
     proofUnpinned: /\ballow_unpinned_key:\s*true\b/,
     proofNames: {
-      verify: "TouchQue::ApprovalProof.verify(proof, request_id: ..., type: ..., details: ..., challenge_code: ..., expected_public_key: ...)",
+      verify: "Touchque::ApprovalProof.verify(proof, request_id: ..., type: ..., details: ..., challenge_code: ..., expected_public_key: ...)",
       unpinned: "allow_unpinned_key: true", pin: "expected_public_key:", storedKey: "proof[\"publicKey\"]",
     },
   },
   java: {
-    guardName: "@RequireTouchQue(\"ACTION\") / RelayOptions bean (Spring Boot starter) / Guard.run",
+    guardName: "@RequireTouchque(\"ACTION\") / RelayOptions bean (Spring Boot starter) / Guard.run",
     import: /import\s+com\.touchque\.|\bcom\.touchque\b/,
     stepUpGuard: /@RequireTouch[Qq]ue\s*\(|\bRelayOptions\s*<|\bGuard\.run\s*\(|\bnew\s+RelayHandler\s*</,
     legacyGuard: null,
     syncVerify: /\.login\(\)\s*\.\s*verify\s*\(/,
     oldActionTypes: { re: /\.actions\(\)\s*\.\s*define\s*\(/, now: "tq.actionTypes().define(...)" },
     hardcodedSecret: /\.apiKey\s*\(\s*"tq_[a-zA-Z0-9]{6,}"\s*\)|\.apiSecret\s*\(\s*"[a-zA-Z0-9]{10,}"\s*\)|touchque\.api-secret\s*=\s*[a-zA-Z0-9]{10,}/,
-    // The starter's bean and new TouchQueClient() read touchque.* / TQ_API_KEY / TQ_API_SECRET themselves.
+    // The starter's bean and new TouchqueClient() read touchque.* / TQ_API_KEY / TQ_API_SECRET themselves.
     envVar: /System\.getenv\s*\(|\$\{TQ_|@Value\s*\(|new\s+Touch[Qq]ueClient\s*\(\s*\)|@RequireTouch[Qq]ue\s*\(|\bTouch[Qq]ueClient\s+\w+\s*[,)]/,
     errorHandling: /try\s*{|catch\s*\(|@ExceptionHandler/,
     offlineChallenge: /\.offline\(\)\s*\.\s*challenge\s*\(/,
@@ -294,7 +294,7 @@ const VALIDATION_PATTERNS = {
 const FORWARDED_FOR = /x-forwarded-for|forwarded_for/i;
 const FIRST_SPLIT_PART = /(?:split|explode|Split)\s*\(.*\)\s*\[\s*0\s*\]/;
 const leftmostForwardedFor = (code) => code.split("\n").some((l) => FORWARDED_FOR.test(l) && FIRST_SPLIT_PART.test(l));
-// Next.js withTouchQue sends no end-user address unless told where it comes from.
+// Next.js withTouchque sends no end-user address unless told where it comes from.
 const NEXT_GUARD = /withTouch[Qq]ue\s*\(/;
 const NEXT_IP_OPTION = /\bip\s*:|\btrustedProxyHops\s*:/;
 const APPROVED_HANDLING = /['"`]login\.confirmed['"`]|['"`]CONFIRMED['"`]|(?:[!=]==?|\bcase)\s*['"`]approved['"`]|['"`]approved['"`]\s*[!=]==?|\bStepApproved\b|\bapprovalProof\b|\.ApprovalProof\b/;
@@ -350,14 +350,14 @@ const BUNDLED_DOCS = LANGUAGE_NAMES.map((lang) => ({
   uri: `touchque://docs/${lang}/sdk-documentation.md`,
   language: lang,
   filename: `${lang}/sdk-documentation.md`,
-  name: `TouchQue ${LANGUAGES[lang].label} SDK — README`,
+  name: `Touchque ${LANGUAGES[lang].label} SDK — README`,
   mimeType: "text/markdown",
   description: `Install, the step-up model, framework adapters, error handling, security, for ${LANGUAGES[lang].package}.`,
 })).concat(LANGUAGE_NAMES.map((lang) => ({
   uri: `touchque://docs/${lang}/types.${LANGUAGES[lang].typesFile.split(".").pop()}`,
   language: lang,
   filename: `${lang}/${LANGUAGES[lang].typesFile}`,
-  name: `TouchQue ${LANGUAGES[lang].label} SDK — types/API reference`,
+  name: `Touchque ${LANGUAGES[lang].label} SDK — types/API reference`,
   mimeType: LANGUAGES[lang].typesMime,
   description: `Config, Step/StepState, StartOptions, CompleteExpectations, resource response types, for ${LANGUAGES[lang].package}.`,
 })));
@@ -380,16 +380,16 @@ async function readDocsFile(bundledFilename, { allowRemote = false } = {}) {
   return fs.readFileSync(path.join(DOCS_DIR, bundledFilename), "utf8");
 }
 
-const HELP_TEXT = `TouchQue MCP Server — start here.
+const HELP_TEXT = `Touchque MCP Server — start here.
 
-This server helps you add TouchQue push-2FA/passkey step-up authentication
-to a codebase correctly, using the CURRENT API (requireTouchQue-equivalent
-guard / 202 + X-TouchQue-Token step-up — not the old synchronous
+This server helps you add Touchque push-2FA/passkey step-up authentication
+to a codebase correctly, using the CURRENT API (requireTouchque-equivalent
+guard / 202 + X-Touchque-Token step-up — not the old synchronous
 .login.verify()). All 7 official server SDKs — Node, Python, PHP, Go,
 .NET, Ruby, Java — share this exact same model, just with per-language
-naming (requireTouchQue / @require_touchque / ->middleware('touchque:...') /
-touchque.Require / .RequireTouchQue("ACTION") / require_touchque /
-@RequireTouchQue("ACTION") in Spring Boot).
+naming (requireTouchque / @require_touchque / ->middleware('touchque:...') /
+touchque.Require / .RequireTouchque("ACTION") / require_touchque /
+@RequireTouchque("ACTION") in Spring Boot).
 
 FIRST, if you don't already know: ask which language/framework the user's
 backend is in. Every tool below takes an optional "language" argument
@@ -404,32 +404,32 @@ Call these tools, in this order, for a normal integration:
   4. validate_integration({ code, framework, language }) — checks your code against that SDK's current API
   5. ping_touchque_api                  — checks a backend URL is actually reachable
 
-Push + passkey step-up is the default flow. TouchQue ALSO has "Offline
+Push + passkey step-up is the default flow. Touchque ALSO has "Offline
 Sign" — a QR code + 7-character code flow for when the user's phone has no
 internet (tq.offline.challenge() / tq.offline.verify() in the SDK). If the
 user mentions offline approval, kiosks, air-gapped environments, or "what
-if the phone has no signal", use that flow, not requireTouchQue.
+if the phone has no signal", use that flow, not requireTouchque.
 When an offline QR is the FALLBACK for a push the user already started (the
 usual "Verify offline" button next to a waiting screen), link it to that push
 with requestId: a phone-side REJECT then kills the QR (no new QR, no code
 finishes it), and the matching number is printed under the QR
-(challengeCode). requireTouchQue / touchqueRouter / the step-up guard do
+(challengeCode). requireTouchque / touchqueRouter / the step-up guard do
 this automatically — only hand-written offline routes need to pass it.
 
 BEFORE YOU WRITE CODE: every action type (e.g. "SEND_MONEY") MUST already
 exist — either created in the Dashboard, or defined from code with
 tq.actionTypes.define('SEND_MONEY', { critical: true }) (SDK 4.0; Python
 tq.action_types, PHP $tq->actionTypes, Go client.ActionTypes — before 4.0 this
-was tq.actions.define, and tq.actions is now TouchQue Actions). Skip this and the
+was tq.actions.define, and tq.actions is now Touchque Actions). Skip this and the
 first real request 400s with "unknown_action" — this is the most common
 first-run failure and it looks like a bug in the integration, not a
 missing setup step. Always ask whether the action should be "critical"
 (forces number matching) and whether a passkey should be required for it
 (Dashboard Security Policy) — don't assume.
 
-WEBHOOKS ARE OPTIONAL, not required. The default flow (requireTouchQue /
+WEBHOOKS ARE OPTIONAL, not required. The default flow (requireTouchque /
 start+check+complete) needs no webhook at all — your route polls/retries
-with X-TouchQue-Token until it resolves. tq.webhook.verify() exists for a
+with X-Touchque-Token until it resolves. tq.webhook.verify() exists for a
 DIFFERENT use case: a backend with no live frontend polling loop (a batch
 job, a cron-triggered approval, a server process with nobody waiting on a
 request) that wants an async push instead. Don't set up webhook signature
@@ -441,8 +441,8 @@ NEW IN SDK 3.2.0 (Node, Python, PHP, Go):
     enrollment, offline codes, passkeys), so nobody hand-writes them:
     touchqueRouter (Node); touchque_relay_blueprint / touchque_relay_router /
     touchque_relay_urls (Flask / FastAPI / Django) or RelayHandler (Python);
-    TouchQueRelay::routes($router, 'touchque') (Laravel) or
-    TouchQue\\Relay\\RelayHandler (PHP); touchque.NewRelayHandler (Go).
+    TouchqueRelay::routes($router, 'touchque') (Laravel) or
+    Touchque\\Relay\\RelayHandler (PHP); touchque.NewRelayHandler (Go).
     Always set the login-user option (getLoginUser / get_login_user /
     LoginUser) so POST /login only works after your password step.
   - Device-proof verification — verifyApprovalProof / verify_approval_proof /
@@ -457,7 +457,7 @@ NEW IN SDK 3.2.0 (Node, Python, PHP, Go):
 
 NEW IN SDK 3.3.0 (Node, Python, PHP, Go, @touchque/web 1.2.0):
   - The end user's address: the risk checks use it, and every SDK now sends
-    only an address it can trust. Next.js withTouchQue no longer reads
+    only an address it can trust. Next.js withTouchque no longer reads
     X-Forwarded-For by default — pass ip: ipFromVercel / ipFromCloudflare,
     trustedProxyHops: N or your own function. Go sends the host part of
     r.RemoteAddr (no port); behind a proxy set RequireOptions.IP. Never use
@@ -471,7 +471,7 @@ NEW IN SDK 3.3.0 (Node, Python, PHP, Go, @touchque/web 1.2.0):
 NEW IN SDK 4.0.0 (Node, Python, PHP, Go; @touchque/web 1.5.0, @touchque/react
 1.1.0 — 3.4 to 3.7 ship inside it):
   - BREAKING: action types moved to tq.actionTypes (see above). tq.actions is
-    now TouchQue Actions: the workspace's own sandboxed code at points of the
+    now Touchque Actions: the workspace's own sandboxed code at points of the
     approval pipeline (deploy, test, dryRun, logs, metrics, rollback; a version
     that loosens security waits for an admin's phone approval). The Go module
     path is github.com/Touchque/touchque-go/v4.
@@ -495,7 +495,7 @@ NEW IN SDK 4.0.0 (Node, Python, PHP, Go; @touchque/web 1.5.0, @touchque/react
     phone to re-confirm. The guards handle it; hand-written code checks
     provisional / revoked on the approval.
   - Browser (@touchque/web / @touchque/react, not bundled here): a drop-in
-    <touchque-approval> element and <TouchQueApproval> dialog (number, passkey,
+    <touchque-approval> element and <TouchqueApproval> dialog (number, passkey,
     offline QR, errors with the case code) and passkeys.autofill().
 
 If your client supports MCP prompts, four ready-made instruction sets are
@@ -511,7 +511,7 @@ required network calls (docs/types are bundled, not fetched).
 
 As an AI agent's tool (TQ_AGENT_ID + TQ_AGENT_KEY set: the agent's own
 identity, never an API key): touchque_request_approval asks a person to
-approve an action on their TouchQue phone (tell them the number it returns;
+approve an action on their Touchque phone (tell them the number it returns;
 never approve anything yourself), touchque_get_approval checks the answer
 and hands back the single-use approval token for the service that executes,
 touchque_request_mandate / touchque_get_mandate cover a series of requests,
@@ -541,12 +541,12 @@ const server = new Server({
 const AGENT_TOOLS = [
   {
     name: "touchque_agent_whoami",
-    description: "Who this AI agent is in TouchQue: its name, the action types it may ask a person to approve, its owner, review date and workspace.",
+    description: "Who this AI agent is in Touchque: its name, the action types it may ask a person to approve, its owner, review date and workspace.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
     name: "touchque_request_approval",
-    description: "Asks a person to approve an action on their TouchQue phone before you do it (a payment, a deletion, a message sent for them…). Returns a number: tell the person to type it in the TouchQue app. You never approve it yourself. Then call touchque_get_approval for the answer.",
+    description: "Asks a person to approve an action on their Touchque phone before you do it (a payment, a deletion, a message sent for them…). Returns a number: tell the person to type it in the Touchque app. You never approve it yourself. Then call touchque_get_approval for the answer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -554,7 +554,7 @@ const AGENT_TOOLS = [
         type: { type: "string", description: "One of your allowed action types (see touchque_agent_whoami)." },
         authorizationDetails: {
           type: "array", items: { type: "object" },
-          description: "Exactly what to approve, as RFC 9396 authorization details: TouchQue draws the phone's rows from them, e.g. [{\"type\":\"payment_initiation\",\"instructedAmount\":{\"currency\":\"TRY\",\"amount\":\"500.00\"},\"creditorAccount\":{\"iban\":\"TR…\"}}].",
+          description: "Exactly what to approve, as RFC 9396 authorization details: Touchque draws the phone's rows from them, e.g. [{\"type\":\"payment_initiation\",\"instructedAmount\":{\"currency\":\"TRY\",\"amount\":\"500.00\"},\"creditorAccount\":{\"iban\":\"TR…\"}}].",
         },
         reason: { type: "string", description: "One short sentence in your own words; the phone shows it marked unverified." },
         presence: { type: "string", enum: ["interactive", "background"], description: "interactive (default): the person is in this conversation and types the number." },
@@ -617,7 +617,7 @@ async function callAgentTool(name, args) {
   }
   if (name === "touchque_request_mandate") {
     const m = await AGENT.requestMandate({ externalUsername: args.user, ...Object.fromEntries(Object.entries(args).filter(([k]) => k !== "user")) });
-    return `${m.challengeCode ? `Tell the person: "Type ${m.challengeCode} in the TouchQue app on your phone to approve the mandate." Never approve it yourself.\n\n` : ""}${json(m)}`;
+    return `${m.challengeCode ? `Tell the person: "Type ${m.challengeCode} in the Touchque app on your phone to approve the mandate." Never approve it yourself.\n\n` : ""}${json(m)}`;
   }
   if (name === "touchque_get_mandate") return json(await AGENT.getMandate(String(args.mandateId || "")));
   return null;
@@ -627,12 +627,12 @@ async function listTools() {
     tools: [
       {
         name: "touchque_help",
-        description: "START HERE. Explains what this MCP server is for and which tool to call next. Call this first if you're not sure what TouchQue is or how this server works — it works in every MCP client, including ones that don't support prompts or resources.",
+        description: "START HERE. Explains what this MCP server is for and which tool to call next. Call this first if you're not sure what Touchque is or how this server works — it works in every MCP client, including ones that don't support prompts or resources.",
         inputSchema: { type: "object", properties: {}, required: [] }
       },
       {
         name: "get_touchque_docs",
-        description: "Returns the official TouchQue SDK README for the given language (install, the step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone. All 7 server SDKs (Node, Python, PHP, Go, .NET, Ruby, Java) share the same API shape.",
+        description: "Returns the official Touchque SDK README for the given language (install, the step-up model, framework adapters, error handling, security). Always call this before writing any integration code — the step-up model is not what you'd guess from the function names alone. All 7 server SDKs (Node, Python, PHP, Go, .NET, Ruby, Java) share the same API shape.",
         inputSchema: {
           type: "object",
           properties: {
@@ -647,7 +647,7 @@ async function listTools() {
       },
       {
         name: "get_sdk_types",
-        description: "Returns the TouchQue SDK's type/class reference for the given language (Config, Step/StepState, StartOptions, CompleteExpectations, resource response types). Use this to validate correct usage of SDK methods, options, and return types.",
+        description: "Returns the Touchque SDK's type/class reference for the given language (Config, Step/StepState, StartOptions, CompleteExpectations, resource response types). Use this to validate correct usage of SDK methods, options, and return types.",
         inputSchema: {
           type: "object",
           properties: {
@@ -662,13 +662,13 @@ async function listTools() {
       },
       {
         name: "ping_touchque_api",
-        description: "Verifies that a TouchQue Backend API instance is reachable and healthy before attempting integration. Returns connection status and response time.",
+        description: "Verifies that a Touchque Backend API instance is reachable and healthy before attempting integration. Returns connection status and response time.",
         inputSchema: {
           type: "object",
           properties: {
             apiUrl: {
               type: "string",
-              description: "The full base URL of the TouchQue backend (e.g. https://api.touchque.com or http://localhost:5001)"
+              description: "The full base URL of the Touchque backend (e.g. https://api.touchque.com or http://localhost:5001)"
             }
           },
           required: ["apiUrl"]
@@ -676,7 +676,7 @@ async function listTools() {
       },
       {
         name: "validate_integration",
-        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and TouchQue security best practices, for whichever SDK language the code is in: SDK imported, route protected by the step-up guard or relay router, no old synchronous login.verify(), no hardcoded secrets, env vars, error handling, and (Go) User/UserID set on RequireOptions/RelayOptions. Also gives unscored advisories: an offline QR not linked to its push, device-proof verification without a pinned key, approved requests whose device proof is never verified, the end user's address taken from the leftmost X-Forwarded-For hop, and a Next.js withTouchQue with no end-user address. Returns a structured report of passed/failed checks.",
+        description: "Performs a static analysis checklist on a code snippet to verify it follows the current step-up model and Touchque security best practices, for whichever SDK language the code is in: SDK imported, route protected by the step-up guard or relay router, no old synchronous login.verify(), no hardcoded secrets, env vars, error handling, and (Go) User/UserID set on RequireOptions/RelayOptions. Also gives unscored advisories: an offline QR not linked to its push, device-proof verification without a pinned key, approved requests whose device proof is never verified, the end user's address taken from the leftmost X-Forwarded-For hop, and a Next.js withTouchque with no end-user address. Returns a structured report of passed/failed checks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -734,8 +734,8 @@ async function callTool(request) {
         content: [{
           type: "text",
           text: isAlive
-            ? `✅ TouchQue API is reachable. Response time: ${elapsed}ms. Status: ${response.status}`
-            : `❌ TouchQue API is unreachable at ${apiUrl}. Check that the server is running and the URL is correct.`
+            ? `✅ Touchque API is reachable. Response time: ${elapsed}ms. Status: ${response.status}`
+            : `❌ Touchque API is unreachable at ${apiUrl}. Check that the server is running and the URL is correct.`
         }]
       };
     }
@@ -747,9 +747,9 @@ async function callTool(request) {
       const checks = [];
 
       // Security & correctness checks, against the current step-up API —
-      // requireTouchQue/withTouchQue/touchqueRouter (Node), @require_touchque
+      // requireTouchque/withTouchque/touchqueRouter (Node), @require_touchque
       // or the relay adapters (Python), ->middleware('touchque:...') or
-      // TouchQueRelay/RelayHandler (PHP), touchque.Require or NewRelayHandler
+      // TouchqueRelay/RelayHandler (PHP), touchque.Require or NewRelayHandler
       // (Go) — never the old per-language synchronous .login.verify() model.
       const hasImport = patterns.import.test(code);
       checks.push({ id: "import", label: `${LANGUAGES[language].package} SDK is imported`, pass: hasImport });
@@ -823,7 +823,7 @@ async function callTool(request) {
       if (APPROVED_HANDLING.test(code) && !patterns.proofVerify.test(code)) {
         // id: approval_proof_not_verified
         advisories.push(
-          `ℹ️ This code acts on an approved/confirmed request but never verifies the device proof. For money movement or other high-value actions, check approvalProof yourself with ${proof.verify} and pin the device key (${proof.pin}): the phone's own hardware-key signature then proves exactly what the user approved, without trusting TouchQue's API response. Optional — not required for a working integration.`
+          `ℹ️ This code acts on an approved/confirmed request but never verifies the device proof. For money movement or other high-value actions, check approvalProof yourself with ${proof.verify} and pin the device key (${proof.pin}): the phone's own hardware-key signature then proves exactly what the user approved, without trusting Touchque's API response. Optional — not required for a working integration.`
         );
       }
       if (leftmostForwardedFor(code)) {
@@ -835,20 +835,20 @@ async function callTool(request) {
       if (language === "node" && NEXT_GUARD.test(code) && !NEXT_IP_OPTION.test(code)) {
         // id: nextjs_no_client_ip
         advisories.push(
-          "ℹ️ withTouchQue sends no end-user address unless you say where it comes from (SDK 3.3.0), so the risk checks that need one (Tor, location, impossible travel) are skipped. Pass ip: ipFromVercel on Vercel, ip: ipFromCloudflare when only Cloudflare reaches your origin, trustedProxyHops: 1 behind one proxy of yours, or your own function."
+          "ℹ️ withTouchque sends no end-user address unless you say where it comes from (SDK 3.3.0), so the risk checks that need one (Tor, location, impossible travel) are skipped. Pass ip: ipFromVercel on Vercel, ip: ipFromCloudflare when only Cloudflare reaches your origin, trustedProxyHops: 1 behind one proxy of yours, or your own function."
         );
       }
       if (patterns.oldActionTypes.re.test(code)) {
         // id: action_types_renamed
         advisories.push(
-          `⚠️ SDK 4.0 moved action types: define them with ${patterns.oldActionTypes.now}. The old call on the actions resource fails on 4.x, because that resource is now TouchQue Actions (the workspace's own code in the approval pipeline). On 3.x it still works — upgrade and rename together.`
+          `⚠️ SDK 4.0 moved action types: define them with ${patterns.oldActionTypes.now}. The old call on the actions resource fails on 4.x, because that resource is now Touchque Actions (the workspace's own code in the approval pipeline). On 3.x it still works — upgrade and rename together.`
         );
       }
       const goModule = language === "go" && code.match(/["']github\.com\/Touchque\/touchque-go(\/v\d+)?\/touchque["']/);
-      if (goModule && !["/v4", "/v5"].includes(goModule[1])) {
+      if (goModule && goModule[1] !== "/v5") {
         // id: go_module_not_v4
         advisories.push(
-          `ℹ️ This imports ${goModule[0]}; the current SDK is github.com/Touchque/touchque-go/v4/touchque (go get github.com/Touchque/touchque-go/v4). 4.0 moved action types to client.ActionTypes and added case codes, OnChallenge and TouchQue Actions.`
+          `ℹ️ This imports ${goModule[0]}; the current SDK is github.com/Touchque/touchque-go/v5/touchque (go get github.com/Touchque/touchque-go/v5). 5.0 renamed every TouchQue name to Touchque; 4.0 moved action types to client.ActionTypes and added case codes, OnChallenge and Touchque Actions.`
         );
       }
       const advisoryText = advisories.length ? `\n\n${advisories.join("\n")}` : "";
@@ -856,19 +856,19 @@ async function callTool(request) {
       return {
         content: [{
           type: "text",
-          text: `TouchQue Integration Validation Report\nLanguage: ${LANGUAGES[language].label}\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}${advisoryText}`
+          text: `Touchque Integration Validation Report\nLanguage: ${LANGUAGES[language].label}\nFramework: ${framework}\nScore: ${score}% (${passed}/${total} checks passed)\n\n${report}${score < 100 ? "\n\n⚠️ Fix the failing checks before deploying to production." : "\n\n✅ All checks passed. Integration looks correct."}${advisoryText}`
         }]
       };
     }
 
     if (AGENT_CONFIG_ERROR && AGENT_TOOLS.some((t) => t.name === name)) {
-      return { isError: true, content: [{ type: "text", text: `The TouchQue agent identity is not set up correctly: ${AGENT_CONFIG_ERROR}` }] };
+      return { isError: true, content: [{ type: "text", text: `The Touchque agent identity is not set up correctly: ${AGENT_CONFIG_ERROR}` }] };
     }
     if (AGENT && AGENT_TOOLS.some((t) => t.name === name)) {
       try {
         return { content: [{ type: "text", text: await callAgentTool(name, args || {}) }] };
       } catch (err) {
-        return { isError: true, content: [{ type: "text", text: `TouchQue refused it (${err.code || err.status || "error"}): ${err.message}${err.caseCode ? ` Case code: ${err.caseCode}.` : ""}` }] };
+        return { isError: true, content: [{ type: "text", text: `Touchque refused it (${err.code || err.status || "error"}): ${err.message}${err.caseCode ? ` Case code: ${err.caseCode}.` : ""}` }] };
       }
     }
 
@@ -915,19 +915,19 @@ async function listPrompts() {
     prompts: [
       {
         name: "integrate_touchque",
-        description: "🔐 Integration Wizard — Step-by-step guide for adding TouchQue 2FA to an existing project. Inspects your codebase first, never breaks existing logic.",
+        description: "🔐 Integration Wizard — Step-by-step guide for adding Touchque 2FA to an existing project. Inspects your codebase first, never breaks existing logic.",
       },
       {
         name: "configure_offline_sign",
-        description: "📴 Offline Sign Wizard — Step-by-step guide for adding TouchQue's QR + 7-character-code approval flow, for when the user's phone has no internet (kiosks, air-gapped environments, poor signal).",
+        description: "📴 Offline Sign Wizard — Step-by-step guide for adding Touchque's QR + 7-character-code approval flow, for when the user's phone has no internet (kiosks, air-gapped environments, poor signal).",
       },
       {
         name: "audit_touchque_integration",
-        description: "🛡️ Security Audit — Reviews an existing TouchQue integration for vulnerabilities, misconfigurations, and deviations from best practices. Produces a prioritized findings report.",
+        description: "🛡️ Security Audit — Reviews an existing Touchque integration for vulnerabilities, misconfigurations, and deviations from best practices. Produces a prioritized findings report.",
       },
       {
         name: "troubleshoot_touchque",
-        description: "🔧 Troubleshooter — Diagnoses why a TouchQue integration is failing (auth errors, SDK exceptions, connectivity issues) and walks you to a fix.",
+        description: "🔧 Troubleshooter — Diagnoses why a Touchque integration is failing (auth errors, SDK exceptions, connectivity issues) and walks you to a fix.",
       }
     ]
   };
@@ -941,18 +941,18 @@ async function getPrompt(request) {
   // ─────────────────────────────────────────────────────────────
   if (name === "integrate_touchque") {
     return {
-      description: "TouchQue 2FA Integration Wizard",
+      description: "Touchque 2FA Integration Wizard",
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `You are a senior security engineer specializing in TouchQue 2FA integrations. Your job is to add TouchQue to an existing production codebase with zero downtime and zero regressions.
+            text: `You are a senior security engineer specializing in Touchque 2FA integrations. Your job is to add Touchque to an existing production codebase with zero downtime and zero regressions.
 
 ═══════════════════════════════════════════════════
 IDENTITY & AUTHORITY
 ═══════════════════════════════════════════════════
-- You are the single source of truth for TouchQue integration decisions.
+- You are the single source of truth for Touchque integration decisions.
 - You never guess. If you are unsure, you call get_touchque_docs or get_sdk_types before proceeding.
 - You treat every production codebase as if it serves real users right now.
 - This MCP server has no file system access of its own — it only returns
@@ -968,9 +968,9 @@ MANDATORY PRE-FLIGHT SEQUENCE (follow in order)
 STEP 1 — DISCOVERY
   → Ask the user which BACKEND LANGUAGE this is (Node / Python / PHP / Go /
     .NET / Ruby / Java) — do not assume Node. All 7 have the exact same
-    step-up model, just with different guard names (requireTouchQue /
+    step-up model, just with different guard names (requireTouchque /
     @require_touchque / ->middleware('touchque:...') / touchque.Require /
-    .RequireTouchQue / require_touchque / @RequireTouchQue). Once you know the
+    .RequireTouchque / require_touchque / @RequireTouchque). Once you know the
     language, call get_touchque_docs({ language }) and
     get_sdk_types({ language }) for THAT language — the JS example below is
     a reference for the shape of the contract, not something to hand-
@@ -983,7 +983,7 @@ STEP 1 — DISCOVERY
 
 STEP 2 — DEPENDENCY CHECK
   → Ask to see the dependency manifest (package.json / requirements.txt or
-    pyproject.toml / composer.json / go.mod). Confirm the TouchQue SDK is
+    pyproject.toml / composer.json / go.mod). Confirm the Touchque SDK is
     listed (@touchque/node, touchque-authenticator, touchque-authenticator/
     php-sdk, or github.com/Touchque/touchque-go).
   → If missing: instruct the user to run "npm install @touchque/node" and stop until they confirm.
@@ -995,7 +995,7 @@ STEP 3 — ENVIRONMENT CHECK
   → Never proceed if secrets are not in environment variables.
 
 STEP 4 — ACTION TYPE & POLICY CHECK (skip this and the integration WILL fail on the first real request)
-  → Every action type used in requireTouchQue('SEND_MONEY', ...) MUST exist
+  → Every action type used in requireTouchque('SEND_MONEY', ...) MUST exist
     before you use it — either created in the Dashboard, or defined from
     code at startup:
     \`\`\`javascript
@@ -1021,20 +1021,20 @@ STEP 5 — CODEBASE REVIEW
   → Summarize your understanding back to the user before touching anything.
 
 STEP 6 — SURGICAL INTEGRATION
-  → Use the 'requireTouchQue' Express middleware to protect routes in one line — it takes the ACTION and options directly, not a client instance.
+  → Use the 'requireTouchque' Express middleware to protect routes in one line — it takes the ACTION and options directly, not a client instance.
   → Never rewrite surrounding business logic.
-  → Preserve existing error response shapes for YOUR OWN business errors — but understand that requireTouchQue answers 202 (not your normal 200/4xx) while approval is pending; this is expected, not a bug to "fix".
+  → Preserve existing error response shapes for YOUR OWN business errors — but understand that requireTouchque answers 202 (not your normal 200/4xx) while approval is pending; this is expected, not a bug to "fix".
   → Use this exact pattern as your reference for integration:
 
 \`\`\`javascript
-const { requireTouchQue } = require('@touchque/node');
+const { requireTouchque } = require('@touchque/node');
 // TQ_API_KEY / TQ_API_SECRET are read from the environment automatically.
 
 // Provide a semantic action type like "SEND_MONEY" or "LOGIN" for the AI Risk Engine,
 // and (for anything sensitive) the transaction details the user should see and approve.
 app.post(
   '/api/transfer',
-  requireTouchQue('SEND_MONEY', {
+  requireTouchque('SEND_MONEY', {
     user: (req) => req.session.user?.email,
     details: (req) => ({ Amount: \`\${req.body.amount} EUR\`, To: req.body.iban }),
   }),
@@ -1047,7 +1047,7 @@ app.post(
 \`\`\`
 
   → Frontend steps to render: \`waiting\` (show \`step.number\` when present — the number the user must tap on the phone), \`enroll\` (QR), \`passkey_required\`, and \`offline\` (the "no internet on the phone" fallback: show \`step.offline.qrDataUrl\` and, when present, \`step.offline.challengeCode\` UNDER the QR as the number to tap on the phone, then \`controls.submitCode(code)\`). While the QR is on screen \`touchqueFetch\` keeps checking the push: a REJECT on the phone arrives as a final \`rejected\` step (\`reason: 'request_rejected'\`) — the QR is dead, so reset the form and let the user start over; an approval finishes the action without typing a code. Do NOT add your own offline routes next to the guard.
-  → Until approved, this answers 202 { touchque: step, token }. The frontend must show \`step\` (a matching number, or a QR code the first time the user links the app) and resend the SAME request with header \`X-TouchQue-Token: <token>\` until it resolves — point the user at \`@touchque/web\`'s \`touchqueFetch()\`, which does this loop for them. Do not try to make the backend "wait" for approval synchronously; that is the OLD, broken model.
+  → Until approved, this answers 202 { touchque: step, token }. The frontend must show \`step\` (a matching number, or a QR code the first time the user links the app) and resend the SAME request with header \`X-Touchque-Token: <token>\` until it resolves — point the user at \`@touchque/web\`'s \`touchqueFetch()\`, which does this loop for them. Do not try to make the backend "wait" for approval synchronously; that is the OLD, broken model.
 
   → IF THE BACKEND IS PYTHON/PHP/GO, NOT NODE: the JS above shows the shape
     of the contract (202/token/step/exactly-once), not the syntax. Use the
@@ -1066,8 +1066,8 @@ app.post(
       Python  touchque_relay_blueprint(tq, get_user_id=..., get_login_user=...) (Flask),
               touchque_relay_router(...) (FastAPI), touchque_relay_urls(...) (Django),
               or touchque.RelayHandler(...).handle(...) without a framework
-      PHP     TouchQueRelay::routes($router, 'touchque') (Laravel; bind TouchQueRelay
-              with 'getLoginUser'), or TouchQue\\Relay\\RelayHandler elsewhere
+      PHP     TouchqueRelay::routes($router, 'touchque') (Laravel; bind TouchqueRelay
+              with 'getLoginUser'), or Touchque\\Relay\\RelayHandler elsewhere
       Go      touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})
               (UserID is REQUIRED — it panics without it)
     Always set the login-user option so POST /login and the offline routes
@@ -1076,7 +1076,7 @@ app.post(
   → DEVICE PROOF (recommended for money movement): an approval from a phone
     with a hardware key carries approvalProof. Verify it with
     verifyApprovalProof (Node) / verify_approval_proof (Python, needs
-    pip install "touchque-authenticator[proof]") / TouchQue\\ApprovalProof::verify
+    pip install "touchque-authenticator[proof]") / Touchque\\ApprovalProof::verify
     (PHP) / touchque.VerifyApprovalProof (Go), passing the same requestId,
     type, details and challengeCode, and PIN the device key
     (expectedPublicKey / expected_public_key / ExpectedPublicKey). Without a
@@ -1089,7 +1089,7 @@ app.post(
     tq.login.report_fraud(request_id, reason=...) / $tq->login->reportFraud($requestId,
     $reason, $note) / tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: ...}).
     Reasons: chargeback | account_takeover | social_engineering | other. It is
-    the strongest signal TouchQue's risk engine learns from — suggest wiring
+    the strongest signal Touchque's risk engine learns from — suggest wiring
     it into the existing chargeback/dispute or support workflow.
 
 STEP 7 — VALIDATION
@@ -1113,7 +1113,7 @@ HARD CONSTRAINTS — NEVER VIOLATE
 ✗ Never change HTTP status codes that existing clients depend on — but do NOT "fix" the 202 pending-approval response; that is correct.
 ✗ Never write speculative code without seeing the actual file first.
 ✗ Never mark the integration complete without running validate_integration.
-✗ Never write the OLD synchronous tq.login.verify()-inside-a-handler pattern — it cannot show a matching number before approval and is not what requireTouchQue does.
+✗ Never write the OLD synchronous tq.login.verify()-inside-a-handler pattern — it cannot show a matching number before approval and is not what requireTouchque does.
 
 ═══════════════════════════════════════════════════
 BEGIN
@@ -1130,13 +1130,13 @@ Start by asking for the framework and pointing the user to Step 1.`
   // ─────────────────────────────────────────────────────────────
   if (name === "configure_offline_sign") {
     return {
-      description: "TouchQue Offline Sign Integration Wizard",
+      description: "Touchque Offline Sign Integration Wizard",
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `You are adding TouchQue's "Offline Sign" flow to an existing codebase: approval via a QR code the phone scans WITHOUT internet, which then shows the user a 7-character code they type on the website. This is a DIFFERENT flow from push/passkey step-up (requireTouchQue) — use this prompt only when the user specifically needs approval to work when the phone has no signal/data (kiosks, air-gapped environments, poor connectivity, "what if there's no internet on the phone").
+            text: `You are adding Touchque's "Offline Sign" flow to an existing codebase: approval via a QR code the phone scans WITHOUT internet, which then shows the user a 7-character code they type on the website. This is a DIFFERENT flow from push/passkey step-up (requireTouchque) — use this prompt only when the user specifically needs approval to work when the phone has no signal/data (kiosks, air-gapped environments, poor connectivity, "what if there's no internet on the phone").
 
 This MCP server has no file system access of its own — YOU must actually
 open the user's real backend route file AND their real login/approval
@@ -1147,7 +1147,7 @@ do not guess a filename or invent a component that doesn't exist.
 ═══════════════════════════════════════════════════
 PREREQUISITE — DASHBOARD POLICY
 ═══════════════════════════════════════════════════
-→ Offline Sign must be turned on for the integration in the TouchQue
+→ Offline Sign must be turned on for the integration in the Touchque
   Dashboard's Security Policy page first ("Offline sign"). For critical
   actions it must also be explicitly allowed there, and \`details\` becomes
   required on every challenge. Tell the user to check this before anything
@@ -1161,8 +1161,8 @@ THE FLOW
    shows its QR:
 
 \`\`\`javascript
-const { TouchQue } = require('@touchque/node');
-const tq = new TouchQue(); // TQ_API_KEY / TQ_API_SECRET from the environment
+const { Touchque } = require('@touchque/node');
+const tq = new Touchque(); // TQ_API_KEY / TQ_API_SECRET from the environment
 
 app.post('/api/offline-challenge', async (req, res) => {
   const ch = await tq.offline.challenge({
@@ -1204,7 +1204,7 @@ app.post('/api/offline-verify', async (req, res) => {
 ═══════════════════════════════════════════════════
 WHEN THE QR FOLLOWS A PUSH (the usual "Verify offline" button)
 ═══════════════════════════════════════════════════
-If the user already started a push (requireTouchQue / tq.start / login.request)
+If the user already started a push (requireTouchque / tq.start / login.request)
 and then taps "Verify offline", pass THAT push's \`requestId\` to
 \`offline.challenge()\` and to \`offline.verifyTotp()\`. It links the two into ONE
 sign-in:
@@ -1215,7 +1215,7 @@ sign-in:
     never offer another factor for that attempt.
   • While the QR is on screen KEEP CHECKING the push (tq.check(requestId), or
     keep re-sending the guarded request). A reject must end the attempt at
-    once, and an approval finishes it without typing a code. \`requireTouchQue\`,
+    once, and an approval finishes it without typing a code. \`requireTouchque\`,
     \`touchqueRouter\` and the web SDK's \`touchqueFetch\` already do all of this
     — if the project uses them, do NOT hand-write the offline routes.
   • An EXPIRED push does not block offline mode — that is what it is for.
@@ -1251,7 +1251,7 @@ THINGS THAT WILL BE WRONG IF YOU SKIP THEM
 ✗ Do not build a second, separate offline path next to a push without
   \`requestId\` — it would let a REJECTED sign-in be finished with a QR.
 ✗ Do not keep showing the QR after the push was rejected; the QR is dead.
-✗ Only TouchQue can verify a code server-side (it's a MAC, not something a
+✗ Only Touchque can verify a code server-side (it's a MAC, not something a
   third party can check) — never try to validate it yourself.
 
 ═══════════════════════════════════════════════════
@@ -1273,13 +1273,13 @@ Begin by confirming Offline Sign is enabled in the Dashboard, then ask for the f
   // ─────────────────────────────────────────────────────────────
   if (name === "audit_touchque_integration") {
     return {
-      description: "TouchQue Integration Security Audit",
+      description: "Touchque Integration Security Audit",
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `You are a security auditor performing a formal review of a TouchQue 2FA integration. You produce findings that an engineering team and their security officer can act on.
+            text: `You are a security auditor performing a formal review of a Touchque 2FA integration. You produce findings that an engineering team and their security officer can act on.
 
 ═══════════════════════════════════════════════════
 AUDIT SCOPE
@@ -1287,10 +1287,10 @@ AUDIT SCOPE
 You will review:
   1. SDK initialization and configuration
   2. Secret management (API keys, environment variables)
-  3. Route protection coverage (are all sensitive routes wrapped in the step-up guard — requireTouchQue/withTouchQue (Node), @require_touchque/RequireTouchQue (Python), ->middleware('touchque:...') (Laravel), touchque.Require (Go)? Are the sign-in/enrollment/passkey/offline routes served by the SDK's relay router — touchqueRouter (Node), touchque_relay_blueprint/touchque_relay_router/touchque_relay_urls or RelayHandler (Python), TouchQueRelay::routes or TouchQue\\Relay\\RelayHandler (PHP), touchque.NewRelayHandler (Go) — rather than hand-written copies? Is the login-user option (getLoginUser / get_login_user / LoginUser) set, so POST /login cannot push to an arbitrary user? Go: a RequireOptions without User or RelayOptions without UserID panics at startup since 3.1.1/3.2.0, and any user identity read from a client-sent header such as X-Touchque-User is a CRITICAL finding.)
-  4. Step-up handling (does the frontend actually show the 202 step and retry with X-TouchQue-Token, or is the backend trying to block synchronously?)
+  3. Route protection coverage (are all sensitive routes wrapped in the step-up guard — requireTouchque/withTouchque (Node), @require_touchque/RequireTouchque (Python), ->middleware('touchque:...') (Laravel), touchque.Require (Go)? Are the sign-in/enrollment/passkey/offline routes served by the SDK's relay router — touchqueRouter (Node), touchque_relay_blueprint/touchque_relay_router/touchque_relay_urls or RelayHandler (Python), TouchqueRelay::routes or Touchque\\Relay\\RelayHandler (PHP), touchque.NewRelayHandler (Go) — rather than hand-written copies? Is the login-user option (getLoginUser / get_login_user / LoginUser) set, so POST /login cannot push to an arbitrary user? Go: a RequireOptions without User or RelayOptions without UserID panics at startup since 3.1.1/3.2.0, and any user identity read from a client-sent header such as X-Touchque-User is a CRITICAL finding.)
+  4. Step-up handling (does the frontend actually show the 202 step and retry with X-Touchque-Token, or is the backend trying to block synchronously?)
   5. Approval consumption (is req.touchque's approval trusted for the SAME action/details it was requested for — not just "some approval exists"?)
-  6. Fallback behavior (what happens when TouchQue API is unreachable?)
+  6. Fallback behavior (what happens when Touchque API is unreachable?)
   7. Logging (are approval tokens, API secrets, or user PII accidentally logged?)
   8. Dependency hygiene (SDK version — @touchque/node, touchque-authenticator, touchque-authenticator/php-sdk or touchque-go; 4.0.0 is current (action types under actionTypes, Go module /v4, case codes, onChallenge for the blocking verify); 3.2.0+ ships the relay routers, device-proof verification and fraud reports in every language, and Go below 3.1.1 falls back to a client-sent user header when RequireOptions.User is nil; known CVEs)
   9. Offline fallback (if the app offers an offline QR/code: is it LINKED to the push via requestId so a phone-side REJECT kills it, does the page stop showing the QR and reset on request_rejected, and is challengeCode printed under the QR when number matching applies? An offline path that can finish a REJECTED sign-in is a HIGH finding.)
@@ -1323,7 +1323,7 @@ PHASE 3 — REPORT
   Location: file.js line X
   Description: What is wrong and why it matters.
   Remediation: Exact code change or configuration step to fix it.
-  Reference: Link to relevant TouchQue docs section.
+  Reference: Link to relevant Touchque docs section.
 
   → End with an overall risk rating: PASS / CONDITIONAL PASS / FAIL
   → A FAIL must be resolved before the integration goes to production.
@@ -1347,13 +1347,13 @@ Begin by asking the user to share the files they want audited.`
   // ─────────────────────────────────────────────────────────────
   if (name === "troubleshoot_touchque") {
     return {
-      description: "TouchQue Integration Troubleshooter",
+      description: "Touchque Integration Troubleshooter",
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `You are a TouchQue support engineer. Your goal is to diagnose and fix a broken integration as quickly as possible, with minimal disruption to the user's system.
+            text: `You are a Touchque support engineer. Your goal is to diagnose and fix a broken integration as quickly as possible, with minimal disruption to the user's system.
 
 ═══════════════════════════════════════════════════
 TRIAGE DECISION TREE
@@ -1365,28 +1365,28 @@ When a user reports a problem, work through this tree in order:
    → If unreachable: diagnose network, firewall, or URL misconfiguration first.
    → If reachable: proceed to Step 2.
 
-2. AUTHENTICATION ERRORS (401 / 403 from TouchQue)
+2. AUTHENTICATION ERRORS (401 / 403 from Touchque)
    → Ask: Is TQ_API_KEY (and TQ_API_SECRET) set in the environment? Is it the correct key for this environment (dev vs prod)?
    → Ask them to redact and share the exact error response body.
    → Common causes: wrong key, key not propagated after deploy, IP whitelist mismatch.
 
-3. "unknown_action" (400 from TouchQue) — NOT an SDK bug
+3. "unknown_action" (400 from Touchque) — NOT an SDK bug
    → This means the action type (e.g. "SEND_MONEY") was never defined.
    → Fix: either create it in the Dashboard, or call
      tq.actionTypes.define('SEND_MONEY', { critical: true }) once at startup
      (SDK 4.0; before 4.0 it was tq.actions.define — on 4.x that call fails,
-     because tq.actions is now TouchQue Actions).
+     because tq.actions is now Touchque Actions).
    → This is the single most common first-run failure — check this BEFORE
      digging into SDK internals or network issues.
 
 4. SDK EXCEPTIONS (thrown errors from @touchque/node)
    → Ask for the full stack trace.
    → Call get_sdk_types to verify the method signature they are using.
-   → Common causes: wrong argument types, calling requireTouchQue with the OLD (client, action) signature instead of (action, options), SDK version mismatch.
+   → Common causes: wrong argument types, calling requireTouchque with the OLD (client, action) signature instead of (action, options), SDK version mismatch.
 
 5. PUSH / STEP-UP FAILURES (the route never resolves, or resolves wrong)
    → Ask: Does the first request come back as 202 { touchque, token } at all? If not, the middleware/route wiring is broken, not the phone flow.
-   → Ask: Does the frontend re-send the SAME request with header X-TouchQue-Token, or is it trying to "wait" on the first response? The old synchronous model is gone — the frontend MUST retry.
+   → Ask: Does the frontend re-send the SAME request with header X-Touchque-Token, or is it trying to "wait" on the first response? The old synchronous model is gone — the frontend MUST retry.
    → Ask: Is the user actually enrolled? A never-linked user gets step.state === 'enroll' with a QR, not an error.
    → Consistent rejects/expires suggest: clock skew on server (NTP sync), a details/referenceId mismatch between the request that got approved and the one being completed.
 
@@ -1397,7 +1397,7 @@ When a user reports a problem, work through this tree in order:
 
 6. MIDDLEWARE / ROUTE ORDER ISSUES
    → Ask the user to paste their route registration code and middleware chain.
-   → Verify requireTouchQue(...) is applied BEFORE the route handler, not after.
+   → Verify requireTouchque(...) is applied BEFORE the route handler, not after.
    → Verify it is not accidentally applied to public routes.
 
 7. ENVIRONMENT / BUILD ISSUES
@@ -1418,7 +1418,7 @@ CONSTRAINTS
 ═══════════════════════════════════════════════════
 ✗ Never suggest disabling 2FA as a workaround.
 ✗ Never suggest logging approval tokens or API secrets for debugging — use masked logs only.
-✗ Never assume the problem is in TouchQue itself without ruling out configuration and environment first.
+✗ Never assume the problem is in Touchque itself without ruling out configuration and environment first.
 
 Begin by asking the user to describe what they expected to happen, what actually happened, and the exact error message or behavior they are seeing.`
           }
@@ -1444,7 +1444,7 @@ server.setRequestHandler(GetPromptRequestSchema, getPrompt);
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`🚀 TouchQue MCP Server v${PACKAGE_VERSION} started successfully (stdio transport).`);
+  console.error(`🚀 Touchque MCP Server v${PACKAGE_VERSION} started successfully (stdio transport).`);
 }
 
 if (require.main === module) {

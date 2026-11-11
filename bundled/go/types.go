@@ -1,4 +1,4 @@
-// TouchQue Go SDK — bundled type/API reference for AI assistants.
+// Touchque Go SDK — bundled type/API reference for AI assistants.
 // Concatenation of touchque-go/touchque/{config.go,types.go,client.go,steps.go,offline.go,login.go,
 // http_middleware.go,approval_proof.go} plus the public part of relay.go (NewRelayHandler).
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.
@@ -15,7 +15,7 @@ import (
 // DefaultBaseURL is used when Config.BaseURL and TQ_API_URL are both unset.
 const DefaultBaseURL = "https://api.touchque.com"
 
-// Config holds the configuration options for the TouchQue SDK.
+// Config holds the configuration options for the Touchque SDK.
 type Config struct {
 	APIKey    string
 	APISecret string
@@ -113,7 +113,7 @@ type GenerateSecretResponse struct {
 	ExpiresAt        string `json:"expiresAt"`
 	TTLMs            int    `json:"ttlMs"`
 	// QRCodeDataURL is a ready-to-render `data:image/png;base64,...` encoding
-	// Secret for the TouchQue mobile app to scan.
+	// Secret for the Touchque mobile app to scan.
 	QRCodeDataURL string   `json:"qrCodeDataUrl"`
 	RecoveryCodes []string `json:"recoveryCodes"`
 }
@@ -162,7 +162,7 @@ type LoginRequestResponse struct {
 }
 
 // SecurityChanges says when the user's sign-in security last changed in your
-// own system. A zero time is left out. TouchQue adds what it saw itself;
+// own system. A zero time is left out. Touchque adds what it saw itself;
 // access rules and Actions read the minutes since each
 // (minutesSince.mfaChange, .deviceChange, ...), e.g. refuse PAYOUT_CHANGE
 // within 24 hours of a 2FA change.
@@ -197,7 +197,7 @@ type DestinationLookalike struct {
 	SimilarTo string `json:"similarTo,omitempty"`
 }
 
-// DestinationCheck is what TouchQue made of a request's Destination.
+// DestinationCheck is what Touchque made of a request's Destination.
 type DestinationCheck struct {
 	Known     bool                   `json:"known"`
 	Lookalike []DestinationLookalike `json:"lookalike"`
@@ -221,7 +221,7 @@ type GetUserResponse struct {
 	Device *DevicePosture `json:"device"`
 }
 
-// DevicePosture is what the TouchQue app last reported about the phone it runs
+// DevicePosture is what the Touchque app last reported about the phone it runs
 // on, for device trust (GetUserResponse.Device). It is self-reported by the
 // app; Signed says the phone's hardware approval key signed the latest report.
 // An empty string means "not reported" (the API sends null).
@@ -279,9 +279,9 @@ type WebAuthnAuthenticateVerifyResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	// ExternalUsername is the user whose login request was approved, as
-	// reported by TouchQue (never by the browser). Empty on older APIs.
+	// reported by Touchque (never by the browser). Empty on older APIs.
 	ExternalUsername string `json:"externalUsername,omitempty"`
-	// RequestID is the approved login request, when TouchQue reports it.
+	// RequestID is the approved login request, when Touchque reports it.
 	RequestID string `json:"requestId,omitempty"`
 }
 
@@ -420,7 +420,7 @@ package touchque
 
 import "log/slog"
 
-// Client is the main entry point for the TouchQue Go SDK.
+// Client is the main entry point for the Touchque Go SDK.
 type Client struct {
 	Auth     *AuthResource
 	Login    *LoginResource
@@ -429,10 +429,10 @@ type Client struct {
 	Offline  *OfflineResource
 	// ActionTypes: what users approve (LOGIN, SEND_MONEY…). Was Actions before v4.
 	ActionTypes *ActionTypesResource
-	// Actions is TouchQue Actions: your own code in the approval pipeline.
+	// Actions is Touchque Actions: your own code in the approval pipeline.
 	Actions *ActionsResource
 	// Risk is silent sign-ins: should this sign-in ask the phone, and which
-	// browsers TouchQue knows.
+	// browsers Touchque knows.
 	Risk *RiskResource
 	// Recovery is Never Locked Out: move a user whose phone is gone to a new
 	// phone, with colleagues vouching.
@@ -443,7 +443,7 @@ type Client struct {
 	// Agents manages AI agents as identities of their own: register (public
 	// key), suspend, revoke, kill switch. The agent itself uses NewAgent.
 	Agents *AgentsResource
-	// Identity is the TouchQue Login Management API: your customers' accounts,
+	// Identity is the Touchque Login Management API: your customers' accounts,
 	// roles, organizations, apps and connections.
 	Identity *IdentityResource
 	// Mobile is the Mobile SDK: your own iOS/Android app approves for your
@@ -456,14 +456,14 @@ type Client struct {
 	// or approval page (a paid add-on).
 	DeviceRisk *DeviceRiskResource
 	// SafeGuard is Safe Guard: Safe transactions approved on the approver's
-	// phone, for TouchQueSafeGuard.
+	// phone, for TouchqueSafeGuard.
 	SafeGuard *SafeGuardResource
 
 	apiSecret string
 	logger    *slog.Logger
 }
 
-// NewClient initializes a new TouchQue SDK Client with the given
+// NewClient initializes a new Touchque SDK Client with the given
 // configuration. Panics on invalid configuration (matches this SDK's
 // long-standing behavior) — use New() for a version that returns an error instead.
 func NewClient(config *Config) *Client {
@@ -604,13 +604,13 @@ type Approval struct {
 	ConfirmedVia  string      `json:"confirmedVia,omitempty"`
 	ApprovalProof interface{} `json:"approvalProof,omitempty"`
 	// Vishing Shield: Provisional means approved during a call. Let the user
-	// in, but treat the session as limited: TouchQue refuses their critical
+	// in, but treat the session as limited: Touchque refuses their critical
 	// actions until the phone re-confirms (EventApprovalReconfirmed), and
 	// EventApprovalRevoked means end it.
 	ShieldFields
 	// Reasons is set on silent sign-ins only (Assurance.Method "silent",
 	// ConfirmedVia "SILENT", RequestID "silent"): nothing was sent to the
-	// phone, and these say why TouchQue let this known browser in.
+	// phone, and these say why Touchque let this known browser in.
 	Reasons []RiskReason `json:"reasons,omitempty"`
 }
 
@@ -627,10 +627,10 @@ type StartOptions struct {
 	// when the user has no linked phone.
 	NoEnroll bool
 	// BrowserProof (silent sign-ins): the browser's device-bound key proof
-	// (X-TouchQue-Browser), passed through untouched. Once the user approves,
-	// TouchQue knows this browser.
+	// (X-Touchque-Browser), passed through untouched. Once the user approves,
+	// Touchque knows this browser.
 	BrowserProof string
-	// Context is for your TouchQue Actions only (event.context). Never shown on the phone.
+	// Context is for your Touchque Actions only (event.context). Never shown on the phone.
 	Context map[string]interface{}
 }
 
@@ -1167,20 +1167,20 @@ type LoginRequestOptions struct {
 	// server-side state, never from browser input.
 	Details []LoginDetail
 	// BrowserProof (silent sign-ins): the browser's device-bound key proof,
-	// exactly as the browser sent it (the X-TouchQue-Browser header, made by
+	// exactly as the browser sent it (the X-Touchque-Browser header, made by
 	// @touchque/web). When the user approves this request on the phone (or
-	// with a passkey), TouchQue remembers the browser, so a later Risk.Check
+	// with a passkey), Touchque remembers the browser, so a later Risk.Check
 	// can let the same browser in without asking. Pass it through untouched;
-	// an invalid proof only means "a browser TouchQue does not know".
+	// an invalid proof only means "a browser Touchque does not know".
 	BrowserProof string
-	// Context is for your TouchQue Actions only (event.context): roles, plan,
+	// Context is for your Touchque Actions only (event.context): roles, plan,
 	// amount… Any JSON object up to 4 KB. Never shown on the phone.
 	Context map[string]interface{}
 	// SecurityChanges: when the user's sign-in security last changed in your system.
 	SecurityChanges *SecurityChanges
 	// Destination: where the action sends money or value (shown in full on the phone).
 	Destination *Destination
-	// Locale: "tr" (default) or "en", the language of the rows TouchQue adds.
+	// Locale: "tr" (default) or "en", the language of the rows Touchque adds.
 	Locale string
 	// OnChallenge (VerifyWithOptions only) is called once, right after the
 	// request is created and before any waiting: show ChallengeCode to the
@@ -1206,7 +1206,7 @@ type VerifyChallenge struct {
 func callOnChallenge(l *slog.Logger, fn func(VerifyChallenge), c VerifyChallenge) {
 	defer func() {
 		if r := recover(); r != nil {
-			sdkLog(l, slog.LevelWarn, "[TouchQue] OnChallenge failed", "error", errorText(r))
+			sdkLog(l, slog.LevelWarn, "[Touchque] OnChallenge failed", "error", errorText(r))
 		}
 	}()
 	fn(c)
@@ -1682,7 +1682,7 @@ type ReportFraudResponse struct {
 }
 
 // ReportFraud reports a request you later learned was fraud — a chargeback,
-// a confirmed account takeover, a scam the user was talked into. TouchQue's
+// a confirmed account takeover, a scam the user was talked into. Touchque's
 // risk engine learns from it (it is the strongest signal it gets) and the
 // report is kept in your audit log. The request's status does not change.
 // Safe to call more than once: a repeat answers AlreadyReported.
@@ -1740,17 +1740,17 @@ type RequireOptions struct {
 	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
 	IP func(*http.Request) string
 	// SilentSignIn (default off): a new attempt whose browser sent its
-	// device-bound key proof (X-TouchQue-Browser, added by @touchque/web with
-	// browserKey: true) first asks TouchQue whether anything about it is new.
+	// device-bound key proof (X-Touchque-Browser, added by @touchque/web with
+	// browserKey: true) first asks Touchque whether anything about it is new.
 	// If nothing is, next runs at once with no push (the approval's
 	// Assurance.Method is "silent", with Reasons). Otherwise, and on any
 	// error, the usual push starts and its approval makes the browser known.
 	SilentSignIn bool
 	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
 	// phone approval in that browser may be (0 = always ask). nil leaves it
-	// to TouchQue, which never goes beyond its own limit (7 days).
+	// to Touchque, which never goes beyond its own limit (7 days).
 	SilentSignInMaxAgeSeconds *int
-	// Context is for your TouchQue Actions only (event.context): roles,
+	// Context is for your Touchque Actions only (event.context): roles,
 	// plan, amount… Never shown on the phone.
 	Context func(*http.Request) map[string]interface{}
 }
@@ -1803,7 +1803,7 @@ func guardInputFromRequest(r *http.Request) (token, offline, code, codeType stri
 // Until the user approves on their phone this answers
 // 202 {"touchque": step, "token": "..."}. Your page shows the step in its own
 // design and sends the same request again with header
-// "X-TouchQue-Token: <token>". Once approved, next runs exactly once, with
+// "X-Touchque-Token: <token>". Once approved, next runs exactly once, with
 // the approval available via ApprovalFromContext(r.Context()).
 func Require(client *Client, action string, next http.Handler, opts RequireOptions) http.Handler {
 	userOf := opts.User
@@ -1876,7 +1876,7 @@ import (
 // action type, the number-match code and a digest of the transaction details
 // the user was shown. It arrives in the SUCCESS webhook ("approvalProof") and
 // in the login status response. Verifying it does not require trusting
-// TouchQue: it proves the enrolled phone signed exactly these details.
+// Touchque: it proves the enrolled phone signed exactly these details.
 type ApprovalProof struct {
 	Version   string `json:"version"`
 	Algorithm string `json:"algorithm"`
@@ -2042,10 +2042,10 @@ import (
 // UserID itself check and return "").
 //
 // Pre-auth routes are rate limited per IP and per username by default
-// (RateLimit), and TouchQue itself caps approval pushes per user. Set
+// (RateLimit), and Touchque itself caps approval pushes per user. Set
 // LoginUser so POST /login and the offline routes only work for a user who
 // already passed YOUR first factor (password step): then nobody can make
-// TouchQue push to, or lock out, an arbitrary user through your server. The
+// Touchque push to, or lock out, an arbitrary user through your server. The
 // offline routes are OFF until you do (or explicitly opt out with
 // AllowOfflineWithoutFirstFactor): with the username taken from the body,
 // anyone could burn a user's offline attempts and lock them out.
@@ -2086,7 +2086,7 @@ func NewRelayHandler(client *Client, opts RelayOptions) http.Handler {
 			if h.offlineEnabled {
 				tail = ", and so do the offline routes"
 			}
-			sdkLog(client.logger, slog.LevelWarn, "[TouchQue] NewRelayHandler: POST /login takes the username from the request body"+tail+"."+
+			sdkLog(client.logger, slog.LevelWarn, "[Touchque] NewRelayHandler: POST /login takes the username from the request body"+tail+"."+
 				" Set RelayOptions.LoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.")
 		})
 	}
@@ -2122,9 +2122,9 @@ type RelayOptions struct {
 	// POST /login, POST /offline/challenge and POST /offline/totp use this
 	// user and IGNORE any username in the request body; when it returns ""
 	// they answer 401 FIRST_FACTOR_REQUIRED. POST /offline/verify and
-	// POST /passkey/login/verify then only open a session when TouchQue's
+	// POST /passkey/login/verify then only open a session when Touchque's
 	// user matches it. Without it, anyone can type any user's email and make
-	// TouchQue push to that user's phone (push-bombing) or spend that user's
+	// Touchque push to that user's phone (push-bombing) or spend that user's
 	// offline attempts.
 	LoginUser func(*http.Request) string
 
@@ -2168,8 +2168,8 @@ type RelayOptions struct {
 	IP func(*http.Request) string
 
 	// SilentSignIn for POST /login (default off): a new sign-in whose browser
-	// sent its device-bound key proof (X-TouchQue-Browser, added by
-	// @touchque/web with browserKey: true) first asks TouchQue whether
+	// sent its device-bound key proof (X-Touchque-Browser, added by
+	// @touchque/web with browserKey: true) first asks Touchque whether
 	// anything about it is new. If nothing is, it succeeds at once with no
 	// push (OnAuthenticated gets Via ViaSilent; the answer's assurance.method
 	// is "silent"). Otherwise, and on any error, the usual push starts and its
@@ -2178,7 +2178,7 @@ type RelayOptions struct {
 	SilentSignIn bool
 	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
 	// phone approval in that browser may be (0 = always ask). nil leaves it
-	// to TouchQue, which never goes beyond its own limit (7 days).
+	// to Touchque, which never goes beyond its own limit (7 days).
 	SilentSignInMaxAgeSeconds *int
 }
 
@@ -2196,7 +2196,7 @@ const (
 )
 
 // AuthenticatedInfo is passed to RelayOptions.OnAuthenticated.
-// ExternalUsername always comes from TouchQue or your LoginUser func, never
+// ExternalUsername always comes from Touchque or your LoginUser func, never
 // from the request body.
 type AuthenticatedInfo struct {
 	ExternalUsername string

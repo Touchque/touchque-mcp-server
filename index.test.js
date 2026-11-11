@@ -51,7 +51,7 @@ test("touchque_help works with no arguments and explains the server, for clients
 test("server advertises MCP-native instructions on connect (works even without any tool call)", async () => {
   await withClient(async (client) => {
     const serverInstructions = client.getInstructions();
-    assert.match(serverInstructions, /TouchQue MCP Server/);
+    assert.match(serverInstructions, /Touchque MCP Server/);
     assert.match(serverInstructions, /get_touchque_docs/);
   });
 });
@@ -78,7 +78,7 @@ test("lists the bundled docs as MCP resources for all 7 languages and can read t
     ]);
 
     const read = await client.readResource({ uri: "touchque://docs/node/sdk-documentation.md" });
-    assert.match(read.contents[0].text, /requireTouchQue/);
+    assert.match(read.contents[0].text, /requireTouchque/);
   });
 });
 
@@ -117,7 +117,7 @@ test("get_touchque_docs returns the bundled README with no network access", asyn
     const result = await client.callTool({ name: "get_touchque_docs", arguments: {} });
     const text = result.content[0].text;
     assert.match(text, /@touchque\/node/);
-    assert.match(text, /requireTouchQue/);
+    assert.match(text, /requireTouchque/);
   });
 });
 
@@ -133,12 +133,12 @@ test("get_sdk_types returns the bundled type definitions", async () => {
 test("get_touchque_docs and get_sdk_types support all 7 languages via the language argument", async () => {
   await withClient(async (client) => {
     const expected = {
-      python: { docs: /touchque-authenticator/, types: /class TouchQue/ },
-      php: { docs: /touchque-authenticator\/php-sdk/, types: /class TouchQue/ },
+      python: { docs: /touchque-authenticator/, types: /class Touchque/ },
+      php: { docs: /touchque-authenticator\/php-sdk/, types: /class Touchque/ },
       go: { docs: /touchque-go/, types: /package touchque/ },
-      dotnet: { docs: /TouchQue\.AspNetCore/, types: /public sealed class TouchQueClient/ },
-      ruby: { docs: /gem "touchque"/, types: /module TouchQue/ },
-      java: { docs: /touchque-spring-boot-starter/, types: /public @interface RequireTouchQue/ },
+      dotnet: { docs: /Touchque\.AspNetCore/, types: /public sealed class TouchqueClient/ },
+      ruby: { docs: /gem "touchque"/, types: /module Touchque/ },
+      java: { docs: /touchque-spring-boot-starter/, types: /public @interface RequireTouchque/ },
     };
     for (const [language, { docs, types }] of Object.entries(expected)) {
       const docsResult = await client.callTool({ name: "get_touchque_docs", arguments: { language } });
@@ -162,8 +162,8 @@ test("integrate_touchque prompt teaches the current step-up API, not the old syn
   await withClient(async (client) => {
     const result = await client.getPrompt({ name: "integrate_touchque" });
     const text = result.messages[0].content.text;
-    assert.match(text, /requireTouchQue\('SEND_MONEY'/);
-    assert.doesNotMatch(text, /requireTouchQue\(tq, 'SEND_MONEY'\)/);
+    assert.match(text, /requireTouchque\('SEND_MONEY'/);
+    assert.doesNotMatch(text, /requireTouchque\(tq, 'SEND_MONEY'\)/);
   });
 });
 
@@ -205,9 +205,9 @@ test("troubleshoot_touchque covers unknown_action as its own triage branch", asy
 test("validate_integration scores a current-API snippet as fully passing", async () => {
   await withClient(async (client) => {
     const goodCode = `
-      const { requireTouchQue } = require('@touchque/node');
+      const { requireTouchque } = require('@touchque/node');
       app.post('/api/transfer',
-        requireTouchQue('SEND_MONEY', { user: (req) => req.session.user?.email }),
+        requireTouchque('SEND_MONEY', { user: (req) => req.session.user?.email }),
         (req, res) => {
           try {
             res.json({ ok: true, apiKey: process.env.TQ_API_KEY });
@@ -269,16 +269,16 @@ test("validate_integration recognizes the correct guard per language (Python/PHP
       {
         framework: "aspnetcore",
         code: `
-          using TouchQue.AspNetCore;
-          builder.Services.AddTouchQue();
-          app.MapPost("/transfer", Transfer).RequireAuthorization().RequireTouchQue("SEND_MONEY");
+          using Touchque.AspNetCore;
+          builder.Services.AddTouchque();
+          app.MapPost("/transfer", Transfer).RequireAuthorization().RequireTouchque("SEND_MONEY");
         `,
       },
       {
         framework: "rails",
         code: `
           class TransfersController < ApplicationController
-            include TouchQue::Rails::Guard
+            include Touchque::Rails::Guard
             require_touchque "SEND_MONEY", only: :create
           end
         `,
@@ -286,9 +286,9 @@ test("validate_integration recognizes the correct guard per language (Python/PHP
       {
         framework: "spring-boot",
         code: `
-          import com.touchque.spring.RequireTouchQue;
+          import com.touchque.spring.RequireTouchque;
           @PostMapping("/transfer")
-          @RequireTouchQue("SEND_MONEY")
+          @RequireTouchque("SEND_MONEY")
           Receipt transfer(@RequestBody Transfer t, Approval approval) { return payments.send(t); }
         `,
       },
@@ -305,7 +305,7 @@ test("validate_integration recognizes the correct guard per language (Python/PHP
 test("validate_integration flags the old synchronous login.verify() pattern and hardcoded secrets", async () => {
   await withClient(async (client) => {
     const badCode = `
-      const tq = new TouchQue({ apiKey: 'tq_liveSuperSecretKey123', apiSecret: 'sk_hardcoded_abcdefghijk' });
+      const tq = new Touchque({ apiKey: 'tq_liveSuperSecretKey123', apiSecret: 'sk_hardcoded_abcdefghijk' });
       app.post('/api/transfer', async (req, res) => {
         await tq.login.verify({ externalUsername: req.body.user, type: 'SEND_MONEY' });
         res.json({ ok: true });
@@ -403,12 +403,12 @@ test("bundled offline examples use the real signatures (externalUsername / exter
 test("validate_integration warns (unscored) when an offline QR is issued without a requestId, and stays quiet when it is linked", async () => {
   await withClient(async (client) => {
     const base = (offlineCall) => `
-      const { TouchQue } = require('@touchque/node');
-      const tq = new TouchQue({ apiKey: process.env.TQ_API_KEY, apiSecret: process.env.TQ_API_SECRET });
+      const { Touchque } = require('@touchque/node');
+      const tq = new Touchque({ apiKey: process.env.TQ_API_KEY, apiSecret: process.env.TQ_API_SECRET });
       app.post('/offline', async (req, res) => {
         try { res.json(await ${offlineCall}); } catch (e) { res.status(500).end(); }
       });
-      app.post('/x', requireTouchQue('SEND_MONEY', { user: (r) => r.session.user }), (q, r) => r.json({ ok: 1 }));`;
+      app.post('/x', requireTouchque('SEND_MONEY', { user: (r) => r.session.user }), (q, r) => r.json({ ok: 1 }));`;
     const unlinked = (await client.callTool({
       name: "validate_integration",
       arguments: { code: base("tq.offline.challenge({ externalUsername: 'a@b.c', type: 'LOGIN' })"), framework: "express" },
@@ -424,7 +424,7 @@ test("validate_integration warns (unscored) when an offline QR is issued without
   });
 });
 
-test("validate_integration recognizes the versioned Go module path (…/touchque-go/v4/touchque)", async () => {
+test("validate_integration recognizes the versioned Go module path (…/touchque-go/v5/touchque)", async () => {
   await withClient(async (client) => {
     const code = (major) => `package main
 import (
@@ -436,13 +436,13 @@ func main() {
   h := touchque.Require(tq, "SEND_MONEY", handler, opts)
   if err := serve(h); err != nil { panic(err) }
 }`;
+    const v5 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v5"), framework: "net-http", language: "go" } })).content[0].text;
+    assert.match(v5, /✅ github\.com\/Touchque\/touchque-go\/v5 SDK is imported/);
+    assert.doesNotMatch(v5, /the current SDK is/);
+    // An older major still counts as the SDK, with an unscored hint to move to /v5.
     const v4 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v4"), framework: "net-http", language: "go" } })).content[0].text;
-    assert.match(v4, /✅ github\.com\/Touchque\/touchque-go\/v4 SDK is imported/);
-    assert.doesNotMatch(v4, /the current SDK is github\.com\/Touchque\/touchque-go\/v4/);
-    // An older major still counts as the SDK, with an unscored hint to move to /v4.
-    const v3 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v3"), framework: "net-http", language: "go" } })).content[0].text;
-    assert.match(v3, /✅ github\.com\/Touchque\/touchque-go\/v4 SDK is imported/);
-    assert.match(v3, /the current SDK is github\.com\/Touchque\/touchque-go\/v4\/touchque/);
+    assert.match(v4, /✅ github\.com\/Touchque\/touchque-go\/v5 SDK is imported/);
+    assert.match(v4, /the current SDK is github\.com\/Touchque\/touchque-go\/v5\/touchque/);
   });
 });
 
@@ -493,15 +493,15 @@ test("validate_integration accepts the relay router as the guard in Python, PHP 
       {
         framework: "laravel",
         code: `<?php
-          use TouchQue\\Laravel\\TouchQueRelay;
-          TouchQueRelay::routes(app('router'), 'touchque');
+          use Touchque\\Laravel\\TouchqueRelay;
+          TouchqueRelay::routes(app('router'), 'touchque');
           $key = getenv('TQ_API_KEY');`,
       },
       {
         framework: "other",
         language: "php",
         code: `<?php
-          use TouchQue\\Relay\\RelayHandler;
+          use Touchque\\Relay\\RelayHandler;
           $relay = new RelayHandler($tq, ['getUserId' => fn ($r) => $_SESSION['user'] ?? null]);
           $key = getenv('TQ_API_KEY');`,
       },
@@ -553,7 +553,7 @@ test("validate_integration warns (unscored) about device-proof verification with
       go: {
         framework: "net-http",
         unpinned: `ok := touchque.VerifyApprovalProof(event["approvalProof"], touchque.VerifyApprovalProofOptions{RequestID: id, Type: "WITHDRAW", AllowUnpinnedKey: true})`,
-        pinned: `ok := touchque.VerifyApprovalProof(event["approvalProof"], touchque.VerifyApprovalProofOptions{RequestID: id, Type: "WITHDRAW", ExpectedPublicKey: user.TouchQueDeviceKey})`,
+        pinned: `ok := touchque.VerifyApprovalProof(event["approvalProof"], touchque.VerifyApprovalProofOptions{RequestID: id, Type: "WITHDRAW", ExpectedPublicKey: user.TouchqueDeviceKey})`,
         name: /AllowUnpinnedKey: true/,
       },
     };
@@ -630,7 +630,7 @@ func main() {
 
 test("validate_integration only runs the Go User/UserID check for Go", async () => {
   await withClient(async (client) => {
-    const text = await validate(client, "const { requireTouchQue } = require('@touchque/node');", "express");
+    const text = await validate(client, "const { requireTouchque } = require('@touchque/node');", "express");
     assert.doesNotMatch(text, /RequireOptions sets User/);
     assert.match(text, /\(\d\/6 checks passed\)/);
   });
@@ -650,7 +650,7 @@ test("validate_integration hints (unscored) at verifying the device proof when a
       assert.match(text, verify, `${language} hint should name the real function`);
     }
     // Plain guard usage with no explicit approved handling stays quiet.
-    const guardOnly = await validate(client, "const { requireTouchQue } = require('@touchque/node'); app.post('/x', requireTouchQue('X'), h);", "express");
+    const guardOnly = await validate(client, "const { requireTouchque } = require('@touchque/node'); app.post('/x', requireTouchque('X'), h);", "express");
     assert.doesNotMatch(guardOnly, /never verifies the device proof/);
   });
 });
@@ -661,7 +661,7 @@ test("integrate_touchque and audit prompts cover relay routers in all 4 language
       const text = (await client.getPrompt({ name })).messages[0].content.text;
       for (const re of [
         /touchqueRouter/, /touchque_relay_blueprint/, /touchque_relay_router/, /touchque_relay_urls/,
-        /TouchQueRelay::routes/, /TouchQue\\Relay\\RelayHandler/, /touchque\.NewRelayHandler/,
+        /TouchqueRelay::routes/, /Touchque\\Relay\\RelayHandler/, /touchque\.NewRelayHandler/,
         /verifyApprovalProof/, /verify_approval_proof/, /ApprovalProof::verify/, /touchque\.VerifyApprovalProof/,
         /expectedPublicKey/, /reportFraud/, /report_fraud/, /ReportFraud/, /account_takeover/,
       ]) {
@@ -685,16 +685,16 @@ test("touchque_help mentions the 3.2.0 features", async () => {
 test("server reports the package version", async () => {
   await withClient(async (client) => {
     assert.equal(client.getServerVersion().version, require("./package.json").version);
-    assert.equal(require("./package.json").version, "4.1.3");
+    assert.equal(require("./package.json").version, "4.2.0");
   });
 });
 
 test("bundled types expose the 3.2.0 public API in all 4 languages", async () => {
   await withClient(async (client) => {
     const expectations = {
-      node: [/export function verifyApprovalProof/, /export interface TouchQueRouterOptions/, /export function touchqueRouter/, /reportFraud\(/],
+      node: [/export function verifyApprovalProof/, /export interface TouchqueRouterOptions/, /export function touchqueRouter/, /reportFraud\(/],
       python: [/def verify_approval_proof/, /class RelayHandler/, /def touchque_relay_blueprint/, /def touchque_relay_router/, /def touchque_relay_urls/, /def report_fraud/],
-      php: [/class ApprovalProof/, /class RelayHandler/, /class TouchQueRelay/, /public static function routes/, /function reportFraud/],
+      php: [/class ApprovalProof/, /class RelayHandler/, /class TouchqueRelay/, /public static function routes/, /function reportFraud/],
       go: [/func VerifyApprovalProof/, /type RelayOptions struct/, /func NewRelayHandler/, /type RequireOptions struct/, /func \(\w+ \*\w+\) ReportFraud/],
     };
     for (const [language, res] of Object.entries(expectations)) {
@@ -734,11 +734,11 @@ test("validate_integration warns (unscored) about the leftmost X-Forwarded-For h
   });
 });
 
-test("validate_integration hints (unscored) when Next.js withTouchQue sends no end-user address", async () => {
+test("validate_integration hints (unscored) when Next.js withTouchque sends no end-user address", async () => {
   await withClient(async (client) => {
     const route = (opts) => `
-      import { withTouchQue${opts ? ", ipFromVercel" : ""} } from '@touchque/node';
-      export const POST = withTouchQue('SEND_MONEY', { user: getUser${opts} })(async (req) => {
+      import { withTouchque${opts ? ", ipFromVercel" : ""} } from '@touchque/node';
+      export const POST = withTouchque('SEND_MONEY', { user: getUser${opts} })(async (req) => {
         try { return Response.json({ ok: true }); } catch (e) { return new Response(null, { status: 500 }); }
       });`;
     const bare = (await client.callTool({ name: "validate_integration", arguments: { code: route(""), framework: "nextjs" } })).content[0].text;
@@ -750,7 +750,7 @@ test("validate_integration hints (unscored) when Next.js withTouchQue sends no e
   });
 });
 
-// ── SDK 4.0.0: action types renamed, TouchQue Actions, onChallenge, Go /v4 ─────────────────────────
+// ── SDK 4.0.0: action types renamed, Touchque Actions, onChallenge, Go /v4 ─────────────────────────
 
 test("touchque_help and the prompts teach SDK 4.0.0", async () => {
   await withClient(async (client) => {
@@ -785,7 +785,7 @@ test("validate_integration warns (unscored) about the pre-4.0 action types call 
   });
 });
 
-// ── As an AI agent's tool (agent.js): a stub TouchQue API checks the agent's
+// ── As an AI agent's tool (agent.js): a stub Touchque API checks the agent's
 // private_key_jwt assertion and DPoP proofs with its public key, like the real one.
 const crypto = require("node:crypto");
 const http = require("node:http");
@@ -859,7 +859,7 @@ test("with the agent's identity, the agent tools ask the phone and hand back the
       assert.match((await client.callTool({ name: "touchque_agent_whoami", arguments: {} })).content[0].text, /Invoice bot/);
 
       const asked = await client.callTool({ name: "touchque_request_approval", arguments: { user: "jane@example.com", type: "PAY_INVOICE", authorizationDetails: [{ type: "payment_initiation", instructedAmount: { currency: "TRY", amount: "500.00" } }], reason: "October rent" } });
-      assert.match(asked.content[0].text, /Type 47 in the TouchQue app/);
+      assert.match(asked.content[0].text, /Type 47 in the Touchque app/);
       assert.match(asked.content[0].text, /Never type or approve it yourself/);
       assert.equal(api.seen.at(-1).body.externalUsername, "jane@example.com");
       const id = [...api.approvals.keys()][0];

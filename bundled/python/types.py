@@ -1,4 +1,4 @@
-# TouchQue Python SDK — bundled type/API reference for AI assistants.
+# Touchque Python SDK — bundled type/API reference for AI assistants.
 # Concatenation of touchque-python/touchque/{__init__.py,config.py,client.py,steps.py,approval_proof.py,
 # resources/login.py,resources/offline.py,contrib/flask.py,contrib/fastapi.py,contrib/django.py}
 # plus the public part of touchque/relay.py (RelayHandler).
@@ -11,23 +11,23 @@
 import logging as _logging
 
 from .config import Config
-from .client import TouchQue, get_default_client
+from .client import Touchque, get_default_client
 from .exceptions import (
-    TouchQueException,
-    TouchQueAPIException,
-    TouchQueFeatureException,
-    TouchQueFeatureNotInPlanException,
-    TouchQueFeatureReadOnlyException,
-    TouchQueFeatureOffException,
-    TouchQueNetworkException,
-    TouchQueTimeoutException,
-    TouchQueRejectedException,
-    TouchQueWebhookSignatureException,
-    TouchQueWebhookReplayException,
-    TouchQueConfigException,
-    TouchQuePasskeyRequiredError,
-    TouchQueApprovalError,
-    TouchQueApprovalMismatchError,
+    TouchqueException,
+    TouchqueAPIException,
+    TouchqueFeatureException,
+    TouchqueFeatureNotInPlanException,
+    TouchqueFeatureReadOnlyException,
+    TouchqueFeatureOffException,
+    TouchqueNetworkException,
+    TouchqueTimeoutException,
+    TouchqueRejectedException,
+    TouchqueWebhookSignatureException,
+    TouchqueWebhookReplayException,
+    TouchqueConfigException,
+    TouchquePasskeyRequiredError,
+    TouchqueApprovalError,
+    TouchqueApprovalMismatchError,
 )
 from .resources.webhook import ReplayCache, MemoryReplayCache, WebhookReasons, WebhookEvents
 from .steps import normalize_details, details_digest
@@ -47,12 +47,12 @@ from .resources.device_risk import DEVICE_RISK_EVENTS, DEVICE_RISK_REPORTS, pars
 from .resources.action_types import SECOND_THOUGHT_QUESTIONS
 from .relay import RelayHandler, RelayResponse, RELAY_ROUTES
 from .rate_limiter import FixedWindowLimiter
-from .agent import TouchQueAgent, generate_agent_key, jwk_thumbprint
+from .agent import TouchqueAgent, generate_agent_key, jwk_thumbprint
 from .agent_frameworks import (
     ApprovalPolicy, approve_interruptions_with_touchque, current_approval, guard_mcp_session, require_agent_approval,
     touchque_can_use_tool, with_touchque_approval,
 )
-from .org_agent import TouchQueOrgAgent, file_token, github_actions_token
+from .org_agent import TouchqueOrgAgent, file_token, github_actions_token
 from .mcp_auth import McpAuth, McpAuthError
 from .cross_app_access import (
     ID_JAG_TOKEN_TYPE, IdJagError, IdJagVerifier, redeem_id_jag, request_id_jag,
@@ -66,26 +66,26 @@ from .hosted_login import HostedLogin, HostedLoginError, AuthorizationRequest, T
 from .my_account import MyAccount, MyAccountError
 
 __all__ = [
-    'TouchQue',
+    'Touchque',
     'Config',
     'get_default_client',
-    'TouchQueException',
-    'TouchQueAPIException',
-    'TouchQueFeatureException',
-    'TouchQueFeatureNotInPlanException',
-    'TouchQueFeatureReadOnlyException',
-    'TouchQueFeatureOffException',
-    'TouchQueNetworkException',
-    'TouchQueTimeoutException',
-    'TouchQueRejectedException',
-    'TouchQueWebhookSignatureException',
-    'TouchQueWebhookReplayException',
+    'TouchqueException',
+    'TouchqueAPIException',
+    'TouchqueFeatureException',
+    'TouchqueFeatureNotInPlanException',
+    'TouchqueFeatureReadOnlyException',
+    'TouchqueFeatureOffException',
+    'TouchqueNetworkException',
+    'TouchqueTimeoutException',
+    'TouchqueRejectedException',
+    'TouchqueWebhookSignatureException',
+    'TouchqueWebhookReplayException',
     'ReplayCache',
     'MemoryReplayCache',
     'WebhookReasons',
     'WebhookEvents',
-    'TouchQueConfigException',
-    'TouchQuePasskeyRequiredError',
+    'TouchqueConfigException',
+    'TouchquePasskeyRequiredError',
     'normalize_details',
     'details_digest',
     'verify_approval_proof',
@@ -117,7 +117,7 @@ __all__ = [
     'RelayResponse',
     'RELAY_ROUTES',
     'FixedWindowLimiter',
-    'TouchQueAgent',
+    'TouchqueAgent',
     'ApprovalPolicy',
     'with_touchque_approval',
     'current_approval',
@@ -126,7 +126,7 @@ __all__ = [
     'touchque_can_use_tool',
     'guard_mcp_session',
     'generate_agent_key',
-    'TouchQueOrgAgent',
+    'TouchqueOrgAgent',
     'github_actions_token',
     'file_token',
     'McpAuth',
@@ -164,7 +164,7 @@ _logging.getLogger('touchque').addHandler(_logging.NullHandler())
 import os
 from urllib.parse import urlparse
 
-from .exceptions import TouchQueConfigException
+from .exceptions import TouchqueConfigException
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 DEFAULT_BASE_URL = "https://api.touchque.com"
@@ -178,11 +178,11 @@ def _assert_safe_base_url(base_url: str) -> None:
     if parsed.scheme == "http" and (parsed.hostname or "").lower() in _LOCAL_HOSTS:
         return
     if parsed.scheme == "http":
-        raise TouchQueConfigException(
+        raise TouchqueConfigException(
             f'Refusing a plaintext http:// base_url for "{parsed.hostname}". '
             "The API key and request signature would be sent in the clear — use https://."
         )
-    raise TouchQueConfigException(f"base_url must be http(s): {base_url}")
+    raise TouchqueConfigException(f"base_url must be http(s): {base_url}")
 
 
 class Config:
@@ -203,11 +203,11 @@ class Config:
         base_url = base_url if base_url is not None else os.environ.get("TQ_API_URL", DEFAULT_BASE_URL)
 
         if not api_key or not api_secret:
-            raise TouchQueConfigException(
+            raise TouchqueConfigException(
                 "Set TQ_API_KEY and TQ_API_SECRET (or pass api_key=/api_secret=)."
             )
         if not api_key.startswith('tq_'):
-            raise TouchQueConfigException(
+            raise TouchqueConfigException(
                 'api_key must start with "tq_". Did you accidentally swap api_key and api_secret?'
             )
 
@@ -219,7 +219,7 @@ class Config:
         self.timeout = timeout
 
 # ─────────────────────────────────────────────────────────────
-# From touchque/client.py — the TouchQue client class
+# From touchque/client.py — the Touchque client class
 # ─────────────────────────────────────────────────────────────
 
 from typing import Any, Dict, Optional
@@ -245,13 +245,13 @@ from .resources.webhook import Webhook
 from .steps import LoginDetails, check as _check, complete as _complete, start as _start
 
 
-class TouchQue:
+class Touchque:
     """
-    TouchQue SDK client.
+    Touchque SDK client.
 
         # .env: TQ_API_KEY=tq_...  TQ_API_SECRET=...
-        client = TouchQue()                                   # from the environment
-        client = TouchQue(Config(api_key=..., api_secret=...))  # explicit
+        client = Touchque()                                   # from the environment
+        client = Touchque(Config(api_key=..., api_secret=...))  # explicit
 
     One line per protected route (see ``touchque.contrib`` for Django /
     FastAPI / Flask adapters, or call ``client.start`` / ``client.check`` /
@@ -270,18 +270,18 @@ class TouchQue:
         self.offline = Offline(http)
         #: Action types: what users approve (LOGIN, SEND_MONEY…). Was ``actions`` before 4.0.
         self.action_types = ActionTypes(http)
-        #: TouchQue Actions: your own code in the approval pipeline.
+        #: Touchque Actions: your own code in the approval pipeline.
         self.actions = Actions(http)
-        #: Silent sign-ins: should this sign-in ask the phone, and which browsers TouchQue knows.
+        #: Silent sign-ins: should this sign-in ask the phone, and which browsers Touchque knows.
         self.risk = Risk(http)
         #: Never Locked Out: move a user whose phone is gone to a new phone, with colleagues vouching.
         self.recovery = Recovery(http)
         #: Help desk: IT working on a person's account in the open, and checks on their phone before sensitive actions.
         self.assist = Assist(http)
         #: AI agents as identities of their own: register (public key), suspend, revoke, kill switch.
-        #: The agent itself uses ``touchque.TouchQueAgent``.
+        #: The agent itself uses ``touchque.TouchqueAgent``.
         self.agents = Agents(http)
-        # TouchQue Login Management API: customers' accounts, roles, organizations, apps
+        # Touchque Login Management API: customers' accounts, roles, organizations, apps
         self.identity = Identity(http)
         #: Mobile SDK: your own iOS/Android app approves for your users (enrollment tokens, devices, settings).
         self.mobile = Mobile(http)
@@ -289,7 +289,7 @@ class TouchQue:
         self.qr_pairings = QrPairings(http)
         #: Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on).
         self.device_risk = DeviceRisk(http)
-        #: Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard.
+        #: Safe Guard: Safe transactions approved on the approver's phone, for TouchqueSafeGuard.
         self.safe_guard = SafeGuard(http)
 
     # ── headless step-up (see touchque.steps / touchque.guard) ─────────────
@@ -300,8 +300,8 @@ class TouchQue:
         """Starts an approval and returns immediately — show the step in your
         UI. ``waiting`` + ``number``: show the number, the user picks it on
         the phone. ``enroll``: show ``enroll['qrCodeDataUrl']`` so the user
-        links the TouchQue app first. ``browser_proof``: the browser's
-        ``X-TouchQue-Browser`` proof, so the approval makes the browser known
+        links the Touchque app first. ``browser_proof``: the browser's
+        ``X-Touchque-Browser`` proof, so the approval makes the browser known
         (silent sign-ins, see ``risk.check``)."""
         return _start(self, action, user, details=details, reference_id=reference_id, ip=ip, user_agent=user_agent,
                       browser_proof=browser_proof)
@@ -318,14 +318,14 @@ class TouchQue:
         return _complete(self, request_id, user, action, details=details, reference_id=reference_id)
 
 
-_default_client: Optional[TouchQue] = None
+_default_client: Optional[Touchque] = None
 
 
-def get_default_client() -> TouchQue:
+def get_default_client() -> Touchque:
     """The client built from TQ_API_KEY / TQ_API_SECRET, created on first use."""
     global _default_client
     if _default_client is None:
-        _default_client = TouchQue()
+        _default_client = Touchque()
     return _default_client
 
 # ─────────────────────────────────────────────────────────────
@@ -348,10 +348,10 @@ import json
 import time
 from typing import Any, Dict, List, Optional, Union
 
-from .exceptions import TouchQueAPIException, TouchQueConfigException, TouchQueException
+from .exceptions import TouchqueAPIException, TouchqueConfigException, TouchqueException
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .client import TouchQue
+    from .client import Touchque
 
 LoginDetails = Union[Dict[str, Any], List[Dict[str, Any]]]
 
@@ -378,7 +378,7 @@ def details_digest(details: Optional[LoginDetails]) -> str:
     return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
-def _err_code(err: TouchQueAPIException) -> Optional[str]:
+def _err_code(err: TouchqueAPIException) -> Optional[str]:
     return err.code or (err.data or {}).get('error')
 
 
@@ -396,17 +396,17 @@ def _why(res: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDetails] = None,
+def start(client: 'Touchque', action: str, user: str, details: Optional[LoginDetails] = None,
           reference_id: Optional[str] = None, ip: Optional[str] = None, user_agent: Optional[str] = None,
           enroll: bool = True, browser_proof: Optional[str] = None,
           context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Starts an approval for `action` — never waits.
 
     ``browser_proof`` (silent sign-ins): the browser's device-bound key proof
-    (``X-TouchQue-Browser``), passed through untouched. Once the user
-    approves, TouchQue knows this browser."""
+    (``X-Touchque-Browser``), passed through untouched. Once the user
+    approves, Touchque knows this browser."""
     if not user:
-        raise TouchQueConfigException('start() needs the user id')
+        raise TouchqueConfigException('start() needs the user id')
     norm = normalize_details(details)
     try:
         res = client.login.request(
@@ -434,7 +434,7 @@ def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDet
             # a phishing proxy in front of your site gets the approval refused. Only on this first step.
             step['canary'] = canary
         return step
-    except TouchQueAPIException as err:
+    except TouchqueAPIException as err:
         code = _err_code(err)
         why = {'caseCode': err.case_code} if err.case_code else {}
         if err.status == 404 and (code == 'device_not_linked' or 'linked device' in str(err).lower()):
@@ -446,7 +446,7 @@ def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDet
         if err.status == 429:
             return {'state': 'rate_limited', 'retryAfter': err.retry_after, **why}
         if err.status == 400 and (code == 'unknown_action' or 'invalid action type' in str(err).lower()):
-            raise TouchQueConfigException(
+            raise TouchqueConfigException(
                 f'Unknown action "{action}". Create it once with client.action_types.define("{action}") '
                 'or in the Dashboard (Action Types).'
             ) from err
@@ -459,7 +459,7 @@ def start(client: 'TouchQue', action: str, user: str, details: Optional[LoginDet
         raise
 
 
-def _enroll_step(client: 'TouchQue', user: str) -> Dict[str, Any]:
+def _enroll_step(client: 'Touchque', user: str) -> Dict[str, Any]:
     """First-time linking. Never unlinks a phone: a secret is only re-issued
     when the account is confirmed NOT linked."""
     try:
@@ -468,12 +468,12 @@ def _enroll_step(client: 'TouchQue', user: str) -> Dict[str, Any]:
             'qrCodeDataUrl': gen.get('qrCodeDataUrl'), 'recoveryCodes': gen.get('recoveryCodes'),
             'expiresAt': gen.get('expiresAt'),
         }}
-    except TouchQueAPIException as err:
+    except TouchqueAPIException as err:
         if err.status != 409:
             raise
         try:
             current = client.auth.get_user(user)
-        except TouchQueAPIException:
+        except TouchqueAPIException:
             current = None
         if current and (current.get('used') or current.get('deviceId')):
             return {'state': 'enroll', 'reason': 'already_linked'}
@@ -487,7 +487,7 @@ def _enroll_step(client: 'TouchQue', user: str) -> Dict[str, Any]:
 _STATE_MAP = {'PENDING': 'waiting', 'CONFIRMED': 'approved', 'REJECTED': 'rejected', 'EXPIRED': 'expired'}
 
 
-def check(client: 'TouchQue', request_id: str) -> Dict[str, Any]:
+def check(client: 'Touchque', request_id: str) -> Dict[str, Any]:
     """Current state of a started approval."""
     s = client.login.status(request_id)
     state = 'passkey_required' if s.get('status') == 'PENDING' and s.get('requiresPasskey') \
@@ -498,17 +498,17 @@ def check(client: 'TouchQue', request_id: str) -> Dict[str, Any]:
     return step
 
 
-def complete(client: 'TouchQue', request_id: str, user: str, action: str,
+def complete(client: 'Touchque', request_id: str, user: str, action: str,
              details: Optional[LoginDetails] = None, reference_id: Optional[str] = None) -> Dict[str, Any]:
     """Uses an approved request exactly once and checks it is for THIS user,
-    action and transaction. Raises TouchQueException if it was already used,
+    action and transaction. Raises TouchqueException if it was already used,
     not approved, or approved for something else."""
     res = client.login.consume(request_id)
     same_user = str(res.get('externalUsername', '')).lower() == str(user).lower()
     same_details = details_digest(details) == details_digest(res.get('details') or [])
     same_ref = (res.get('referenceId') or None) == (reference_id or None)
     if not same_user or res.get('type') != action or not same_details or not same_ref:
-        raise TouchQueException('TouchQue: this approval is for a different user, action or transaction.')
+        raise TouchqueException('Touchque: this approval is for a different user, action or transaction.')
     approval = {
         'requestId': request_id,
         'user': res.get('externalUsername'),
@@ -583,7 +583,7 @@ every approval is signed by it over the request id, the action type, the
 number-match code and a digest of the transaction details the user was shown.
 The proof arrives in the SUCCESS webhook (``approvalProof``) and in
 ``login.status(id)['approvalProof']``. Verifying it does not require trusting
-TouchQue: it proves the enrolled phone signed exactly these details.
+Touchque: it proves the enrolled phone signed exactly these details.
 
 Needs the optional ``cryptography`` package:
 ``pip install "touchque-authenticator[proof]"``.
@@ -694,7 +694,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 LoginDetails = Union[Dict[str, Union[str, int, float]], List[Dict[str, Any]]]
 from urllib.parse import quote
 from ..http_client import HttpClient
-from ..exceptions import TouchQueTimeoutException, TouchQueRejectedException, TouchQuePasskeyRequiredError, TouchQueConfigException
+from ..exceptions import TouchqueTimeoutException, TouchqueRejectedException, TouchquePasskeyRequiredError, TouchqueConfigException
 
 logger = logging.getLogger('touchque')
 
@@ -736,14 +736,14 @@ class Login:
         limits. Build it from server-side state, never from browser input.
 
         ``browser_proof`` (silent sign-ins): the browser's device-bound key
-        proof, exactly as the browser sent it (``X-TouchQue-Browser`` header,
+        proof, exactly as the browser sent it (``X-Touchque-Browser`` header,
         made by ``@touchque/web``). When the user approves this request on the
-        phone (or with a passkey), TouchQue remembers the browser, so a later
+        phone (or with a passkey), Touchque remembers the browser, so a later
         ``risk.check`` can let the same browser in without asking. Pass it
-        through untouched; an invalid proof only means "a browser TouchQue
+        through untouched; an invalid proof only means "a browser Touchque
         does not know".
 
-        ``context``: for your TouchQue Actions only (``event.context``): roles,
+        ``context``: for your Touchque Actions only (``event.context``): roles,
         plan, amount… Any JSON object up to 4 KB. Never shown on the phone.
 
         ``expires_in``: how long the push waits for the person, in seconds:
@@ -767,7 +767,7 @@ class Login:
 
         ``security_changes``: when the user's sign-in security last changed in
         your system, ``{'password', 'mfa', 'device', 'email', 'phone'}`` each a
-        datetime, ISO 8601 string or epoch milliseconds. TouchQue adds what it
+        datetime, ISO 8601 string or epoch milliseconds. Touchque adds what it
         saw itself; access rules and Actions read the minutes since each
         (``minutesSince.mfaChange``, ``.deviceChange``, ...), e.g. refuse
         ``PAYOUT_CHANGE`` within 24 hours of a 2FA change.
@@ -837,9 +837,9 @@ class Login:
         """Wait (poll) until the user approves or rejects a request you already sent with ``request``.
 
         Returns ``{'approved': True, 'status': 'CONFIRMED', 'requestId', 'assurance', 'confirmedVia',
-        'provisional'}``. Raises ``TouchQueRejectedException`` when the user said no,
-        ``TouchQueTimeoutException`` when the request expired or ``timeout_ms`` ran out, and
-        ``TouchQuePasskeyRequiredError`` (``reason='step_up'``) when the user tapped Approve
+        'provisional'}``. Raises ``TouchqueRejectedException`` when the user said no,
+        ``TouchqueTimeoutException`` when the request expired or ``timeout_ms`` ran out, and
+        ``TouchquePasskeyRequiredError`` (``reason='step_up'``) when the user tapped Approve
         during a call and the request now waits for a passkey in the browser::
 
             req = tq.login.request(user, 'SEND_MONEY')
@@ -862,18 +862,18 @@ class Login:
                 }
 
             if status == 'REJECTED':
-                raise TouchQueRejectedException(f"Request {request_id} was rejected by the user.")
+                raise TouchqueRejectedException(f"Request {request_id} was rejected by the user.")
 
             if status == 'EXPIRED':
-                raise TouchQueTimeoutException(f"Request {request_id} expired before it was approved.")
+                raise TouchqueTimeoutException(f"Request {request_id} expired before it was approved.")
 
             # Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
             if status == 'PENDING' and status_result.get('requiresPasskey'):
-                raise TouchQuePasskeyRequiredError(request_id, 'step_up')
+                raise TouchquePasskeyRequiredError(request_id, 'step_up')
 
             elapsed = (time.time() * 1000) - start_time
             if elapsed > timeout_ms:
-                raise TouchQueTimeoutException(f"Waiting for approval timed out after {timeout_ms}ms")
+                raise TouchqueTimeoutException(f"Waiting for approval timed out after {timeout_ms}ms")
 
             time.sleep(poll_interval_ms / 1000)
 
@@ -892,14 +892,14 @@ class Login:
             tq.login.verify(user, 'SEND_MONEY',
                             on_challenge=lambda c: c.get('challengeCode') and show(f"Pick {c['challengeCode']} on your phone"))
 
-        Raises ``TouchQuePasskeyRequiredError`` when a passkey must approve it:
+        Raises ``TouchquePasskeyRequiredError`` when a passkey must approve it:
         a phishing-resistant policy (``reason='policy'``, no push sent), or the
         user tapped Approve during a call (``reason='step_up'``, Vishing Shield):
         finish it in the browser with ``@touchque/web``."""
         request_result = self.request(external_username, type, reference_id, client_ip, user_agent, require_biometric, require_number_match, details, browser_proof, context, challenge_digits, security_changes=security_changes, destination=destination, locale=locale)
         request_id = request_result['requestId']
         if request_result.get('requiresPasskey'):
-            raise TouchQuePasskeyRequiredError(request_id)
+            raise TouchquePasskeyRequiredError(request_id)
 
         if on_challenge is not None:
             challenge = {'requestId': request_id, 'expiresAt': request_result.get('expiresAt')}
@@ -910,7 +910,7 @@ class Login:
                 on_challenge(challenge)
             except Exception as err:  # noqa: BLE001 — the user's callback must not stop the wait
                 # err.__class__, not type(err): the parameter `type` shadows the builtin here.
-                logger.warning('[TouchQue] on_challenge failed: %s: %s', err.__class__.__name__, err)
+                logger.warning('[Touchque] on_challenge failed: %s: %s', err.__class__.__name__, err)
 
         start_time = time.time() * 1000
         poll_interval_sec = 0.4
@@ -932,18 +932,18 @@ class Login:
                 }
 
             if status == 'REJECTED':
-                raise TouchQueRejectedException(f"Request {request_id} was rejected by the user.")
+                raise TouchqueRejectedException(f"Request {request_id} was rejected by the user.")
 
             if status == 'EXPIRED':
-                raise TouchQueTimeoutException(f"Request {request_id} expired before it was approved.")
+                raise TouchqueTimeoutException(f"Request {request_id} expired before it was approved.")
 
             # Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
             if status == 'PENDING' and status_result.get('requiresPasskey'):
-                raise TouchQuePasskeyRequiredError(request_id, 'step_up')
+                raise TouchquePasskeyRequiredError(request_id, 'step_up')
 
             elapsed = (time.time() * 1000) - start_time
             if elapsed > timeout_ms:
-                raise TouchQueTimeoutException(f"Login verification timed out after {timeout_ms}ms")
+                raise TouchqueTimeoutException(f"Login verification timed out after {timeout_ms}ms")
 
             time.sleep(poll_interval_sec)
 
@@ -957,7 +957,7 @@ class Login:
     def consume(self, request_id: str) -> Dict[str, Any]:
         """Uses an approved request exactly once. The first call on a
         CONFIRMED request wins atomically; every later call (a replayed
-        token, a retried form post) raises ``TouchQueAPIException`` with
+        token, a retried form post) raises ``TouchqueAPIException`` with
         ``code='already_used'`` (409)."""
         return self._http.post(f"/login/{quote(request_id, safe='')}/consume", {})
 
@@ -965,7 +965,7 @@ class Login:
 
     def report_fraud(self, request_id: str, reason: Optional[str] = None, note: Optional[str] = None) -> Dict[str, Any]:
         """Report a request you later learned was fraud — a chargeback, a
-        confirmed account takeover, a scam the user was talked into. TouchQue's
+        confirmed account takeover, a scam the user was talked into. Touchque's
         risk engine learns from it (it is the strongest signal it gets) and the
         report is kept in your audit log. The request's status does not change.
         Safe to call more than once: a repeat answers ``alreadyReported: True``.
@@ -974,7 +974,7 @@ class Login:
         :param note: free text for your audit log, at most 500 characters.
         """
         if not request_id:
-            raise TouchQueConfigException('report_fraud() needs the request id')
+            raise TouchqueConfigException('report_fraud() needs the request id')
         payload: Dict[str, Any] = {}
         if reason:
             payload['reason'] = reason
@@ -993,7 +993,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..http_client import HttpClient
-from ..exceptions import TouchQueAPIException
+from ..exceptions import TouchqueAPIException
 
 _CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
@@ -1070,7 +1070,7 @@ class Offline:
     def totp_verifiers(self, external_usernames: List[str], from_step: Optional[int] = None,
                        steps: Optional[int] = None) -> Dict[str, Any]:
         """For checking typed time-based codes while your server cannot reach
-        TouchQue (an outage): salted, slow digests of each user's next codes,
+        Touchque (an outage): salted, slow digests of each user's next codes,
         never a key. Up to 1,000 users and 24,000 user-steps a call; ``steps`` 1-480 (default 480, four hours)
         from ``from_step`` (default: the current 30-second step). Returns
         ``{stepSeconds, fromStep, steps, notAfterStep, kdf, users: [{externalUsername,
@@ -1089,7 +1089,7 @@ class Offline:
     def match_totp_verifier(verifiers: Dict[str, Any], user: Dict[str, Any], code: str,
                             at: Optional[float] = None) -> Optional[int]:
         """Checks a typed code against one user's digests from
-        :meth:`totp_verifiers` without calling TouchQue. Returns the step the
+        :meth:`totp_verifiers` without calling Touchque. Returns the step the
         code belongs to (the current one or one either side), or ``None``.
         Accept each step once: remember the step you accepted for the user and
         refuse codes for it or an older one. ``at``: Unix time (default now)."""
@@ -1116,7 +1116,7 @@ class Offline:
     def _not_approved_as_result(call) -> Dict[str, Any]:
         try:
             return call()
-        except TouchQueAPIException as err:
+        except TouchqueAPIException as err:
             if err.status is not None and err.status < 500:
                 return {
                     'approved': False,
@@ -1157,10 +1157,10 @@ Routes (relative to wherever you mount the relay):
 ``get_user_id(request)`` returns nothing.
 
 Pre-auth routes are rate limited per IP and per username by default
-(``rate_limit``), and TouchQue itself caps approval pushes per user. Set
+(``rate_limit``), and Touchque itself caps approval pushes per user. Set
 ``get_login_user`` so POST /login and the offline routes only work for a user
 who already passed YOUR first factor (password step): then nobody can make
-TouchQue push to, or lock out, an arbitrary user through your server. The
+Touchque push to, or lock out, an arbitrary user through your server. The
 offline routes are OFF until you do (or explicitly opt out with
 ``allow_offline_without_first_factor=True``): with the username taken from
 the body, anyone could burn a user's offline attempts and lock them out.
@@ -1171,7 +1171,7 @@ import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 
 from .exceptions import (
-    TouchQueAPIException, TouchQuePasskeyRequiredError, TouchQueRejectedException, TouchQueTimeoutException,
+    TouchqueAPIException, TouchquePasskeyRequiredError, TouchqueRejectedException, TouchqueTimeoutException,
 )
 from .guard import SilentSignIn, guard_input_from_headers, is_status_poll, run_guard, silent_input_from_headers
 from .rate_limiter import FixedWindowLimiter
@@ -1182,7 +1182,7 @@ POLLS_PER_ATTEMPT = 10
 PASSKEY_ENROLL_ACTION = 'PASSKEY_ENROLL'
 
 if TYPE_CHECKING:
-    from .client import TouchQue
+    from .client import Touchque
 
 logger = logging.getLogger('touchque')
 
@@ -1227,7 +1227,7 @@ class RelayHandler:
     """
     The relay routes, independent of any web framework.
 
-    ``client``: a ``TouchQue`` instance (default: ``get_default_client()``).
+    ``client``: a ``Touchque`` instance (default: ``get_default_client()``).
 
     ``get_user_id(request)``: REQUIRED. The signed-in user's identifier for
     the "auth required" routes (enrollment, passkey registration and
@@ -1258,8 +1258,8 @@ class RelayHandler:
 
     ``silent_sign_in``: silent sign-ins for POST /login (default off). When
     on, a new sign-in whose browser sent its device-bound key proof
-    (``X-TouchQue-Browser``, added by ``@touchque/web`` with
-    ``browserKey: true``) first asks TouchQue whether anything about it is
+    (``X-Touchque-Browser``, added by ``@touchque/web`` with
+    ``browserKey: true``) first asks Touchque whether anything about it is
     new. If nothing is, it succeeds at once with no push (``on_authenticated``
     gets ``via: 'silent'``; the answer's ``assurance['method']`` is
     ``'silent'``). Otherwise, and on any error, the usual push starts and its
@@ -1280,7 +1280,7 @@ class RelayHandler:
 
     def __init__(
         self,
-        client: Optional['TouchQue'] = None,
+        client: Optional['Touchque'] = None,
         get_user_id: Optional[Callable[[Any], Optional[str]]] = None,
         get_login_user: Optional[Callable[[Any], Optional[str]]] = None,
         rate_limit: Union[Dict[str, int], bool, None] = None,
@@ -1311,14 +1311,14 @@ class RelayHandler:
         if not get_login_user and not _warned_pre_auth:
             _warned_pre_auth = True
             logger.warning(
-                '[TouchQue] RelayHandler: POST /login takes the username from the request body%s. Set '
+                '[Touchque] RelayHandler: POST /login takes the username from the request body%s. Set '
                 '`get_login_user` to bind them to your first factor (password step) so they cannot be used '
                 'against arbitrary users.',
                 ', and so do the offline routes' if self.offline_enabled
                 else '; the offline routes are disabled until you set it')
 
     @property
-    def client(self) -> 'TouchQue':
+    def client(self) -> 'Touchque':
         if self._client is None:
             from .client import get_default_client
             self._client = get_default_client()
@@ -1374,7 +1374,7 @@ Flask: one line per protected route.
 Until the user approves on their phone this answers
 202 {"touchque": step, "token": ...}. Your page shows the step in its own
 design and sends the same request again with header
-``X-TouchQue-Token: <token>``. Once approved the view runs ONCE, with
+``X-Touchque-Token: <token>``. Once approved the view runs ONCE, with
 ``flask.g.touchque`` set to the approval.
 
 Relay routes (POST /login, enrollment, offline codes, passkey ceremonies)
@@ -1397,7 +1397,7 @@ from typing import Any, Callable, Dict, Optional
 
 from flask import Blueprint, abort, current_app, g, json, jsonify, request
 
-from ..client import TouchQue, get_default_client
+from ..client import Touchque, get_default_client
 from ..guard import SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
 from ..relay import RELAY_ROUTES, RelayHandler
 from ..steps import LoginDetails
@@ -1414,7 +1414,7 @@ def _default_user() -> Optional[str]:
 
 def require_touchque(
     action: str,
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     user: Optional[Callable[[], Optional[str]]] = None,
     details: Optional[Callable[[], Optional[LoginDetails]]] = None,
     reference_id: Optional[Callable[[], Optional[str]]] = None,
@@ -1428,8 +1428,8 @@ def require_touchque(
     ``user=lambda: session.get('password_ok')``.
 
     ``silent_sign_in`` (default off): when on, a new attempt whose browser
-    sent its device-bound key proof (``X-TouchQue-Browser``, added by
-    ``@touchque/web`` with ``browserKey: true``) first asks TouchQue whether
+    sent its device-bound key proof (``X-Touchque-Browser``, added by
+    ``@touchque/web`` with ``browserKey: true``) first asks Touchque whether
     anything about it is new. If nothing is, your view runs at once with no
     push (``g.touchque['assurance']['method'] == 'silent'``,
     ``g.touchque['reasons']``). Otherwise, and on any error, the usual push
@@ -1437,7 +1437,7 @@ def require_touchque(
     ``{'max_age_seconds': n}`` sets your own limit on how long ago the last
     phone approval in that browser may be.
 
-    ``context``: for your TouchQue Actions only (``event.context``), e.g.
+    ``context``: for your Touchque Actions only (``event.context``), e.g.
     ``context=lambda: {'roles': g.user.roles}``. Never shown on the phone.
     """
     user_of = user or _default_user
@@ -1472,7 +1472,7 @@ def require_touchque(
 
 
 def touchque_relay_blueprint(
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     name: str = 'touchque_relay',
     url_prefix: Optional[str] = None,
     handler: Optional[RelayHandler] = None,
@@ -1517,25 +1517,25 @@ def touchque_relay_blueprint(
     return bp
 
 # ─────────────────────────────────────────────────────────────
-# From touchque/contrib/fastapi.py — RequireTouchQue + touchque_relay_router
+# From touchque/contrib/fastapi.py — RequireTouchque + touchque_relay_router
 # ─────────────────────────────────────────────────────────────
 
 """
 FastAPI: one line per protected route, as a dependency.
 
     from fastapi import Depends, Request
-    from touchque.contrib.fastapi import RequireTouchQue
+    from touchque.contrib.fastapi import RequireTouchque
 
     @app.post('/transfer')
     async def transfer(request: Request, touchque=Depends(
-        RequireTouchQue('SEND_MONEY', details=lambda req: {'Amount': f'{req.state.amount} EUR'})
+        RequireTouchque('SEND_MONEY', details=lambda req: {'Amount': f'{req.state.amount} EUR'})
     )):
         return {'ok': True, 'touchque': touchque}
 
 Until the user approves on their phone the dependency raises
 ``HTTPException(202, detail={"touchque": step, "token": ...})``. Your page
 shows the step in its own design and sends the same request again with
-header ``X-TouchQue-Token: <token>``. Once approved the dependency resolves
+header ``X-Touchque-Token: <token>``. Once approved the dependency resolves
 to the approval (once) and your route runs.
 
 FastAPI's default exception handler puts that JSON under a top-level
@@ -1574,7 +1574,7 @@ import fastapi
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from ..client import TouchQue, get_default_client
+from ..client import Touchque, get_default_client
 from ..guard import SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
 from ..relay import RELAY_ROUTES, RelayHandler
 from ..steps import LoginDetails
@@ -1589,9 +1589,9 @@ async def _default_user(request: Request) -> Optional[str]:
     return getattr(u, 'email', None) or getattr(u, 'id', None) or getattr(u, 'username', None)
 
 
-def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase is idiomatic here
+def RequireTouchque(  # noqa: N802 — reads as a dependency factory, PascalCase is idiomatic here
     action: str,
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     user: Optional[Callable[[Request], Any]] = None,
     details: Optional[Callable[[Request], Optional[LoginDetails]]] = None,
     reference_id: Optional[Callable[[Request], Any]] = None,
@@ -1604,8 +1604,8 @@ def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase
     user who just passed your password check.
 
     ``silent_sign_in`` (default off): when on, a new attempt whose browser
-    sent its device-bound key proof (``X-TouchQue-Browser``, added by
-    ``@touchque/web`` with ``browserKey: true``) first asks TouchQue whether
+    sent its device-bound key proof (``X-Touchque-Browser``, added by
+    ``@touchque/web`` with ``browserKey: true``) first asks Touchque whether
     anything about it is new. If nothing is, the dependency resolves at once
     with no push (``approval['assurance']['method'] == 'silent'``,
     ``approval['reasons']``). Otherwise, and on any error, the usual push
@@ -1613,7 +1613,7 @@ def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase
     ``{'max_age_seconds': n}`` sets your own limit on how long ago the last
     phone approval in that browser may be.
 
-    ``context``: for your TouchQue Actions only (``event.context``), e.g. the
+    ``context``: for your Touchque Actions only (``event.context``), e.g. the
     user's roles. Never shown on the phone.
     """
     user_of = user or _default_user
@@ -1653,7 +1653,7 @@ def RequireTouchQue(  # noqa: N802 — reads as a dependency factory, PascalCase
 
 
 def install_touchque_exception_handler(app: fastapi.FastAPI) -> None:
-    """Optional: makes a raised TouchQue step return the SAME JSON shape as
+    """Optional: makes a raised Touchque step return the SAME JSON shape as
     the Django/Flask adapters (no ``{"detail": ...}`` wrapper). Every other
     ``HTTPException`` goes to FastAPI's own handler, unchanged (no body on a
     204 or 304)."""
@@ -1678,7 +1678,7 @@ def _run_async(awaitable: Awaitable[Any]) -> Any:
 
 
 def touchque_relay_router(
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     prefix: str = '',
     handler: Optional[RelayHandler] = None,
     **options: Any
@@ -1745,7 +1745,7 @@ Django: one line per protected view.
 Until the user approves on their phone this answers
 202 {"touchque": step, "token": ...}. Your page shows the step in its own
 design and sends the same request again with header
-``X-TouchQue-Token: <token>``. Once approved the view runs ONCE, with
+``X-Touchque-Token: <token>``. Once approved the view runs ONCE, with
 ``request.touchque`` set to the approval.
 
 Relay routes (POST /login, enrollment, offline codes, passkey ceremonies)
@@ -1778,7 +1778,7 @@ from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.urls import re_path
 from django.views.decorators.csrf import csrf_exempt as _csrf_exempt
 
-from ..client import TouchQue, get_default_client
+from ..client import Touchque, get_default_client
 from ..guard import SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
 from ..relay import RelayHandler
 from ..steps import LoginDetails
@@ -1796,7 +1796,7 @@ def _default_user(request: HttpRequest) -> Optional[str]:
 
 def require_touchque(
     action: str,
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     user: Optional[Callable[[HttpRequest], Optional[str]]] = None,
     details: Optional[Callable[[HttpRequest], Optional[LoginDetails]]] = None,
     reference_id: Optional[Callable[[HttpRequest], Optional[str]]] = None,
@@ -1810,8 +1810,8 @@ def require_touchque(
     ``user=lambda req: req.session.get('password_ok')``.
 
     ``silent_sign_in`` (default off): when on, a new attempt whose browser
-    sent its device-bound key proof (``X-TouchQue-Browser``, added by
-    ``@touchque/web`` with ``browserKey: true``) first asks TouchQue whether
+    sent its device-bound key proof (``X-Touchque-Browser``, added by
+    ``@touchque/web`` with ``browserKey: true``) first asks Touchque whether
     anything about it is new. If nothing is, your view runs at once with no
     push (``request.touchque['assurance']['method'] == 'silent'``,
     ``request.touchque['reasons']``). Otherwise, and on any error, the usual push
@@ -1819,7 +1819,7 @@ def require_touchque(
     ``{'max_age_seconds': n}`` sets your own limit on how long ago the last
     phone approval in that browser may be.
 
-    ``context``: for your TouchQue Actions only (``event.context``), e.g. the
+    ``context``: for your Touchque Actions only (``event.context``), e.g. the
     user's roles. Never shown on the phone.
     """
     user_of = user or _default_user
@@ -1862,7 +1862,7 @@ def _json_body(request: HttpRequest) -> Any:
 
 
 def touchque_relay_view(
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     csrf_exempt: bool = False,
     handler: Optional[RelayHandler] = None,
     **options: Any
@@ -1899,7 +1899,7 @@ def touchque_relay_view(
 
 
 def touchque_relay_urls(
-    client: Optional[TouchQue] = None,
+    client: Optional[Touchque] = None,
     csrf_exempt: bool = False,
     handler: Optional[RelayHandler] = None,
     **options: Any

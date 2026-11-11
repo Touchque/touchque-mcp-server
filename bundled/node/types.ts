@@ -1,18 +1,18 @@
-// TouchQue Node.js SDK — bundled type reference for AI assistants.
+// Touchque Node.js SDK — bundled type reference for AI assistants.
 // Concatenation of touchque-node/src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}
 // plus the public part of src/router.ts (touchqueRouter), from the SDK source.
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API
 // changes (see touchque-mcp-server/README.md).
 
 // src/types.ts
-// All TypeScript types and interfaces for the TouchQue Node.js SDK
+// All TypeScript types and interfaces for the Touchque Node.js SDK
 
 import type { SafeTxTarget, SafeDisplayRow } from './safeGuard';
 
-export interface TouchQueConfig {
-  /** Your TouchQue API key (starts with `tq_`) */
+export interface TouchqueConfig {
+  /** Your Touchque API key (starts with `tq_`) */
   apiKey: string;
-  /** Your TouchQue API secret */
+  /** Your Touchque API secret */
   apiSecret: string;
   /**
    * Optional base URL override (default: https://api.touchque.com, or the
@@ -30,13 +30,13 @@ export interface TouchQueConfig {
    * winston: anything with `warn` and `error`). Messages carry an error's
    * class, code and message, never a request, token or user's data.
    */
-  logger?: TouchQueLogger;
+  logger?: TouchqueLogger;
   /** `true`: log to `console` when no `logger` is given (local development). */
   debug?: boolean;
 }
 
 /** What the SDK logs through: `console`, or any logger with `warn` and `error`. */
-export interface TouchQueLogger {
+export interface TouchqueLogger {
   warn(message: string): void;
   error(message: string): void;
 }
@@ -57,7 +57,7 @@ export interface GenerateSecretResponse {
   ttlMs: number;
   /**
    * A ready-to-render `data:image/png;base64,...` QR code encoding `secret`
-   * for the TouchQue mobile app to scan. Show this directly in an `<img>`
+   * for the Touchque mobile app to scan. Show this directly in an `<img>`
    * src — no client-side QR generation needed.
    */
   qrCodeDataUrl: string;
@@ -111,7 +111,7 @@ export interface ResetSecretResponse {
 }
 
 /**
- * What the TouchQue app last reported about the phone it runs on, for device trust.
+ * What the Touchque app last reported about the phone it runs on, for device trust.
  * Self-reported by the app; `signed` says the phone's hardware approval key signed the latest report.
  *
  * `state`: `compromised` (jailbroken/rooted or tampered), `unknown` (no report, or one older than
@@ -194,7 +194,7 @@ export interface OfflineChallengeOptions {
   includeQrImage?: boolean;
   /**
    * The push request (`requestId` from `login.request` / `tq.start`) this QR is a fallback for.
-   * TouchQue then treats them as ONE sign-in: once the phone REJECTS the push the QR is dead
+   * Touchque then treats them as ONE sign-in: once the phone REJECTS the push the QR is dead
    * (no new QR is issued, a code for the old one is refused), and if the push asked for number
    * matching the QR asks for the same number. Always pass it when the QR follows a push.
    */
@@ -292,13 +292,13 @@ export interface LoginRequestOptions {
   /**
    * The type of action requiring 2FA confirmation.
    * Built-in types: 'LOGIN', 'DISABLE_2FA'
-   * Custom types can be created/configured in your TouchQue Dashboard.
+   * Custom types can be created/configured in your Touchque Dashboard.
    */
   type: LoginType;
   /** Optional reference (e.g. your internal transaction ID) */
   referenceId?: string;
   
-  /** The IP address of the user initiating the request. TouchQue will resolve this to a City/Country. */
+  /** The IP address of the user initiating the request. Touchque will resolve this to a City/Country. */
   clientIp?: string;
   /**
    * The User-Agent string of the user's browser/device. Shown on the approval
@@ -352,11 +352,11 @@ export interface LoginRequestOptions {
   reply?: LoginReplyRequest;
   /**
    * Silent sign-ins: the browser's device-bound key proof, exactly as the
-   * browser sent it (`X-TouchQue-Browser` header, made by `@touchque/web`).
+   * browser sent it (`X-Touchque-Browser` header, made by `@touchque/web`).
    * When the user approves this request on the phone (or with a passkey),
-   * TouchQue remembers the browser, so a later `risk.check` can let the same
+   * Touchque remembers the browser, so a later `risk.check` can let the same
    * browser in without asking. Pass it through untouched; an invalid proof
-   * only means "a browser TouchQue does not know".
+   * only means "a browser Touchque does not know".
    */
   browserProof?: string;
   /**
@@ -381,13 +381,13 @@ export interface LoginRequestOptions {
    */
   deviceRiskRequestId?: string;
   /**
-   * For your TouchQue Actions only (`event.context`): roles, plan, amount…
+   * For your Touchque Actions only (`event.context`): roles, plan, amount…
    * Any JSON object up to 4 KB. Never shown on the phone.
    */
   context?: Record<string, unknown>;
   /**
    * When the user's sign-in security last changed in YOUR system (a password
-   * reset, a new email…). TouchQue adds what it saw itself (the phone linked,
+   * reset, a new email…). Touchque adds what it saw itself (the phone linked,
    * moved or recovered, passkeys added or removed) and gives access rules and
    * Actions the minutes since each: `minutesSince.mfaChange`, `.deviceChange`,
    * `.passwordChange`, `.emailChange`, `.phoneChange`, `.anyChange`.
@@ -400,7 +400,7 @@ export interface LoginRequestOptions {
    * user used before but is not the same. Do not repeat it in `details`.
    */
   destination?: Destination;
-  /** Language of the rows TouchQue adds (the destination and its warning). Default `'tr'`. */
+  /** Language of the rows Touchque adds (the destination and its warning). Default `'tr'`. */
   locale?: 'tr' | 'en';
 }
 
@@ -426,7 +426,7 @@ export interface DestinationLookalike {
   similarTo?: string;
 }
 
-/** What TouchQue made of the request's `destination` (also shown on the phone). */
+/** What Touchque made of the request's `destination` (also shown on the phone). */
 export interface DestinationCheck {
   /** The user approved it before, or it is in `known`. */
   known: boolean;
@@ -574,7 +574,7 @@ export interface VerifyOptions extends LoginRequestOptions {
    * Called once, right after the request is created and before any waiting,
    * with the number to show (number matching: the phone asks the user for
    * it). Not called when only a passkey can approve (verify() then throws
-   * TouchQuePasskeyRequiredError at once). An error it throws, or a promise
+   * TouchquePasskeyRequiredError at once). An error it throws, or a promise
    * it returns that rejects, is logged and ignored: verify() keeps waiting.
    * Its return value is otherwise ignored.
    */
@@ -596,7 +596,7 @@ export interface RiskCheckOptions {
   /** End user's IP address: compared with the networks of the user's earlier approved sign-ins. */
   clientIp?: string;
   userAgent?: string;
-  /** The browser's device-bound key proof (`X-TouchQue-Browser`), passed through untouched. */
+  /** The browser's device-bound key proof (`X-Touchque-Browser`), passed through untouched. */
   browserProof?: string;
   /** The end user's page check from `@touchque/web` (`startClientSignals().encode()`): software driving the browser is never silent. */
   clientSignals?: string;
@@ -606,11 +606,11 @@ export interface RiskCheckOptions {
   deviceRiskRequestId?: string;
   /**
    * Your own limit on how long ago the last phone approval in this browser
-   * may be, in seconds (integer, 0 = always ask). TouchQue never goes beyond
+   * may be, in seconds (integer, 0 = always ask). Touchque never goes beyond
    * its own limit (7 days).
    */
   maxAgeSeconds?: number;
-  /** For your TouchQue Actions only (`event.context`). Any JSON object up to 4 KB. */
+  /** For your Touchque Actions only (`event.context`). Any JSON object up to 4 KB. */
   context?: Record<string, unknown>;
 }
 
@@ -624,7 +624,7 @@ export interface RiskReason {
    * `critical_action`, `sensitive_action`, `risk_signal`, `push_fatigue`,
    * `fraud_report`, `new_factor`, `vishing_shield`, `checks_incomplete`,
    * `silent_mode_shadow`, `phone_not_linked`, `frozen`, … New codes are added
-   * in minor versions. `action`: one of your TouchQue Actions asked
+   * in minor versions. `action`: one of your Touchque Actions asked
    * (`text` is its reason, `action` its slug).
    */
   code: string;
@@ -636,7 +636,7 @@ export interface RiskReason {
 
 export interface RiskCheckResult {
   /**
-   * `false` only when TouchQue answered exactly `prompt: false`: nothing
+   * `false` only when Touchque answered exactly `prompt: false`: nothing
    * about this sign-in is new, let the user in without a push. Anything else
    * (including an unreadable answer) is `true`: ask on the phone as usual.
    */
@@ -649,7 +649,7 @@ export interface RiskCheckResult {
    * in the dashboard (Logs → Look up a case).
    */
   caseCode?: string;
-  /** How sure TouchQue is that this is the user (default `'normal'`). */
+  /** How sure Touchque is that this is the user (default `'normal'`). */
   assurance: 'high' | 'normal' | 'low';
   /**
    * `'shadow'`: silent sign-ins are only measured for this workspace, so
@@ -662,7 +662,7 @@ export interface RiskBrowsersOptions {
   externalUsername: string;
 }
 
-/** A browser TouchQue knows for a user: one the user approved on the phone (or with a passkey). */
+/** A browser Touchque knows for a user: one the user approved on the phone (or with a passkey). */
 export interface RiskBrowser {
   /** RFC 7638 thumbprint of the browser's key: pass it to `forgetBrowsers` to forget this one. */
   thumbprint: string;
@@ -673,7 +673,7 @@ export interface RiskBrowser {
   /** How that approval was given, e.g. `'push'` or `'passkey'`. */
   lastMfaMethod: string | null;
   lastSeenAt: string | null;
-  /** Last sign-in TouchQue let through without asking. */
+  /** Last sign-in Touchque let through without asking. */
   lastSilentAt: string | null;
 }
 
@@ -780,7 +780,7 @@ export interface RecoveryCase {
 export interface RecoveryStarted extends RecoveryCase {
   /** One-time; shown once. */
   bindCode: string;
-  /** Show it as a QR: the TouchQue app on the new phone scans it. */
+  /** Show it as a QR: the Touchque app on the new phone scans it. */
   bindUri: string;
 }
 
@@ -805,7 +805,7 @@ export interface VerifyWebhookOptions {
   /**
    * The signature to check against. Pass the value of the `x-signature`
    * header. Optional: if omitted, the SDK falls back to the `signature`
-   * field TouchQue also embeds in the JSON body.
+   * field Touchque also embeds in the JSON body.
    */
   signature?: string;
   /**
@@ -816,7 +816,7 @@ export interface VerifyWebhookOptions {
   toleranceSeconds?: number;
   /**
    * De-duplicates deliveries by their signed `jti`. A second delivery with
-   * the same `jti` throws `TouchQueWebhookReplayError`. Use
+   * the same `jti` throws `TouchqueWebhookReplayError`. Use
    * `MemoryWebhookReplayCache` for a single process, or implement this
    * interface over Redis / your database when you run several instances.
    */
@@ -884,7 +884,7 @@ export const WebhookReasons = {
 } as const;
 
 /**
- * `event` values of TouchQue's event webhooks (same `callbackUrl` as the
+ * `event` values of Touchque's event webhooks (same `callbackUrl` as the
  * login results). Ignore types you do not know.
  */
 export const WebhookEvents = {
@@ -932,7 +932,7 @@ export const WebhookEvents = {
   ASSIST_CLAIM_CONFIRMED: 'ASSIST_CLAIM_CONFIRMED',
   /** Someone said they were from IT and nobody from IT was working on the account (`caseCode`): page someone. */
   ASSIST_CLAIM_UNVERIFIED: 'ASSIST_CLAIM_UNVERIFIED',
-  // AI agents (tq.agents): changes partners may act on, and what TouchQue noticed.
+  // AI agents (tq.agents): changes partners may act on, and what Touchque noticed.
   /** An AI agent was registered. */
   AGENT_CREATED: 'AGENT_CREATED',
   /** An AI agent was suspended (through the API or the dashboard): its tokens stopped working. */
@@ -997,7 +997,7 @@ export interface ProtectOptions<TArgs extends any[]> {
 
 // ─── Errors ──────────────────────────────────────────────────────
 
-export interface TouchQueErrorData {
+export interface TouchqueErrorData {
   error?: string;
   message?: string;
   code?: string;
@@ -1054,7 +1054,7 @@ export interface AssistSession {
   endedAt: string | null;
   /** `ended`, `expired`, `replaced`, or yours. */
   endedReason: string | null;
-  /** The person has a working TouchQue phone to check on; false: Never Locked Out. */
+  /** The person has a working Touchque phone to check on; false: Never Locked Out. */
   phone: boolean;
   frozen: boolean;
   checks: AssistCheck[];
@@ -1100,7 +1100,7 @@ export interface CreateQrPairingOptions {
 export interface CreatedQrPairing {
   pairingId: string;
   expiresAt: string;
-  /** The one-time nonce in the QR code (TouchQue keeps only its SHA-256). */
+  /** The one-time nonce in the QR code (Touchque keeps only its SHA-256). */
   nonce: string;
   /** What the QR code says: `touchque://pair-browser?v=1&p=…&n=…&k=…`. */
   uri: string;
@@ -1190,7 +1190,7 @@ export interface DeviceRiskSignal {
   text: string;
   /** What a step-up for it should be; `none`: context only. */
   strength: 'number_match' | 'passkey' | 'none';
-  /** Scored now; false: reported only (shadow) until TouchQue enforces it. */
+  /** Scored now; false: reported only (shadow) until Touchque enforces it. */
   enforced?: boolean;
   evidence?: Record<string, unknown>;
 }
@@ -1227,7 +1227,7 @@ export interface DeviceRiskNetwork {
   timezoneMismatch: boolean | null;
 }
 
-/** The visitor's counts: the risk engine's (accounts, sign-ups, countries, stored-id resets) and TouchQue's identifications. */
+/** The visitor's counts: the risk engine's (accounts, sign-ups, countries, stored-id resets) and Touchque's identifications. */
 export interface DeviceRiskVelocity {
   accounts24h: number | null;
   accounts30d: number | null;
@@ -1298,7 +1298,7 @@ export interface DeviceRiskSearchResult {
   to: string;
 }
 
-/** An identification as TouchQue saw it (GET /device-risk/events/:requestId): trust this, never the page's copy. */
+/** An identification as Touchque saw it (GET /device-risk/events/:requestId): trust this, never the page's copy. */
 export interface DeviceRiskEventResult {
   requestId: string;
   /** `tqv_…`: this browser in your workspace only. */
@@ -1370,7 +1370,7 @@ export interface LoginReplyRequest {
 
 // ─── Safe Guard (Safe transactions approved on the phone) ────────
 
-/** How TouchQueSafeGuard treats a transaction: `governance` is scheduled and waits; `exit` is the emergency exit. */
+/** How TouchqueSafeGuard treats a transaction: `governance` is scheduled and waits; `exit` is the emergency exit. */
 export type SafeTxClass = 'tighten' | 'ordinary' | 'governance' | 'exit';
 
 /** The guard's settings for this Safe, as you read them from chain. */
@@ -1419,7 +1419,7 @@ export interface SafeGuardRequestOptions {
 }
 
 export interface SafeGuardRequestResponse extends LoginRequestResponse {
-  /** TouchQue's own decoding, for your logs and screens. The phone decodes for itself. */
+  /** Touchque's own decoding, for your logs and screens. The phone decodes for itself. */
   safeTx: {
     class: SafeTxClass;
     flags: string[];
@@ -1469,7 +1469,7 @@ import type { Auth } from './resources/Auth';
 import type { Login } from './resources/Login';
 import type { Offline } from './resources/Offline';
 import type { ApprovalAssurance, LoginRequestDetails, RiskReason } from './types';
-import { TouchQueAPIError, TouchQueConfigError, TouchQueError } from './errors';
+import { TouchqueAPIError, TouchqueConfigError, TouchqueError } from './errors';
 import { detailsDigest } from './approvalProof';
 
 export type StepState =
@@ -1539,11 +1539,11 @@ export interface StartOptions {
   /** Show an enrollment QR when the user has not linked a phone yet (default true). */
   enroll?: boolean;
   /**
-   * Silent sign-ins: the browser's device-bound key proof (`X-TouchQue-Browser`),
-   * passed through untouched. Once the user approves, TouchQue knows this browser.
+   * Silent sign-ins: the browser's device-bound key proof (`X-Touchque-Browser`),
+   * passed through untouched. Once the user approves, Touchque knows this browser.
    */
   browserProof?: string;
-  /** For your TouchQue Actions only (`event.context`): roles, plan, amount… Never shown on the phone. */
+  /** For your Touchque Actions only (`event.context`): roles, plan, amount… Never shown on the phone. */
   context?: Record<string, unknown>;
 }
 
@@ -1558,7 +1558,7 @@ export interface Approval {
   approvalProof: unknown;
   /**
    * Vishing Shield: approved on the phone during a call. Let the user in but
-   * treat the session as limited: TouchQue refuses their critical actions
+   * treat the session as limited: Touchque refuses their critical actions
    * until the phone re-confirms (`APPROVAL_RECONFIRMED`), and
    * `APPROVAL_REVOKED` means end it.
    */
@@ -1569,7 +1569,7 @@ export interface Approval {
   reconfirmedAt?: string | null;
   /**
    * Silent sign-ins only (`assurance.method === 'silent'`, `confirmedVia: 'SILENT'`):
-   * nothing was sent to the phone; why TouchQue let this known browser in.
+   * nothing was sent to the phone; why Touchque let this known browser in.
    */
   reasons?: RiskReason[];
 }
@@ -1586,11 +1586,11 @@ export function normalizeDetails(details?: LoginRequestDetails): Array<{ label: 
 }
 
 const codeOf = (err: unknown): string | undefined =>
-  err instanceof TouchQueAPIError ? (err.code || (err.data as { error?: string })?.error) : undefined;
+  err instanceof TouchqueAPIError ? (err.code || (err.data as { error?: string })?.error) : undefined;
 
 /** Starts an approval for `action` — never waits. */
 export async function start(r: Resources, action: string, opts: StartOptions): Promise<Step> {
-  if (!opts?.user) throw new TouchQueConfigError('start() needs the user id (options.user)');
+  if (!opts?.user) throw new TouchqueConfigError('start() needs the user id (options.user)');
   const details = normalizeDetails(opts.details);
   try {
     const res = await r.login.request({
@@ -1619,7 +1619,7 @@ export async function start(r: Resources, action: string, opts: StartOptions): P
       ...why,
     };
   } catch (err) {
-    if (!(err instanceof TouchQueAPIError)) throw err;
+    if (!(err instanceof TouchqueAPIError)) throw err;
     const code = codeOf(err);
     const data = err.data as { retryAfter?: number; reason?: string; error?: string };
     const why = err.caseCode ? { caseCode: err.caseCode } : {};
@@ -1630,7 +1630,7 @@ export async function start(r: Resources, action: string, opts: StartOptions): P
     if (err.status === 423) return { state: 'frozen', retryAfter: data.retryAfter, ...why };
     if (err.status === 429) return { state: 'rate_limited', retryAfter: data.retryAfter, ...why };
     if (err.status === 400 && (code === 'unknown_action' || /Invalid action type/i.test(err.message))) {
-      throw new TouchQueConfigError(
+      throw new TouchqueConfigError(
         `Unknown action "${action}". Create it once with tq.actionTypes.define('${action}') or in the Dashboard (Action Types).`,
       );
     }
@@ -1666,7 +1666,7 @@ async function enrollStep(r: Resources, user: string): Promise<Step> {
     const gen = await r.auth.generateSecret({ externalUsername: user });
     return { state: 'enroll', enroll: { qrCodeDataUrl: gen.qrCodeDataUrl, recoveryCodes: gen.recoveryCodes, expiresAt: gen.expiresAt } };
   } catch (err) {
-    if (!(err instanceof TouchQueAPIError) || err.status !== 409) throw err;
+    if (!(err instanceof TouchqueAPIError) || err.status !== 409) throw err;
     const current = await r.auth.getUser({ externalUsername: user }).catch(() => null);
     if (current && (current.used || current.deviceId)) {
       // Linked in the meantime — the caller just starts again.
@@ -1707,7 +1707,7 @@ export async function complete(r: Resources, requestId: string, expect: Complete
   const sameDetails = detailsDigest(normalizeDetails(expect.details)) === detailsDigest(res.details || []);
   const sameRef = (res.referenceId || null) === (expect.referenceId || null);
   if (!sameUser || res.type !== expect.action || !sameDetails || !sameRef) {
-    throw new TouchQueError('TouchQue: this approval is for a different user, action or transaction.');
+    throw new TouchqueError('Touchque: this approval is for a different user, action or transaction.');
   }
   return {
     requestId,
@@ -1778,7 +1778,7 @@ export function verifyGuardToken(apiSecret: string, token: unknown): GuardTokenC
 // and a digest of the transaction details the user was shown. The proof
 // arrives in the SUCCESS webhook (`approvalProof`) and in
 // `login.status(id).approvalProof`; verifying it here does not require
-// trusting TouchQue: it proves the enrolled phone signed exactly these
+// trusting Touchque: it proves the enrolled phone signed exactly these
 // details.
 
 import * as crypto from 'crypto';
@@ -1894,7 +1894,7 @@ export function verifyApprovalProof(
 // src/resources/Login.ts
 // Login request management — request 2FA, check status, wait for approval
 //
-// This is the core of TouchQue: any action that needs 2FA confirmation
+// This is the core of Touchque: any action that needs 2FA confirmation
 // (login, withdraw, transfer, purchase, etc.) uses these methods.
 
 import { HttpClient, describeError } from '../core/HttpClient';
@@ -1909,7 +1909,7 @@ import {
   VerifyChallenge,
   SecurityChanges,
 } from '../types';
-import { TouchQueTimeoutError, TouchQueRejectedError, TouchQuePasskeyRequiredError } from '../errors';
+import { TouchqueTimeoutError, TouchqueRejectedError, TouchquePasskeyRequiredError } from '../errors';
 
 /** Dates go out as ISO 8601; strings and epoch milliseconds as given. */
 function securityChangesBody(changes: SecurityChanges): Record<string, string | number> {
@@ -1924,7 +1924,7 @@ export class Login {
   constructor(private readonly http: HttpClient) {}
 
   /**
-   * Request 2FA confirmation from a user's TouchQue app.
+   * Request 2FA confirmation from a user's Touchque app.
    *
    * The user will receive a push notification on their device.
    * They can then approve or reject the request.
@@ -1932,7 +1932,7 @@ export class Login {
    * Built-in `type` values:
    * - `'LOGIN'` — User is logging in
    * - `'DISABLE_2FA'` — User is disabling 2FA
-   * - Custom action type IDs or slugs configured in your TouchQue Dashboard
+   * - Custom action type IDs or slugs configured in your Touchque Dashboard
    *
    * @example
    * // Basic login verification
@@ -2021,7 +2021,7 @@ export class Login {
   /**
    * Use an approved request exactly once. The first call on a CONFIRMED request
    * wins atomically; every later call (a replayed token, a retried form post)
-   * throws `TouchQueAPIError` with `code: 'already_used'` (409). Compare the
+   * throws `TouchqueAPIError` with `code: 'already_used'` (409). Compare the
    * answer's user, type, referenceId and details with what you asked for, or
    * use `tq.complete()`, which does both.
    *
@@ -2039,11 +2039,11 @@ export class Login {
    * This is a convenience method that polls the status endpoint
    * until the request is approved, rejected, or times out.
    *
-   * **This is the recommended way to integrate TouchQue into your routes.**
+   * **This is the recommended way to integrate Touchque into your routes.**
    *
-   * @throws {TouchQueRejectedError} If the user rejects the request
-   * @throws {TouchQueTimeoutError} If the request times out (user didn't respond)
-   * @throws {TouchQuePasskeyRequiredError} If the request now needs a passkey
+   * @throws {TouchqueRejectedError} If the user rejects the request
+   * @throws {TouchqueTimeoutError} If the request times out (user didn't respond)
+   * @throws {TouchquePasskeyRequiredError} If the request now needs a passkey
    *   (`reason: 'step_up'`: the user approved on the phone during a call);
    *   finish it in the browser with `@touchque/web` `passkeys.approveLogin({ requestId })`
    *
@@ -2065,9 +2065,9 @@ export class Login {
    *     proceedWithAction();
    *   }
    * } catch (err) {
-   *   if (err instanceof TouchQueRejectedError) {
+   *   if (err instanceof TouchqueRejectedError) {
    *     // ❌ User rejected — cancel the action
-   *   } else if (err instanceof TouchQueTimeoutError) {
+   *   } else if (err instanceof TouchqueTimeoutError) {
    *     // ⏰ User didn't respond in time
    *   }
    * }
@@ -2085,17 +2085,17 @@ export class Login {
       }
 
       if (status === 'REJECTED') {
-        throw new TouchQueRejectedError(options.requestId);
+        throw new TouchqueRejectedError(options.requestId);
       }
 
       if (status === 'EXPIRED') {
-        throw new TouchQueTimeoutError(options.requestId, timeout);
+        throw new TouchqueTimeoutError(options.requestId, timeout);
       }
 
       // Vishing Shield: the phone was on a call at the tap, so the request now
       // waits for a passkey in the browser; polling would only run into the timeout.
       if (status === 'PENDING' && requiresPasskey) {
-        throw new TouchQuePasskeyRequiredError(options.requestId, 'step_up');
+        throw new TouchquePasskeyRequiredError(options.requestId, 'step_up');
       }
 
       // Wait before next poll
@@ -2103,7 +2103,7 @@ export class Login {
     }
 
     // Timeout reached
-    throw new TouchQueTimeoutError(options.requestId, timeout);
+    throw new TouchqueTimeoutError(options.requestId, timeout);
   }
 
   /**
@@ -2111,9 +2111,9 @@ export class Login {
    *
    * Perfect for protecting any action with a single function call.
    *
-   * @throws {TouchQueRejectedError} User rejected
-   * @throws {TouchQueTimeoutError} User didn't respond in time
-   * @throws {TouchQuePasskeyRequiredError} A passkey must approve it (policy, or the
+   * @throws {TouchqueRejectedError} User rejected
+   * @throws {TouchqueTimeoutError} User didn't respond in time
+   * @throws {TouchquePasskeyRequiredError} A passkey must approve it (policy, or the
    *   user tapped Approve during a call)
    *
    * With number matching (your `requireNumberMatch`, a workspace policy or
@@ -2141,7 +2141,7 @@ export class Login {
     // Step 1: Send the 2FA request
     const loginReq = await this.request(requestOptions);
     // Passkey-only (phishing-resistant policy): nothing was pushed, so don't poll for 30 s.
-    if (loginReq.requiresPasskey) throw new TouchQuePasskeyRequiredError(loginReq.requestId);
+    if (loginReq.requiresPasskey) throw new TouchquePasskeyRequiredError(loginReq.requestId);
 
     // Step 1b: the number to show, before waiting (the phone asks for it).
     if (onChallenge) {
@@ -2155,10 +2155,10 @@ export class Login {
       try {
         const out = onChallenge(challenge) as Promise<unknown> | undefined;
         if (out && typeof out.catch === 'function') {
-          out.catch((err: unknown) => this.http.log.warn(`[TouchQue] onChallenge failed: ${describeError(err)}`));
+          out.catch((err: unknown) => this.http.log.warn(`[Touchque] onChallenge failed: ${describeError(err)}`));
         }
       } catch (err) {
-        this.http.log.warn(`[TouchQue] onChallenge failed: ${describeError(err)}`);
+        this.http.log.warn(`[Touchque] onChallenge failed: ${describeError(err)}`);
       }
     }
 
@@ -2190,7 +2190,7 @@ export class Login {
 
   /**
    * Report a request you later learned was fraud — a chargeback, a confirmed
-   * account takeover, a scam the user was talked into. TouchQue's risk engine
+   * account takeover, a scam the user was talked into. Touchque's risk engine
    * learns from it (it is the strongest signal it gets) and the report is
    * kept in your audit log. The request's status does not change. Safe to
    * call more than once: a repeat answers `alreadyReported: true`.
@@ -2241,7 +2241,7 @@ export interface ReportFraudResponse {
 // Endpoints mounted (relative to wherever you app.use() this router):
 //   POST   /enroll/start                    (auth required) -> GenerateSecretResponse
 //   GET    /enroll/status                   (auth required) -> { linked, used, deviceId }
-//   POST   /login                           (pre-auth) -> 202 { touchque: step, token } until approved (same contract as requireTouchQue)
+//   POST   /login                           (pre-auth) -> 202 { touchque: step, token } until approved (same contract as requireTouchque)
 //   POST   /offline/challenge               (pre-auth, body.externalUsername) -> QR for a phone with no internet
 //   POST   /offline/verify                  (pre-auth, body.challengeId/code)
 //   POST   /offline/totp                    (pre-auth, body.externalUsername/code) -> time-based code fallback
@@ -2259,17 +2259,17 @@ export interface ReportFraudResponse {
 // router (or have `getUserId` itself check and return undefined).
 //
 // Pre-auth routes are rate limited per IP and per username by default
-// (`rateLimit`), and TouchQue itself caps approval pushes per user. Set
+// (`rateLimit`), and Touchque itself caps approval pushes per user. Set
 // `getLoginUser` so POST /login and the offline routes only work for a user
 // who already passed YOUR first factor (password step): then nobody can make
-// TouchQue push to, or lock out, an arbitrary user through your server.
+// Touchque push to, or lock out, an arbitrary user through your server.
 // The offline routes are OFF until you do (or explicitly opt out with
 // `allowOfflineWithoutFirstFactor`): with the username taken from the body,
 // anyone could burn a user's offline attempts and lock them out.
 
 import type { Router, Request, Response } from 'express';
-import { TouchQue } from './index';
-import { TouchQueRejectedError, TouchQueTimeoutError, TouchQuePasskeyRequiredError, TouchQueAPIError } from './errors';
+import { Touchque } from './index';
+import { TouchqueRejectedError, TouchqueTimeoutError, TouchquePasskeyRequiredError, TouchqueAPIError } from './errors';
 import { runGuard, guardInputFromHeaders, isStatusPoll, silentInputFromHeaders, SilentSignInOptions } from './guard';
 import type { LoginRequestDetails } from './types';
 
@@ -2280,7 +2280,7 @@ import { logOf } from './internal';
 import { describeError, type SdkLog } from './core/HttpClient';
 import { expressRouter } from './middleware/loadExpress';
 
-export interface TouchQueRouterOptions {
+export interface TouchqueRouterOptions {
   /**
    * Resolve the signed-in user's identifier for the "auth required" routes
    * (enrollment, passkey registration/management). Return `undefined` if
@@ -2294,7 +2294,7 @@ export interface TouchQueRouterOptions {
    * POST /offline/challenge and POST /offline/totp use this user and IGNORE any
    * username in the request body; if it returns nothing they answer 401
    * FIRST_FACTOR_REQUIRED. Without it, anyone can type any user's email and
-   * make TouchQue push to that user's phone (push-bombing) or spend that
+   * make Touchque push to that user's phone (push-bombing) or spend that
    * user's offline attempts.
    */
   getLoginUser?: (req: Request) => string | undefined | Promise<string | undefined>;
@@ -2320,8 +2320,8 @@ export interface TouchQueRouterOptions {
 
   /**
    * Silent sign-ins for POST /login (default off). When on, a new sign-in
-   * whose browser sent its device-bound key proof (`X-TouchQue-Browser`,
-   * added by `@touchque/web` with `browserKey: true`) first asks TouchQue
+   * whose browser sent its device-bound key proof (`X-Touchque-Browser`,
+   * added by `@touchque/web` with `browserKey: true`) first asks Touchque
    * whether anything about it is new. If nothing is, it succeeds at once with
    * no push (`onAuthenticated` gets `via: 'silent'`; the answer's
    * `assurance.method` is `'silent'`). Otherwise, and on any error, the usual
@@ -2358,4 +2358,4 @@ export interface TouchQueRouterOptions {
   ) => void | Promise<void>;
 }
 
-export function touchqueRouter(tq: TouchQue, options: TouchQueRouterOptions): Router;  // implementation omitted
+export function touchqueRouter(tq: Touchque, options: TouchqueRouterOptions): Router;  // implementation omitted

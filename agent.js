@@ -1,10 +1,10 @@
-// agent.js — TouchQue as a tool for an AI agent: the agent asks a person to
-// approve an action on their TouchQue phone, checks the answer, asks for a
+// agent.js — Touchque as a tool for an AI agent: the agent asks a person to
+// approve an action on their Touchque phone, checks the answer, asks for a
 // mandate (a series of approved requests), and reads who it is. It works only
 // with the agent's own identity (TQ_AGENT_ID + TQ_AGENT_KEY, the agent's
 // private key; never a workspace's tq_ API key): every call is signed in with
 // private_key_jwt and carries a DPoP proof, like @touchque/node's
-// TouchQueAgent. Nothing here can approve anything: approving happens on the
+// TouchqueAgent. Nothing here can approve anything: approving happens on the
 // person's phone, with the number this conversation shows.
 
 const crypto = require("crypto");
@@ -18,7 +18,7 @@ const b64url = (buf) => Buffer.from(buf).toString("base64url");
 
 class AgentError extends Error {
   constructor(status, data) {
-    super(data.error_description || data.error || data.message || `TouchQue answered ${status}`);
+    super(data.error_description || data.error || data.message || `Touchque answered ${status}`);
     this.status = status;
     this.code = data.code || data.error || null;
     this.caseCode = typeof data.caseCode === "string" ? data.caseCode : null;
@@ -149,7 +149,7 @@ async function approvalAfter(agent, approvalId, waitSeconds) {
 /** What the tools answer: what happened, and what to tell the person, never anything to act on silently. */
 function describeApproval(s) {
   const lines = [`Approval ${s.approvalId}: ${s.status}.`];
-  if (s.challengeCode) lines.push(`Tell the person: "Type ${s.challengeCode} in the TouchQue app on your phone to approve." Never type or approve it yourself.`);
+  if (s.challengeCode) lines.push(`Tell the person: "Type ${s.challengeCode} in the Touchque app on your phone to approve." Never type or approve it yourself.`);
   if (s.status === "awaiting_second") lines.push(`A second person approves too${s.secondApprover ? ` (${s.secondApprover})` : ""}${s.secondChallengeCode ? `; their number is ${s.secondChallengeCode}` : ""}.`);
   if (s.status === "provisional") lines.push("It was approved during a phone call: it counts only once the person confirms it on the phone.");
   if (s.status === "pending") lines.push("Not answered yet: call touchque_get_approval again (waitSeconds up to 60).");

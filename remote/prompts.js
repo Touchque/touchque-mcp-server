@@ -37,7 +37,7 @@ ${COMMON}`;
     return `Add Touchque phone approval to this app${args.action ? ` for: ${args.action}` : ""}. ${lang}
 
 1. Read the app's code: find the sign-in flow and the sensitive actions; ask which ones to protect if it is not clear.
-2. touchque_generate_integration with feature "phone_approval", the language, the framework and the action. Follow its steps and README sections: protect the route with the step-up guard (requireTouchQue or the language's equivalent) so it answers 202 with the step until the phone approves, and show the matching number (and the first-time QR) in the app's own frontend (@touchque/web or @touchque/react).
+2. touchque_generate_integration with feature "phone_approval", the language, the framework and the action. Follow its steps and README sections: protect the route with the step-up guard (requireTouchque or the language's equivalent) so it answers 202 with the step until the phone approves, and show the matching number (and the first-time QR) in the app's own frontend (@touchque/web or @touchque/react).
 3. If the action type does not exist yet, offer touchque_define_action_type (or define it at startup with the SDK). If there is no active API key and the person wants one, touchque_create_api_key (it asks their phone).
 4. touchque_check_integration with the code and framework; fix what fails.
 5. Offer touchque_send_test_approval so the person sees an approval on their own phone (only if they want it).
@@ -67,7 +67,7 @@ ${COMMON}`;
   if (name === "check-integration") {
     return `Check this app's Touchque integration.
 
-1. Find the Touchque code in the project (search for touchque / TouchQue / TQ_API_KEY and the SDK package) and the framework.
+1. Find the Touchque code in the project (search for touchque / Touchque / TouchQue (4.x) / TQ_API_KEY and the SDK package) and the framework.
 2. touchque_check_integration with that code, the language and the framework (and the Touchque Login client ID and redirect URIs if the app uses it).
 3. Report: what is right, what is wrong in the code, what is missing in the workspace, each with the fix. Offer to fix the code; workspace changes only with the person's yes.
 

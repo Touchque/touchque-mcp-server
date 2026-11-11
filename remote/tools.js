@@ -148,7 +148,7 @@ const TOOLS = [
   },
   {
     name: "get_sdk_types",
-    description: "A server SDK's type reference: without symbol, the list of names; with symbol (e.g. LoginRequestOptions, TouchQueConfig), that declaration.",
+    description: "A server SDK's type reference: without symbol, the list of names; with symbol (e.g. LoginRequestOptions, TouchqueConfig), that declaration.",
     inputSchema: { type: "object", properties: { language: { type: "string", enum: LANGS }, symbol: STR }, required: ["language"] },
     annotations: { readOnlyHint: true, title: "SDK types" },
   },
@@ -247,7 +247,7 @@ function snapshotText(ctx, setup, ws, { detail = false } = {}) {
     }
     if (Array.isArray(setup.actionTypes)) {
       const names = setup.actionTypes.map((t) => `${clean(t.type, 64)}${t.active === false ? " (off)" : ""}`);
-      lines.push(`Action types: ${!names.length ? "none yet (a guard like requireTouchQue('X') fails until X is defined: touchque_define_action_type, or dashboard → Developers → Action types)" : names.length <= 12 ? names.join(", ") : `${names.length}, e.g. ${names.slice(0, 10).join(", ")} (one: touchque_workspace_setup actionType)`}.`);
+      lines.push(`Action types: ${!names.length ? "none yet (a guard like requireTouchque('X') fails until X is defined: touchque_define_action_type, or dashboard → Developers → Action types)" : names.length <= 12 ? names.join(", ") : `${names.length}, e.g. ${names.slice(0, 10).join(", ")} (one: touchque_workspace_setup actionType)`}.`);
     } else lines.push("Action types: could not be read.");
     if (setup.passkey && !setup.passkey.error) lines.push(`Passkey domain: ${setup.passkey.rpId ? clean(setup.passkey.rpId) : "not set (passkeys use Touchque's domain)"}; set in the dashboard → Developers → App user policy.`);
     if (setup.login.on && setup.login.slug) {
@@ -572,7 +572,7 @@ async function call(name, args, ws, core, config) {
       const req = readmeSection(lang, "Requirements");
       return {
         language: lang, label: s.label, package: s.package, published: Boolean(s.published), version: s.published || null, registry: s.registry,
-        install: s.install || "Not released yet: use a published SDK if the stack allows, or the REST API (support.touchque.com/authentication).",
+        install: s.install || `Not on ${s.registry.replace(/^not (listed )?on /, "").replace(/ yet$/, "")} yet: its README (get_touchque_docs) says how to use it until then; or a published SDK, or the REST API (support.touchque.com/authentication).`,
         ...(s.extras && { extras: s.extras }),
         ...(s.import && { import: s.import }),
         ...(req && { requirements: req.replace(/^## [^\n]*\n/, "").trim().slice(0, 400) }),
@@ -687,7 +687,7 @@ async function call(name, args, ws, core, config) {
       try {
         await ws.dash("POST", "/v1/action-types", { type, name: nm, critical });
         setups.clear();
-        return text(`${label}: done. requireTouchQue('${type}') (or the language's guard) works now.`);
+        return text(`${label}: done. requireTouchque('${type}') (or the language's guard) works now.`);
       } catch (err) {
         if (err instanceof WorkspaceError && err.status === 409) return text(`${type} already exists in ${ctx.organization.name}.`);
         return fail(`${label}: not done.\n${describeError(err)}`);

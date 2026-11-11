@@ -1,21 +1,21 @@
-# TouchQue Ruby SDK — bundled type/API reference for AI assistants.
+# Touchque Ruby SDK — bundled type/API reference for AI assistants.
 # Concatenation of touchque-ruby/lib/touchque/{client.rb,errors.rb,flow.rb,approvals.rb,resources/login.rb,
 # rails/guard.rb,rack/relay.rb} plus the public part of relay.rb (RelayHandler).
 # Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   DEFAULT_BASE_URL = "https://api.touchque.com"
 
-  # The TouchQue client. Every call is signed with your API secret, so it belongs on
+  # The Touchque client. Every call is signed with your API secret, so it belongs on
   # your server; browser pieces relay through it.
   #
   #   # TQ_API_KEY=tq_...  TQ_API_SECRET=...
-  #   tq = TouchQue::Client.new
+  #   tq = Touchque::Client.new
   #   step = tq.start("SEND_MONEY", "jane@acme.com", details: { "Amount" => "250 EUR" })
   #
-  # Thread-safe: create one and reuse it (in Rails, TouchQue.client).
+  # Thread-safe: create one and reuse it (in Rails, Touchque.client).
   class Client
     attr_reader :auth, :login, :webauthn, :webhook, :offline, :action_types, :actions, :risk, :recovery,
                 :assist, :agents, :identity, :mobile, :qr_pairings, :device_risk, :safe_guard
@@ -58,8 +58,8 @@ module TouchQue
 
     # Starts an approval and returns at once: show the step in your UI. "waiting" with
     # "number": show the number, the user picks it on the phone. "enroll": show
-    # step["enroll"]["qrCodeDataUrl"] so the user links the TouchQue app first.
-    # +browser_proof+ (silent sign-ins): the X-TouchQue-Browser header, passed through.
+    # step["enroll"]["qrCodeDataUrl"] so the user links the Touchque app first.
+    # +browser_proof+ (silent sign-ins): the X-Touchque-Browser header, passed through.
     def start(action, user, details: nil, reference_id: nil, ip: nil, user_agent: nil, browser_proof: nil, context: nil)
       Steps.start(self, action, user, details: details, reference_id: reference_id, ip: ip, user_agent: user_agent,
                                       browser_proof: browser_proof, context: context)
@@ -91,11 +91,11 @@ end
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   # Base class of every error the SDK raises.
   class Error < StandardError; end
 
-  # TouchQue answered with an error (status 400 or more). +status+ is the HTTP
+  # Touchque answered with an error (status 400 or more). +status+ is the HTTP
   # status, +code+ the machine-readable code (+device_not_linked+,
   # +unknown_action+, +already_used+...) and +data+ the decoded JSON body.
   class APIError < Error
@@ -104,7 +104,7 @@ module TouchQue
     def initialize(status, data = nil, message = nil)
       @status = status
       @data = data.is_a?(Hash) ? data : {}
-      super(message || @data["message"] || @data["error"] || "TouchQue API error: HTTP #{status}")
+      super(message || @data["message"] || @data["error"] || "Touchque API error: HTTP #{status}")
     end
 
     # Machine-readable error code, e.g. "device_not_linked".
@@ -154,10 +154,10 @@ module TouchQue
   # The organization behind your workspace cannot use this feature here (HTTP
   # 403). +feature_reason+:
   # - +:not_in_plan+: not in its plan (+feature_not_in_plan+); an owner or admin
-  #   adds it in the TouchQue dashboard;
+  #   adds it in the Touchque dashboard;
   # - +:read_only+: being turned off (+feature_read_only+); reads still work for
   #   14 days, changes are refused;
-  # - +:off+: switched off on this TouchQue deployment (+feature_off+).
+  # - +:off+: switched off on this Touchque deployment (+feature_off+).
   # +feature+ is the catalog id (+device_risk+, +ai_agents+, +mobile_sdk+,
   # +ciam+...). An APIError, so existing +rescue+ blocks still catch it; rescue
   # one of the three subclasses to tell them apart.
@@ -185,7 +185,7 @@ module TouchQue
     REASON = :read_only
   end
 
-  # +feature_off+: the feature is switched off on this TouchQue deployment.
+  # +feature_off+: the feature is switched off on this Touchque deployment.
   class FeatureOffError < FeatureError
     REASON = :off
   end
@@ -196,11 +196,11 @@ module TouchQue
     "feature_off" => FeatureOffError,
   }.freeze
 
-  # The request never reached TouchQue (DNS, connection refused, timeout). Unlike
+  # The request never reached Touchque (DNS, connection refused, timeout). Unlike
   # APIError, generally safe to retry.
   class NetworkError < Error
     def initialize(message)
-      super("TouchQue: network request failed: #{message}")
+      super("Touchque: network request failed: #{message}")
     end
   end
 
@@ -220,19 +220,19 @@ module TouchQue
 
     def initialize(request_id)
       @request_id = request_id
-      super("TouchQue: request '#{request_id}' was rejected by the user.")
+      super("Touchque: request '#{request_id}' was rejected by the user.")
     end
   end
 
-  # A webhook is not from TouchQue, was changed, or is too old.
+  # A webhook is not from Touchque, was changed, or is too old.
   class WebhookSignatureError < Error
     def initialize(message)
-      super("TouchQue: webhook rejected: #{message}")
+      super("Touchque: webhook rejected: #{message}")
     end
   end
 
   # A correctly signed webhook with this +jti+ was already accepted. Usually a
-  # TouchQue retry of a delivery you processed: answer 200 so it stops, but do not
+  # Touchque retry of a delivery you processed: answer 200 so it stops, but do not
   # run your side effects again. A WebhookSignatureError, so existing rescues
   # still reject it.
   class WebhookReplayError < WebhookSignatureError
@@ -247,7 +247,7 @@ module TouchQue
   # Missing or invalid configuration, an undefined action type, or a wrong argument.
   class ConfigError < Error
     def initialize(message)
-      super("TouchQue config error: #{message}")
+      super("Touchque config error: #{message}")
     end
   end
 
@@ -262,9 +262,9 @@ module TouchQue
       @request_id = request_id
       @reason = reason
       super(if reason == "step_up"
-              "TouchQue: request '#{request_id}' must now be approved with a passkey: the user approved on the phone during a call."
+              "Touchque: request '#{request_id}' must now be approved with a passkey: the user approved on the phone during a call."
             else
-              "TouchQue: request '#{request_id}' must be approved with a passkey (phishing-resistant policy); no push was sent."
+              "Touchque: request '#{request_id}' must be approved with a passkey (phishing-resistant policy); no push was sent."
             end)
     end
   end
@@ -278,16 +278,16 @@ module TouchQue
       @approval_id = approval_id
       @status = status
       @reason = reason
-      super("TouchQue: approval '#{approval_id}' is #{status}#{reason ? " (#{reason})" : ""}.")
+      super("Touchque: approval '#{approval_id}' is #{status}#{reason ? " (#{reason})" : ""}.")
     end
   end
 
   # An approval does not say what you are about to execute (another person,
-  # action type, amount, recipient...), or it is not a valid token from TouchQue.
+  # action type, amount, recipient...), or it is not a valid token from Touchque.
   # Do not execute.
   class ApprovalMismatchError < Error
     def initialize(message)
-      super("TouchQue: #{message}")
+      super("Touchque: #{message}")
     end
   end
 
@@ -305,7 +305,7 @@ module TouchQue
     end
   end
 
-  # A TouchQue Login sign-in or token check failed; +error_code+ is machine-readable.
+  # A Touchque Login sign-in or token check failed; +error_code+ is machine-readable.
   class HostedLoginError < Error
     attr_reader :error_code, :description, :status
 
@@ -337,12 +337,12 @@ module TouchQue
 end
 
 # ─────────────────────────────────────────────────────────────
-# From lib/touchque/flow.rb — the headless step-up flow and TouchQue::Guard.run
+# From lib/touchque/flow.rb — the headless step-up flow and Touchque::Guard.run
 # ─────────────────────────────────────────────────────────────
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   # The headless step-up flow shared by every integration: start → show the step in
   # YOUR UI → check → complete exactly once. A "step" is a plain Hash, safe to send to
   # the browser as JSON: state (waiting | approved | rejected | expired | enroll |
@@ -488,18 +488,18 @@ module TouchQue
   end
 
   # Framework-agnostic step-up guard (the Rails concern is a thin wrapper over it).
-  # Contract, the same in every TouchQue server SDK:
+  # Contract, the same in every Touchque server SDK:
   #   1st request            -> 202 {"touchque" => step, "token" => ...}  show the step in your UI
   #   repeat with the token   -> 202 while waiting, then the protected action runs once
   #   refused                 -> 403 / 408 / 423 / 429 {"touchque" => {"state" => ...}}
-  # Request headers the browser sends back: X-TouchQue-Token, X-TouchQue-Offline: 1,
-  # X-TouchQue-Code (+ X-TouchQue-Code-Type: totp), X-TouchQue-Browser (silent sign-ins).
+  # Request headers the browser sends back: X-Touchque-Token, X-Touchque-Offline: 1,
+  # X-Touchque-Code (+ X-Touchque-Code-Type: totp), X-Touchque-Browser (silent sign-ins).
   module Guard
-    TOKEN_HEADER = "X-TouchQue-Token"
-    OFFLINE_HEADER = "X-TouchQue-Offline"
-    CODE_HEADER = "X-TouchQue-Code"
-    CODE_TYPE_HEADER = "X-TouchQue-Code-Type"
-    BROWSER_HEADER = "X-TouchQue-Browser"
+    TOKEN_HEADER = "X-Touchque-Token"
+    OFFLINE_HEADER = "X-Touchque-Offline"
+    CODE_HEADER = "X-Touchque-Code"
+    CODE_TYPE_HEADER = "X-Touchque-Code-Type"
+    BROWSER_HEADER = "X-Touchque-Browser"
 
     TOKEN_TTL_MS = 10 * 60 * 1000
     MAX_BROWSER_PROOF = 4096
@@ -552,7 +552,7 @@ module TouchQue
     # Runs one step of the guard: {status: 200, approved: approval} (run your protected
     # action once) or {status:, body: {"touchque" => step, "token" => ...}} to send back.
     # Silent sign-ins: with +silent_sign_in+ on, a new attempt that carries a browser
-    # proof first asks TouchQue (risk.check); only an answer of exactly prompt: false
+    # proof first asks Touchque (risk.check); only an answer of exactly prompt: false
     # approves at once with no push. Otherwise, and on any error, the usual push starts.
     def run(client, user, action, details: nil, reference_id: nil, ip: nil, user_agent: nil, token: nil, offline: false,
             code: nil, code_type: nil, enroll: true, browser_proof: nil, silent_sign_in: false, context: nil)
@@ -664,12 +664,12 @@ module TouchQue
         issue.call(Steps.start(client, action, user, details: norm, reference_id: reference_id, ip: ip, user_agent: user_agent,
                                                      enroll: enroll, browser_proof: proof, context: context))
       rescue ConfigError => e
-        TouchQue.log :error, "[TouchQue] #{e.message}"
+        Touchque.log :error, "[Touchque] #{e.message}"
         error(500, { "state" => "blocked", "reason" => "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.")
       rescue StandardError => e
         # Anything else (Touchque unreachable, an approval for another transaction, a bug)
         # fails closed with the contract's 503, never a bare 500.
-        TouchQue.log :error, "[TouchQue] approval failed: #{e.class}: #{e.message}"
+        Touchque.log :error, "[Touchque] approval failed: #{e.class}: #{e.message}"
         error(503, { "state" => "blocked", "reason" => "unavailable" }, "unavailable", "Two-factor approval is temporarily unavailable.")
       end
     end
@@ -689,11 +689,11 @@ module TouchQue
         "requestId" => "silent", "user" => user, "action" => action,
         "assurance" => { "phishingResistant" => false, "method" => "silent" },
         "confirmedVia" => "SILENT", "approvalProof" => nil,
-        # Nothing was sent to the phone; why TouchQue let this known browser in.
+        # Nothing was sent to the phone; why Touchque let this known browser in.
         "reasons" => res["reasons"]
       }
     rescue StandardError => e
-      TouchQue.log :warn, "[TouchQue] silent sign-in check failed, asking the phone: #{e.class}: #{e.message}"
+      Touchque.log :warn, "[Touchque] silent sign-in check failed, asking the phone: #{e.class}: #{e.message}"
       nil
     end
 
@@ -704,12 +704,12 @@ module TouchQue
 end
 
 # ─────────────────────────────────────────────────────────────
-# From lib/touchque/approvals.rb — details digest, TouchQue::ApprovalProof.verify (pin the key)
+# From lib/touchque/approvals.rb — details digest, Touchque::ApprovalProof.verify (pin the key)
 # ─────────────────────────────────────────────────────────────
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   # Transaction details the way the API normalizes and digests them.
   module Details
     # What JavaScript's trim removes, as the API trims: ASCII and Unicode spaces (U+00A0,
@@ -754,7 +754,7 @@ module TouchQue
   # approval is signed over the request id, the action type, the number-match code and
   # a digest of the details the user was shown. The proof arrives in the SUCCESS webhook
   # ("approvalProof") and in the consumed approval. Verifying it does not require
-  # trusting TouchQue.
+  # trusting Touchque.
   module ApprovalProof
     PREFIX = "touchque-approve:v2"
 
@@ -798,7 +798,7 @@ module TouchQue
 
   # What a partner's server checks before executing what an AI agent asked for: the
   # approval token's claims match the transaction (person, action type, authorization
-  # details) and, offline, its ES256 signature against TouchQue's keys
+  # details) and, offline, its ES256 signature against Touchque's keys
   # (GET /agents/jwks.json). Amounts compare as decimals ("500" = "500.00"), IBANs
   # without spaces in any case, currencies in any case; a Hash matches a token with
   # exactly one entry, an Array matches entry by entry.
@@ -928,15 +928,15 @@ end
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   module Resources
-    # Setup secrets (the QR code the TouchQue app scans) and a user's link status.
+    # Setup secrets (the QR code the Touchque app scans) and a user's link status.
     class Auth
       def initialize(http)
         @http = http
       end
 
-      # A new setup secret: show +qrCodeDataUrl+ so the TouchQue app links the phone.
+      # A new setup secret: show +qrCodeDataUrl+ so the Touchque app links the phone.
       # 409 when an unscanned or used secret exists (reset_secret issues a new one).
       def generate_secret(external_username)
         @http.post("/auth/generate-secret", { "externalUsername" => external_username })
@@ -970,8 +970,8 @@ module TouchQue
       #
       # details: transaction context for the approval screen, {"Amount" => "250 EUR"} or
       # [{label:, value:}], at most 8 lines (labels <= 40, values <= 120 characters). Build
-      # it from server-side state. browser_proof: the X-TouchQue-Browser header (silent
-      # sign-ins), passed through untouched. context: for your TouchQue Actions only.
+      # it from server-side state. browser_proof: the X-Touchque-Browser header (silent
+      # sign-ins), passed through untouched. context: for your Touchque Actions only.
       # security_changes: {password:, mfa:, device:, email:, phone:} => Time / ISO 8601 /
       # epoch ms, when each last changed in your system. destination: {kind:, value:, known:}
       # where the action sends money (shown in full on the phone). locale: "tr" or "en".
@@ -992,8 +992,8 @@ module TouchQue
         # A browser pairing by QR code (qr_pairings), confirmed on the phone: only that phone is asked, once.
         body["qrPairing"] = qr_pairing unless qr_pairing.to_s.empty?
         # Ask the person to type back on the phone a sign-in code another service sent them:
-        # { kind: "code", key: TouchQue::CodeReply.new_key["publicKey"], channel: "sms", target: "+**********26" }.
-        # status(id)["reply"]["ct"] holds only the ciphertext: TouchQue::CodeReply.open opens it. Not with qr_pairing.
+        # { kind: "code", key: Touchque::CodeReply.new_key["publicKey"], channel: "sms", target: "+**********26" }.
+        # status(id)["reply"]["ct"] holds only the ciphertext: Touchque::CodeReply.open opens it. Not with qr_pairing.
         body["reply"] = Util.stringify(reply) if reply
         body["clientSignals"] = client_signals if client_signals && !client_signals.empty?
         # The page's device report from @touchque/web (deviceRisk.collect), when the workspace
@@ -1045,7 +1045,7 @@ module TouchQue
             on_challenge.call(challenge)
           rescue StandardError => e
             # The caller's callback must not stop the wait.
-            TouchQue.log :warn, "[TouchQue] on_challenge failed: #{e.class}: #{e.message}"
+            Touchque.log :warn, "[Touchque] on_challenge failed: #{e.class}: #{e.message}"
           end
         end
         wait(request_id, sent["challengeCode"], timeout, poll_interval)
@@ -1091,12 +1091,12 @@ module TouchQue
               "provisional" => s["provisional"] ? true : false
             }
           when "REJECTED" then raise RejectedError.new(request_id)
-          when "EXPIRED" then raise TimeoutError.new("TouchQue: request '#{request_id}' expired before it was approved.", request_id)
+          when "EXPIRED" then raise TimeoutError.new("Touchque: request '#{request_id}' expired before it was approved.", request_id)
           end
           # Vishing Shield: tapped during a call, the request now waits for a passkey in the browser.
           raise PasskeyRequiredError.new(request_id, "step_up") if s["status"] == "PENDING" && s["requiresPasskey"]
           if Time.now + interval > deadline
-            raise TimeoutError.new("TouchQue: request '#{request_id}' was not approved within #{timeout}s. The user did not respond in time.", request_id)
+            raise TimeoutError.new("Touchque: request '#{request_id}' was not approved within #{timeout}s. The user did not respond in time.", request_id)
           end
 
           sleep interval
@@ -1206,7 +1206,7 @@ module TouchQue
       end
 
       # Salted, slow digests of each user's next codes, for checking typed codes while your
-      # server cannot reach TouchQue. Check a code with Offline.match_totp_verifier.
+      # server cannot reach Touchque. Check a code with Offline.match_totp_verifier.
       def totp_verifiers(external_usernames, from_step: nil, steps: nil)
         body = { "externalUsernames" => external_usernames.to_a }
         body["fromStep"] = from_step unless from_step.nil?
@@ -1215,7 +1215,7 @@ module TouchQue
       end
 
       # The step a typed code belongs to (the current one or one either side), or nil,
-      # without calling TouchQue. Accept each step once.
+      # without calling Touchque. Accept each step once.
       def self.match_totp_verifier(verifiers, user, code, at: nil)
         given = code.to_s.upcase.delete(" \t-")
         return nil unless given.length == 7 && given.chars.all? { |c| ALPHABET.include?(c) }
@@ -1258,12 +1258,12 @@ end
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   module Rails
     # One line per protected action:
     #
     #   class TransfersController < ApplicationController
-    #     include TouchQue::Rails::Guard
+    #     include Touchque::Rails::Guard
     #     require_touchque "SEND_MONEY", only: :create,
     #                      details: -> { { "Amount" => params.require(:amount), "To" => params.require(:to) } }
     #
@@ -1273,7 +1273,7 @@ module TouchQue
     #   end
     #
     # Until the user approves this answers 202 {"touchque": step, "token": "..."}; your page
-    # shows the step and sends the same request again with header X-TouchQue-Token (the
+    # shows the step and sends the same request again with header X-Touchque-Token (the
     # @touchque/web loop). Once approved the action runs ONCE. Refusals answer 403 / 408 /
     # 423 / 429 with Retry-After. Options: user: (default: current_user's email, id or
     # username; for your login action, whoever just passed your password check), details:,
@@ -1287,7 +1287,7 @@ module TouchQue
 
       module ClassMethods
         def require_touchque(action, user: nil, details: nil, reference_id: nil, context: nil, silent_sign_in: false, enroll: true, **filter_options)
-          TouchQue::Guard.assert_silent_sign_in!(silent_sign_in, "require_touchque")
+          Touchque::Guard.assert_silent_sign_in!(silent_sign_in, "require_touchque")
           options = { user: user, details: details, reference_id: reference_id, context: context, silent_sign_in: silent_sign_in, enroll: enroll }
           before_action(**filter_options) { touchque_guard!(action, options) }
         end
@@ -1302,14 +1302,14 @@ module TouchQue
 
       def touchque_guard!(action, options)
         header = ->(name) { request.headers[name] }
-        input = TouchQue::Guard.input_from_headers(header)
+        input = Touchque::Guard.input_from_headers(header)
         silent = options[:silent_sign_in]
-        result = TouchQue::Guard.run(
-          TouchQue.client, touchque_value(options[:user]) || touchque_default_user, action,
+        result = Touchque::Guard.run(
+          Touchque.client, touchque_value(options[:user]) || touchque_default_user, action,
           details: touchque_value(options[:details]), reference_id: touchque_value(options[:reference_id]),
           ip: request.remote_ip, user_agent: request.user_agent, token: input[:token], offline: input[:offline],
           code: input[:code], code_type: input[:code_type], enroll: options[:enroll],
-          browser_proof: TouchQue::Guard.silent_on?(silent) ? header.call(TouchQue::Guard::BROWSER_HEADER) : nil,
+          browser_proof: Touchque::Guard.silent_on?(silent) ? header.call(Touchque::Guard::BROWSER_HEADER) : nil,
           silent_sign_in: silent, context: touchque_value(options[:context])
         )
         if result[:approved]
@@ -1346,17 +1346,17 @@ module TouchQue
     # Verified webhooks in a controller:
     #
     #   class TouchqueWebhooksController < ActionController::API
-    #     include TouchQue::Rails::Webhook
+    #     include Touchque::Rails::Webhook
     #     verify_touchque_webhook
     #
     #     def create
-    #       EndSession.call(touchque_webhook["requestId"]) if touchque_webhook["event"] == TouchQue::Resources::Webhook::EVENT_APPROVAL_REVOKED
+    #       EndSession.call(touchque_webhook["requestId"]) if touchque_webhook["event"] == Touchque::Resources::Webhook::EVENT_APPROVAL_REVOKED
     #       head :ok
     #     end
     #   end
     #
     # A bad signature or an old timestamp answers 401 before your action; a replay of a
-    # delivery already accepted answers 200 without running it again (TouchQue.replay_cache:
+    # delivery already accepted answers 200 without running it again (Touchque.replay_cache:
     # in-process by default; set one over Redis when you run several processes).
     module Webhook
       def self.included(base)
@@ -1365,7 +1365,7 @@ module TouchQue
       end
 
       module ClassMethods
-        def verify_touchque_webhook(tolerance_seconds: TouchQue::Resources::Webhook::DEFAULT_TOLERANCE_SECONDS, **filter_options)
+        def verify_touchque_webhook(tolerance_seconds: Touchque::Resources::Webhook::DEFAULT_TOLERANCE_SECONDS, **filter_options)
           before_action(**filter_options) { touchque_verify_webhook!(tolerance_seconds) }
         end
       end
@@ -1378,11 +1378,11 @@ module TouchQue
       private
 
       def touchque_verify_webhook!(tolerance_seconds)
-        @touchque_webhook = TouchQue.client.webhook.verify(request.raw_post, request.headers["x-signature"],
-                                                           tolerance_seconds: tolerance_seconds, replay_cache: TouchQue.replay_cache)
-      rescue TouchQue::WebhookReplayError
+        @touchque_webhook = Touchque.client.webhook.verify(request.raw_post, request.headers["x-signature"],
+                                                           tolerance_seconds: tolerance_seconds, replay_cache: Touchque.replay_cache)
+      rescue Touchque::WebhookReplayError
         render json: { received: true, duplicate: true }, status: :ok
-      rescue TouchQue::WebhookSignatureError
+      rescue Touchque::WebhookSignatureError
         render json: { error: "invalid_signature" }, status: :unauthorized
       end
     end
@@ -1395,7 +1395,7 @@ end
 
 # frozen_string_literal: true
 
-module TouchQue
+module Touchque
   # What the relay wants sent back: a status, a JSON body and headers. +on_authenticated+
   # receives the pending success response and may change it (e.g. add a Set-Cookie);
   # the handler sets the body afterwards.
@@ -1458,30 +1458,30 @@ module TouchQue
 end
 
 # ─────────────────────────────────────────────────────────────
-# From lib/touchque/rack/relay.rb — mount TouchQue::Rack::Relay.new(...) => "/touchque"
+# From lib/touchque/rack/relay.rb — mount Touchque::Rack::Relay.new(...) => "/touchque"
 # ─────────────────────────────────────────────────────────────
 
 # frozen_string_literal: true
 
 require "rack"
 
-module TouchQue
+module Touchque
   module Rack
     # The relay as a Rack app: mount it wherever your frontend (@touchque/web) expects it.
     #
     #   # Rails, config/routes.rb
-    #   mount TouchQue::Rack::Relay.new(
+    #   mount Touchque::Rack::Relay.new(
     #     get_user_id: ->(req) { req.session["user_email"] },
     #     get_login_user: ->(req) { req.session["password_verified_user"] },
     #     on_authenticated: ->(req, response, info) { req.session["user_email"] = info["externalUsername"] }
     #   ) => "/touchque"
     #
     #   # Sinatra / plain Rack
-    #   map("/touchque") { run TouchQue::Rack::Relay.new(get_user_id: ->(req) { req.session["user"] }) }
+    #   map("/touchque") { run Touchque::Rack::Relay.new(get_user_id: ->(req) { req.session["user"] }) }
     #
     # The callbacks get the Rack::Request (its session is the app's session). The client IP
     # is Rack::Request#ip: configure trusted proxies when you run behind a load balancer.
-    # See TouchQue::RelayHandler for the routes and options.
+    # See Touchque::RelayHandler for the routes and options.
     class Relay
       MAX_BODY_BYTES = 64 * 1024
 
@@ -1520,9 +1520,9 @@ module TouchQue
 
       private
 
-      # Built on the first request, so TouchQue.client can be configured after the routes load.
+      # Built on the first request, so Touchque.client can be configured after the routes load.
       def handler
-        @handler || @lock.synchronize { @handler ||= RelayHandler.new(@client || TouchQue.client, **@options) }
+        @handler || @lock.synchronize { @handler ||= RelayHandler.new(@client || Touchque.client, **@options) }
       end
 
       def join(previous, value)

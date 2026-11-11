@@ -52,7 +52,7 @@ const signature = (label, text, re) => {
 const nodeRouter = read("touchque-node", "src", "router.ts");
 write("node", "sdk-documentation.md", read("touchque-node", "README.md"));
 write("node", "types.ts", [
-  "// TouchQue Node.js SDK — bundled type reference for AI assistants.",
+  "// Touchque Node.js SDK — bundled type reference for AI assistants.",
   "// Concatenation of touchque-node/src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}",
   "// plus the public part of src/router.ts (touchqueRouter), from the SDK source.",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API",
@@ -79,7 +79,7 @@ write("node", "types.ts", [
 const pyRelay = read("touchque-python", "touchque", "relay.py");
 write("python", "sdk-documentation.md", read("touchque-python", "README.md"));
 write("python", "types.py", [
-  "# TouchQue Python SDK — bundled type/API reference for AI assistants.",
+  "# Touchque Python SDK — bundled type/API reference for AI assistants.",
   "# Concatenation of touchque-python/touchque/{__init__.py,config.py,client.py,steps.py,approval_proof.py,",
   "# resources/login.py,resources/offline.py,contrib/flask.py,contrib/fastapi.py,contrib/django.py}",
   "# plus the public part of touchque/relay.py (RelayHandler).",
@@ -91,7 +91,7 @@ write("python", "types.py", [
   sep("#", "From touchque/config.py"),
   read("touchque-python", "touchque", "config.py").trimEnd(),
   "",
-  sep("#", "From touchque/client.py — the TouchQue client class"),
+  sep("#", "From touchque/client.py — the Touchque client class"),
   read("touchque-python", "touchque", "client.py").trimEnd(),
   "",
   sep("#", "From touchque/steps.py — the headless step-up flow"),
@@ -116,7 +116,7 @@ write("python", "types.py", [
   sep("#", "From touchque/contrib/flask.py — @require_touchque + touchque_relay_blueprint"),
   read("touchque-python", "touchque", "contrib", "flask.py").trimEnd(),
   "",
-  sep("#", "From touchque/contrib/fastapi.py — RequireTouchQue + touchque_relay_router"),
+  sep("#", "From touchque/contrib/fastapi.py — RequireTouchque + touchque_relay_router"),
   read("touchque-python", "touchque", "contrib", "fastapi.py").trimEnd(),
   "",
   sep("#", "From touchque/contrib/django.py — @require_touchque + touchque_relay_view / touchque_relay_urls"),
@@ -128,16 +128,16 @@ const phpRelay = stripPhpOpen(read("touchque-php", "src", "Relay", "RelayHandler
 write("php", "sdk-documentation.md", read("touchque-php", "README.md"));
 write("php", "types.php", [
   "<?php",
-  "// TouchQue PHP SDK — bundled type/API reference for AI assistants.",
-  "// Concatenation of touchque-php/src/{Config.php,TouchQue.php,Steps.php,ApprovalProof.php,Resources/Login.php,",
-  "// Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchQueMiddleware.php,",
-  "// Laravel/TouchQueRelay.php} plus the public part of src/Relay/RelayHandler.php.",
+  "// Touchque PHP SDK — bundled type/API reference for AI assistants.",
+  "// Concatenation of touchque-php/src/{Config.php,Touchque.php,Steps.php,ApprovalProof.php,Resources/Login.php,",
+  "// Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchqueMiddleware.php,",
+  "// Laravel/TouchqueRelay.php} plus the public part of src/Relay/RelayHandler.php.",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.",
   "",
   stripPhpOpen(read("touchque-php", "src", "Config.php")).trimEnd(),
   "",
-  sep("//", "From src/TouchQue.php — the TouchQue client class"),
-  stripPhpOpen(read("touchque-php", "src", "TouchQue.php")).trimEnd(),
+  sep("//", "From src/Touchque.php — the Touchque client class"),
+  stripPhpOpen(read("touchque-php", "src", "Touchque.php")).trimEnd(),
   "",
   sep("//", "From src/Steps.php — the headless step-up flow"),
   stripPhpOpen(read("touchque-php", "src", "Steps.php")).trimEnd(),
@@ -163,18 +163,18 @@ write("php", "types.php", [
   sep("//", "From src/Relay/RateLimitStore.php — implement over APCu/Redis under PHP-FPM"),
   stripPhpOpen(read("touchque-php", "src", "Relay", "RateLimitStore.php")).trimEnd(),
   "",
-  sep("//", "From src/Laravel/TouchQueMiddleware.php — ->middleware('touchque:ACTION')"),
-  stripPhpOpen(read("touchque-php", "src", "Laravel", "TouchQueMiddleware.php")).trimEnd(),
+  sep("//", "From src/Laravel/TouchqueMiddleware.php — ->middleware('touchque:ACTION')"),
+  stripPhpOpen(read("touchque-php", "src", "Laravel", "TouchqueMiddleware.php")).trimEnd(),
   "",
-  sep("//", "From src/Laravel/TouchQueRelay.php — TouchQueRelay::routes($router, 'touchque')"),
-  stripPhpOpen(read("touchque-php", "src", "Laravel", "TouchQueRelay.php")).trimEnd(),
+  sep("//", "From src/Laravel/TouchqueRelay.php — TouchqueRelay::routes($router, 'touchque')"),
+  stripPhpOpen(read("touchque-php", "src", "Laravel", "TouchqueRelay.php")).trimEnd(),
 ].join("\n"));
 
 // go
 const goRelay = read("touchque-go", "touchque", "relay.go");
 write("go", "sdk-documentation.md", read("touchque-go", "README.md"));
 write("go", "types.go", [
-  "// TouchQue Go SDK — bundled type/API reference for AI assistants.",
+  "// Touchque Go SDK — bundled type/API reference for AI assistants.",
   "// Concatenation of touchque-go/touchque/{config.go,types.go,client.go,steps.go,offline.go,login.go,",
   "// http_middleware.go,approval_proof.go} plus the public part of relay.go (NewRelayHandler).",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.",
@@ -208,31 +208,31 @@ write("go", "types.go", [
 ].join("\n"));
 
 // dotnet
-const csRelay = read("touchque-dotnet", "src", "TouchQue", "Relay", "RelayHandler.cs");
+const csRelay = read("touchque-dotnet", "src", "Touchque", "Relay", "RelayHandler.cs");
 write("dotnet", "sdk-documentation.md", read("touchque-dotnet", "README.md"));
 write("dotnet", "types.cs", [
-  "// TouchQue .NET SDK — bundled type/API reference for AI assistants.",
-  "// Concatenation of touchque-dotnet/src/TouchQue/{TouchQueOptions.cs,TouchQueClient.cs,Flow/Steps.cs,Flow/Guard.cs,",
+  "// Touchque .NET SDK — bundled type/API reference for AI assistants.",
+  "// Concatenation of touchque-dotnet/src/Touchque/{TouchqueOptions.cs,TouchqueClient.cs,Flow/Steps.cs,Flow/Guard.cs,",
   "// Crypto/ApprovalProof.cs,Resources/Login.cs} plus the public part of Relay/RelayHandler.cs, and",
-  "// src/TouchQue.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchQue.cs,TouchQueRelayEndpoints.cs}.",
+  "// src/Touchque.AspNetCore/{ServiceCollectionExtensions.cs,RequireTouchque.cs,TouchqueRelayEndpoints.cs}.",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.",
   "",
-  read("touchque-dotnet", "src", "TouchQue", "TouchQueOptions.cs").trimEnd(),
+  read("touchque-dotnet", "src", "Touchque", "TouchqueOptions.cs").trimEnd(),
   "",
-  sep("//", "From TouchQueClient.cs — the client (StartAsync/CheckAsync/CompleteAsync and the resources)"),
-  read("touchque-dotnet", "src", "TouchQue", "TouchQueClient.cs").trimEnd(),
+  sep("//", "From TouchqueClient.cs — the client (StartAsync/CheckAsync/CompleteAsync and the resources)"),
+  read("touchque-dotnet", "src", "Touchque", "TouchqueClient.cs").trimEnd(),
   "",
   sep("//", "From Flow/Steps.cs — the headless step-up flow and the Step record"),
-  read("touchque-dotnet", "src", "TouchQue", "Flow", "Steps.cs").trimEnd(),
+  read("touchque-dotnet", "src", "Touchque", "Flow", "Steps.cs").trimEnd(),
   "",
   sep("//", "From Flow/Guard.cs — Guard.RunAsync, the two-phase contract for any framework"),
-  read("touchque-dotnet", "src", "TouchQue", "Flow", "Guard.cs").trimEnd(),
+  read("touchque-dotnet", "src", "Touchque", "Flow", "Guard.cs").trimEnd(),
   "",
   sep("//", "From Crypto/ApprovalProof.cs — ApprovalProof.Verify (device proof, pin the key)"),
-  read("touchque-dotnet", "src", "TouchQue", "Crypto", "ApprovalProof.cs").trimEnd(),
+  read("touchque-dotnet", "src", "Touchque", "Crypto", "ApprovalProof.cs").trimEnd(),
   "",
   sep("//", "From Resources/Login.cs — tq.Login (RequestAsync/StatusAsync/VerifyAsync/ReportFraudAsync)"),
-  read("touchque-dotnet", "src", "TouchQue", "Resources", "Login.cs").trimEnd(),
+  read("touchque-dotnet", "src", "Touchque", "Resources", "Login.cs").trimEnd(),
   "",
   sep("//", "From Relay/RelayHandler.cs — the relay routes @touchque/web calls (public part)"),
   excerpt("dotnet RelayHandler.cs", csRelay, null, /^ {4}\/\/ ── push 2FA: enrollment/m),
@@ -240,21 +240,21 @@ write("dotnet", "types.cs", [
   "    // ... private route handlers omitted",
   "}",
   "",
-  sep("//", "From TouchQue.AspNetCore/ServiceCollectionExtensions.cs — services.AddTouchQue()"),
-  read("touchque-dotnet", "src", "TouchQue.AspNetCore", "ServiceCollectionExtensions.cs").trimEnd(),
+  sep("//", "From Touchque.AspNetCore/ServiceCollectionExtensions.cs — services.AddTouchque()"),
+  read("touchque-dotnet", "src", "Touchque.AspNetCore", "ServiceCollectionExtensions.cs").trimEnd(),
   "",
-  sep("//", "From TouchQue.AspNetCore/RequireTouchQue.cs — .RequireTouchQue(\"ACTION\") / [RequireTouchQue(\"ACTION\")]"),
-  read("touchque-dotnet", "src", "TouchQue.AspNetCore", "RequireTouchQue.cs").trimEnd(),
+  sep("//", "From Touchque.AspNetCore/RequireTouchque.cs — .RequireTouchque(\"ACTION\") / [RequireTouchque(\"ACTION\")]"),
+  read("touchque-dotnet", "src", "Touchque.AspNetCore", "RequireTouchque.cs").trimEnd(),
   "",
-  sep("//", "From TouchQue.AspNetCore/TouchQueRelayEndpoints.cs — app.MapTouchQueRelay(\"/touchque\", options)"),
-  read("touchque-dotnet", "src", "TouchQue.AspNetCore", "TouchQueRelayEndpoints.cs").trimEnd(),
+  sep("//", "From Touchque.AspNetCore/TouchqueRelayEndpoints.cs — app.MapTouchqueRelay(\"/touchque\", options)"),
+  read("touchque-dotnet", "src", "Touchque.AspNetCore", "TouchqueRelayEndpoints.cs").trimEnd(),
 ].join("\n"));
 
 // ruby
 const rbRelay = read("touchque-ruby", "lib", "touchque", "relay.rb");
 write("ruby", "sdk-documentation.md", read("touchque-ruby", "README.md"));
 write("ruby", "types.rb", [
-  "# TouchQue Ruby SDK — bundled type/API reference for AI assistants.",
+  "# Touchque Ruby SDK — bundled type/API reference for AI assistants.",
   "# Concatenation of touchque-ruby/lib/touchque/{client.rb,errors.rb,flow.rb,approvals.rb,resources/login.rb,",
   "# rails/guard.rb,rack/relay.rb} plus the public part of relay.rb (RelayHandler).",
   "# Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.",
@@ -264,10 +264,10 @@ write("ruby", "types.rb", [
   sep("#", "From lib/touchque/errors.rb — the exceptions"),
   read("touchque-ruby", "lib", "touchque", "errors.rb").trimEnd(),
   "",
-  sep("#", "From lib/touchque/flow.rb — the headless step-up flow and TouchQue::Guard.run"),
+  sep("#", "From lib/touchque/flow.rb — the headless step-up flow and Touchque::Guard.run"),
   read("touchque-ruby", "lib", "touchque", "flow.rb").trimEnd(),
   "",
-  sep("#", "From lib/touchque/approvals.rb — details digest, TouchQue::ApprovalProof.verify (pin the key)"),
+  sep("#", "From lib/touchque/approvals.rb — details digest, Touchque::ApprovalProof.verify (pin the key)"),
   read("touchque-ruby", "lib", "touchque", "approvals.rb").trimEnd(),
   "",
   sep("#", "From lib/touchque/resources/login.rb — tq.login (request/status/verify/report_fraud) and tq.offline"),
@@ -283,7 +283,7 @@ write("ruby", "types.rb", [
   "  end",
   "end",
   "",
-  sep("#", "From lib/touchque/rack/relay.rb — mount TouchQue::Rack::Relay.new(...) => \"/touchque\""),
+  sep("#", "From lib/touchque/rack/relay.rb — mount Touchque::Rack::Relay.new(...) => \"/touchque\""),
   read("touchque-ruby", "lib", "touchque", "rack", "relay.rb").trimEnd(),
 ].join("\n"));
 
@@ -295,19 +295,19 @@ const javaRelay = read(...J, "relay", "RelayHandler.java");
 const noImports = (s) => s.replace(/^package [^\n]*\n+/, "").replace(/^(import [^\n]*\n)+\n*/m, "");
 write("java", "sdk-documentation.md", read("touchque-java", "README.md"));
 write("java", "types.java", [
-  "// TouchQue Java SDK and Spring Boot starter — bundled type/API reference for AI assistants.",
-  "// Concatenation of touchque-java/src/main/java/com/touchque/{TouchQueOptions,TouchQueClient,flow/Step,",
+  "// Touchque Java SDK and Spring Boot starter — bundled type/API reference for AI assistants.",
+  "// Concatenation of touchque-java/src/main/java/com/touchque/{TouchqueOptions,TouchqueClient,flow/Step,",
   "// flow/StartOptions,flow/CompleteExpectations,flow/Approval,crypto/ApprovalProof,resources/Login,",
   "// resources/LoginRequestOptions,relay/RelayOptions}.java, the public parts of flow/Guard.java and",
-  "// relay/RelayHandler.java, and the starter's com/touchque/spring/{RequireTouchQue,TouchQueGuardOptions,",
-  "// TouchQueWebhookListener,TouchQueSpring}.java (package and import lines left out).",
+  "// relay/RelayHandler.java, and the starter's com/touchque/spring/{RequireTouchque,TouchqueGuardOptions,",
+  "// TouchqueWebhookListener,TouchqueSpring}.java (package and import lines left out).",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.",
   "",
-  sep("//", "package com.touchque — TouchQueOptions"),
-  noImports(read(...J, "TouchQueOptions.java")).trimEnd(),
+  sep("//", "package com.touchque — TouchqueOptions"),
+  noImports(read(...J, "TouchqueOptions.java")).trimEnd(),
   "",
-  sep("//", "package com.touchque — TouchQueClient (start/check/complete/protect and the resources)"),
-  noImports(read(...J, "TouchQueClient.java")).trimEnd(),
+  sep("//", "package com.touchque — TouchqueClient (start/check/complete/protect and the resources)"),
+  noImports(read(...J, "TouchqueClient.java")).trimEnd(),
   "",
   sep("//", "package com.touchque.flow — Step, StartOptions, CompleteExpectations, Approval"),
   noImports(read(...J, "flow", "Step.java")).trimEnd(),
@@ -341,15 +341,15 @@ write("java", "types.java", [
   "    // ... private route handlers omitted",
   "}",
   "",
-  sep("//", "package com.touchque.spring (touchque-spring-boot-starter) — @RequireTouchQue and its options"),
-  noImports(read(...S, "RequireTouchQue.java")).trimEnd(),
+  sep("//", "package com.touchque.spring (touchque-spring-boot-starter) — @RequireTouchque and its options"),
+  noImports(read(...S, "RequireTouchque.java")).trimEnd(),
   "",
-  noImports(read(...S, "TouchQueGuardOptions.java")).trimEnd(),
+  noImports(read(...S, "TouchqueGuardOptions.java")).trimEnd(),
   "",
   sep("//", "package com.touchque.spring — verified webhooks and request helpers"),
-  noImports(read(...S, "TouchQueWebhookListener.java")).trimEnd(),
+  noImports(read(...S, "TouchqueWebhookListener.java")).trimEnd(),
   "",
-  noImports(read(...S, "TouchQueSpring.java")).trimEnd(),
+  noImports(read(...S, "TouchqueSpring.java")).trimEnd(),
 ].join("\n"));
 
 // The browser SDKs (remote server: get_touchque_docs language "web" / "react", and the docs search).

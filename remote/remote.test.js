@@ -233,6 +233,9 @@ test("the snapshot answers account questions in a few lines, and says what an ow
   assert.match(t, /no redirect URI/);
   assert.match(t, /Globex \(member\)/);
   assert.ok(t.length < 1800, `snapshot is ${t.length} characters`);
+  const many = tools41.snapshotText(ctx, { ...setup, actionTypes: Array.from({ length: 53 }, (_, i) => ({ type: `TYPE_${i}` })) }, { canWrite: true });
+  assert.match(many, /Action types: 53, e\.g\. TYPE_0/);
+  assert.doesNotMatch(many, /TYPE_20/);
 });
 
 test("the action-type recipe is each SDK's real call", () => {

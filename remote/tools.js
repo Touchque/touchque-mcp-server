@@ -231,7 +231,10 @@ function snapshotText(ctx, setup, ws, { detail = false } = {}) {
     if (setup.apiKeys.error) lines.push("API keys: could not be read.");
     else lines.push(`API keys: ${active.length ? active.map((k) => `${k.keyId} "${k.name}"${k.mine ? " (theirs)" : ` (by ${k.createdBy})`}, last used ${k.lastUsed}`).join("; ") : "no active key"}. The secret is shown only when a key is made; a lost one is rotated in the dashboard (Developers → API keys); one active key per person per organization.`);
     if (!setup.webhook.error) lines.push(`Webhook: ${setup.webhook.url || "not set"}.`);
-    if (Array.isArray(setup.actionTypes)) lines.push(`Action types: ${setup.actionTypes.length ? setup.actionTypes.map((t) => t.type).join(", ") : "none yet (requireTouchQue('X') fails until X is defined)"}.`);
+    if (Array.isArray(setup.actionTypes)) {
+      const names = setup.actionTypes.map((t) => t.type);
+      lines.push(`Action types: ${!names.length ? "none yet (requireTouchQue('X') fails until X is defined)" : names.length <= 12 ? names.join(", ") : `${names.length}, e.g. ${names.slice(0, 10).join(", ")} (all: touchque_workspace_setup section actionTypes)`}.`);
+    }
     if (setup.passkey && !setup.passkey.error) lines.push(`Passkey domain: ${setup.passkey.rpId || "not set (passkeys use Touchque's domain)"}.`);
     if (setup.login.on && setup.login.slug) {
       const apps = Array.isArray(setup.login.apps) ? setup.login.apps : [];

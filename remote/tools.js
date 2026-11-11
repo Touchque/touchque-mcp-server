@@ -342,7 +342,7 @@ function typeBlock(language, symbol) {
 
 const HELP = `Touchque is an identity platform with two halves.
 - Workforce (a company's own people): Workforce SSO for work apps, Directory & lifecycle, VPN & servers (RADIUS), Shared accounts, Device trust, Threat protection, AI agents & MCP.
-- Customer & developer identity (a company's own app and customers): the 2FA API (phone approval with number matching, passkeys, offline sign; SDKs for Node, PHP, Go, Python), Touchque Login (hosted sign-up and sign-in for the company's customers, OpenID Connect; not employee SSO), Device risk (recognises browsers on sign-in pages), Safe Guard (Safe multisig wallet transactions run only after approvals signed on the approvers' phones), Mobile SDK (the company's own app approves).
+- Customer & developer identity (a company's own app and customers): the 2FA API (phone approval with number matching, passkeys, offline sign; SDKs for Node, PHP, Go, Python, Java), Touchque Login (hosted sign-up and sign-in for the company's customers, OpenID Connect; not employee SSO), Device risk (recognises browsers on sign-in pages), Safe Guard (Safe multisig wallet transactions run only after approvals signed on the approvers' phones), Mobile SDK (the company's own app approves).
 Which tool:
 - The person's own facts (organization, role, features, keys, webhook, action types, Login tenant and apps): the server instructions already say; touchque_whoami if they are missing.
 - How-to or concept: touchque_search_docs (one call; Turkish questions work).
@@ -350,7 +350,7 @@ Which tool:
 - Writing an integration: touchque_generate_integration, then touchque_check_integration.
 - A refused sign-in with a case code: touchque_explain_case.
 - Changes (action type, API key, redirect URI, test approval): only when asked; without confirm first, then confirm: true.
-Not in this server: prices, plans and billing (ask Touchque on support.touchque.com), usage numbers and logs (dashboard → Overview → Usage, Logs), changing the webhook (dashboard → Developers → Webhooks), the .NET, Ruby and Java SDKs (not released yet).`;
+Not in this server: prices, plans and billing (ask Touchque on support.touchque.com), usage numbers and logs (dashboard → Overview → Usage, Logs), changing the webhook (dashboard → Developers → Webhooks), the .NET and Ruby SDKs (not on NuGet / RubyGems yet).`;
 
 const changes = new Map(); // id → { gid, promise, label, startedAt }
 
@@ -596,7 +596,7 @@ async function call(name, args, ws, core, config) {
     const sdk = SDKS[args.language];
     const types = Array.isArray(setup.actionTypes) ? setup.actionTypes.map((t) => t.type) : [];
     const before = [];
-    if (!sdk.published) before.push(`The ${sdk.label} SDK is not released yet: say so; prefer a released SDK (Node, PHP, Go, Python) if the stack allows.`);
+    if (!sdk.published) before.push(`The ${sdk.label} SDK is not released yet: say so; prefer a released SDK (Node, PHP, Go, Python, Java) if the stack allows.`);
     if (!(setup.apiKeys.keys || []).some((k) => k.status === "ACTIVE")) before.push("No active API key: touchque_create_api_key (owners and admins), then TQ_API_KEY / TQ_API_SECRET in .env.");
     if (["phone_approval", "passkeys", "offline", "silent_sign_ins"].includes(args.feature)) {
       const action = args.action ? String(args.action).trim() : null;

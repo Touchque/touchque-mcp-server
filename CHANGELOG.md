@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.2.1 (2026-11-11)
+
+- Java 5.0.0 is on Maven Central (com.touchque:touchque-spring-boot-starter and com.touchque:touchque-java):
+  pick_sdk gives the Gradle and Maven coordinates, and the instructions and help no longer call it
+  unreleased. Bundles from sdks 3a34b1d. Still not on a registry: .NET (NuGet) and Ruby (RubyGems).
+
 ## 4.2.0 (2026-11-11)
 
 SDK 5.0 (sdks e2506e7, published the same day: npm @touchque/node 5.0.0, @touchque/web and

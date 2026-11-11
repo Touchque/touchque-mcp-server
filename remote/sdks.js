@@ -8,7 +8,7 @@ const path = require("path");
 
 const BUNDLED = path.join(__dirname, "..", "bundled");
 
-// What is on the registries, 2026-11-11: 5.0.0 (sdks e2506e7; every name spelled Touchque). The bundled
+// What is on the registries, 2026-11-11: 5.0.0 (sdks 3a34b1d; every name spelled Touchque; Java on Maven Central too). The bundled
 // READMEs and types are that release.
 const SDKS = {
   node: { label: "Node.js", package: "@touchque/node", import: "const { Touchque, requireTouchque } = require('@touchque/node');", published: "5.0.0", install: "npm install @touchque/node", registry: "npm", manifests: ["package.json"] },
@@ -21,7 +21,11 @@ const SDKS = {
   python: { label: "Python", package: "touchque-authenticator", import: "from touchque import Touchque  # Flask/Django: from touchque.contrib.flask import require_touchque; FastAPI: RequireTouchque", published: "5.0.0", install: "pip install touchque-authenticator", extras: "pip install \"touchque-authenticator[flask]\" (or [django], [fastapi]) for a framework adapter", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"] },
   dotnet: { label: ".NET", package: "Touchque.AspNetCore", published: null, install: null, registry: "not listed on NuGet yet", manifests: [".csproj", ".sln", "Program.cs"] },
   ruby: { label: "Ruby", package: "touchque", published: null, install: null, registry: "not on RubyGems yet", manifests: ["Gemfile"] },
-  java: { label: "Java", package: "com.touchque:touchque-spring-boot-starter", published: null, install: null, registry: "not on Maven Central yet", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"] },
+  java: {
+    label: "Java", package: "com.touchque:touchque-spring-boot-starter", import: "import com.touchque.TouchqueClient;  // Spring Boot: @RequireTouchque", published: "5.0.0",
+    install: "Gradle: implementation(\"com.touchque:touchque-spring-boot-starter:5.0.0\") (without Spring: com.touchque:touchque-java:5.0.0); Maven: the same coordinates in a <dependency>",
+    registry: "Maven Central", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"],
+  },
 };
 
 const FRONTEND = [

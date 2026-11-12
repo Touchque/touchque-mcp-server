@@ -16,11 +16,13 @@ const PROMPTS = [
 const COMMON = `Rules for this task:
 - The person's organization, role, features, keys and Touchque Login apps are in the server instructions; use them (touchque_whoami only if they are missing). If the person means another organization, touchque_use_organization.
 - Only build features that are ON. If one is OFF, stop and say an owner can turn it on in the dashboard (Organization → Features); do not write code for it.
-- Read the person's code yourself before changing anything: the dependency file, the framework, where sign-in and the sensitive actions live. Keep their existing sign-in working.
+- Read the person's code yourself before changing anything: the dependency file, the framework, where sign-in and the sensitive actions live, the style, the tests. Run their tests before you change anything.
+- Change only what the feature needs, in the project's own style; never reformat, rename or move existing code. Keep their existing sign-in and every existing route working, also when the Touchque keys are missing.
+- Put a guard after the route's own checks, take the user from the session, and turn on no SDK option nobody asked for (touchque_generate_integration gives the full contract).
 - Follow the SDK's own README sections (touchque_generate_integration; get_touchque_docs with a section; get_sdk_types with a symbol). Never invent an SDK function or option.
 - Secrets go in the server's .env only (TQ_API_KEY, TQ_API_SECRET), never in source or the browser, and never repeated in the chat.
 - Changes to the workspace (an action type, an API key, a redirect URI) only when the person agrees: call the tool without confirm, ask them, then with confirm: true; tell them the number their phone asks for, and touchque_wait.
-- Finish with touchque_check_integration on the code you wrote, and fix what it reports.`;
+- Run their tests again; every existing test must still pass. Finish with touchque_check_integration (code, feature, the git diff, tests before and after) and fix what it reports. Tell the person every behaviour change and every workspace change that waits for their yes.`;
 
 function brief(name, args = {}) {
   const lang = args.language ? `The backend language is ${args.language}.` : "Find the backend language from the project (touchque_pick_sdk with the manifest file names).";
@@ -38,7 +40,7 @@ ${COMMON}`;
 
 1. Read the app's code: find the sign-in flow and the sensitive actions; ask which ones to protect if it is not clear.
 2. touchque_generate_integration with feature "phone_approval", the language, the framework and the action. Follow its steps and README sections: protect the route with the step-up guard (requireTouchque or the language's equivalent) so it answers 202 with the step until the phone approves, and show the matching number (and the first-time QR) in the app's own frontend (@touchque/web or @touchque/react).
-3. If the action type does not exist yet, offer touchque_define_action_type (or define it at startup with the SDK). If there is no active API key and the person wants one, touchque_create_api_key (it asks their phone).
+3. If the action type does not exist yet, tell the person and let them choose: touchque_define_action_type (asks them first), the dashboard, or defining it in their code at startup. If there is no active API key and the person wants one, touchque_create_api_key (it asks their phone).
 4. touchque_check_integration with the code and framework; fix what fails.
 5. Offer touchque_send_test_approval so the person sees an approval on their own phone (only if they want it).
 

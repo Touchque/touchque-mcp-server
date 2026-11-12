@@ -143,7 +143,8 @@ const VALIDATION_PATTERNS = {
     hardcodedSecret: /apiSecret\s*[:=]\s*['"][a-zA-Z0-9]{10,}['"]|apiKey\s*[:=]\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
     // new Touchque() with no options reads TQ_API_KEY / TQ_API_SECRET itself.
     // new Touchque() with no options, and the guard with no client, read TQ_API_KEY / TQ_API_SECRET themselves.
-    envVar: /process\.env\.|env\[|new\s+Touch[Qq]ue\s*\(\s*\)|requireTouch[Qq]ue\s*\(\s*['"`][A-Z0-9_]+['"`]\s*\)|withTouch[Qq]ue\s*\(/,
+    // The guard and the router use the SDK's default client, which reads TQ_API_KEY / TQ_API_SECRET itself.
+    envVar: /process\.env\.|env\[|new\s+Touch[Qq]ue\s*\(\s*\)|requireTouch[Qq]ue\s*\(|withTouch[Qq]ue\s*\(|touchqueRouter\s*\(/,
     errorHandling: /catch|try\s*{|\.catch\s*\(/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequestId\b/,
@@ -210,7 +211,8 @@ const VALIDATION_PATTERNS = {
     syncVerify: /\.Login\.Verify\s*\(/,
     oldActionTypes: { re: /\.Actions\s*\.\s*Define\s*\(/, now: "client.ActionTypes.Define(...)" },
     hardcodedSecret: /APIKey:\s*"tq_[a-zA-Z0-9]{6,}"|APISecret:\s*"[a-zA-Z0-9]{10,}"/,
-    envVar: /os\.Getenv\s*\(/,
+    // touchque.New() with no key reads TQ_API_KEY / TQ_API_SECRET itself.
+    envVar: /os\.Getenv\s*\(|touchque\.New\s*\(\s*\)|touchque\.NewFromEnv\s*\(/,
     errorHandling: /if\s+err\s*!=\s*nil/,
     offlineChallenge: /\.Offline\s*\.\s*Challenge\s*\(/,
     offlineLinked: /\bRequestID\b/,

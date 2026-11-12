@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.3.0 (2026-11-12)
+
+Integrations keep the person's code (owner: "the user's code quality must not be broken"). Measured first:
+six real integrations through the live MCP into sample Express, Go and Flask projects, each judged on
+its own: every existing test still passed, the OFF feature was refused untouched, mean 8.75/10, but a
+guard placed before the balance check, an app that would not start without keys, two error shapes on
+one route, a raised go directive, a pip install outside the project and false "env" failures.
+
+- generate_integration gives an integration contract: tests before and after, change only what the
+  feature needs in the project's style, the guard after the route's own checks with details from
+  validated values, the user from the session, the app still starts without keys, no SDK option nobody
+  asked for, installs inside the project, tests through the public API, a full report.
+- check_integration takes feature, diff and the test results: failing or fewer tests, formatting-only
+  changes, a raised toolchain version, new exits on missing config, tests that drop env vars, patched
+  SDK internals, a second error shape, many files touched; a header-sourced user or details from the
+  body near a guard; Touchque Login gets its own checks instead of the guard checklist.
+- Passkeys ask for mode (sign_in or step_up) instead of an action type; Touchque Login gets no API-key
+  steps; mobile_sdk is refused as not available; frontend "plain" gets the 202 / X-Touchque-Token protocol.
+- Defining an action type at startup is offered as the person's choice, never marked as fine silently.
+- The checklist accepts the SDK's default client (Node guard with options, touchqueRouter, Go
+  touchque.New()). pick_sdk warns that go get may raise the go directive and installs Python into the
+  project's own environment. The instructions and slash commands carry the same rules.
+
 ## 4.2.2 (2026-11-12)
 
 - PHP 5.0.0 is on Packagist (composer require touchque-authenticator/php-sdk, no repository step) and

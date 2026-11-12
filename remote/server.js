@@ -34,7 +34,7 @@ const ROUTING = `Touchque MCP. Answer in the person's language, in a few lines; 
 - What is Touchque or a feature in general: answer from the summary below; no tool call.
 - How-to or concept: one touchque_search_docs call (Turkish questions work). An SDK detail: get_touchque_docs with a section, get_sdk_types with a symbol.
 - Is an SDK published, how to install: touchque_pick_sdk.
-- Write an integration: read their code, touchque_generate_integration, edit the files, then touchque_check_integration. Only for features that are ON.
+- Write an integration: read their code and run their tests first, touchque_generate_integration (it gives the integration contract), change only what the feature needs in their style, run their tests again, then touchque_check_integration with the diff and test results. Only for features that are ON.
 - Changes (action type, API key, redirect URI, test approval): only when the person asks. Call without confirm (it explains and gives a confirmToken), ask them, and only on their yes call again with confirm: true and that confirmToken. An API key also asks their phone: tell them the number, then touchque_wait.
 - If your client loads tools on demand, load the Touchque tools you need in one search.
 - Not in this server: prices, plans, billing (Touchque does not publish them; ask Touchque on support.touchque.com), usage numbers and logs (dashboard → Overview → Usage, Logs), changing the webhook URL (dashboard → Developers → Webhooks), .NET SDK (not on NuGet yet).

@@ -344,3 +344,62 @@ test("a link to another docs page keeps its target", () => {
   assert.match(t, /Çevrimdışı onay \(\/offline-sign\)/);
   assert.doesNotMatch(t, /example\.com/);
 });
+
+// ── 4.3: integrations keep the person's code ────────────────────────────────
+test("generate_integration carries the integration contract, and asks passkeys for a mode instead of an action", async () => {
+  const ws = fakeWorkspace({ actionTypes: [] });
+  ws.context = async () => ({ user: { email: "a@b.c" }, organization: { id: "o1", name: "Acme", role: "owner" }, organizations: [], features: ["core_2fa"], platformOff: ["mobile_sdk"] });
+  const cfg = loadConfig({});
+  const phone = (await callTool("touchque_generate_integration", { feature: "phone_approval", language: "node", framework: "express", action: "SEND_MONEY", frontend: "plain" }, ws, {}, cfg)).content[0].text;
+  assert.match(phone, /Integration contract/);
+  assert.match(phone, /Put the guard AFTER the route's own checks/);
+  assert.match(phone, /X-Touchque-Token/);
+  assert.match(phone, /let them choose/);
+  const pk = (await callTool("touchque_generate_integration", { feature: "passkeys", language: "node" }, ws, {}, cfg)).content[0].text;
+  assert.match(pk, /mode sign_in/);
+  assert.doesNotMatch(pk, /Which action does the route protect/);
+  const mobile = await callTool("touchque_generate_integration", { feature: "mobile_sdk", language: "node" }, ws, {}, cfg);
+  assert.equal(mobile.isError, true);
+  assert.match(mobile.content[0].text, /not available on Touchque yet: do not write/);
+});
+
+test("check_integration reads the diff and the test results for the person's code", async () => {
+  const ws = fakeWorkspace({ actionTypes: [{ type: "SEND_MONEY", active: true }] });
+  const diff = `diff --git a/src/routes/transfer.js b/src/routes/transfer.js
+--- a/src/routes/transfer.js
++++ b/src/routes/transfer.js
+-router.post('/', async (req, res) => {
++router.post('/',  async (req, res) => {
++  if (!process.env.TQ_API_KEY) process.exit(1);
++  res.status(500).json({ error: { code: 'misconfigured' } });
+-  return res.status(400).json({ error: 'invalid_transfer' });
++  return res.status(400).json({ error: 'invalid_transfer' });
+diff --git a/go.mod b/go.mod
+--- a/go.mod
++++ b/go.mod
+-go 1.26
++go 1.26.3
+diff --git a/test/app.test.js b/test/app.test.js
+--- a/test/app.test.js
++++ b/test/app.test.js
++  delete process.env.TQ_API_KEY;
+`;
+  const r = (await callTool("touchque_check_integration", { code: "router.post('/', requireTouchque('SEND_MONEY', { details: (req) => ({ amount: req.body.amount }), user: (req) => req.headers['x-user'] }))", feature: "phone_approval", diff, testsBefore: "5 passed", testsAfter: "4 passed, 1 failed" }, ws, {}, loadConfig({}))).content[0].text;
+  assert.match(r, /❌ Project tests: 5 passed before, 4 after, with failures/);
+  assert.match(r, /changed only in whitespace/);
+  assert.match(r, /raises a language\/toolchain version/);
+  assert.match(r, /New code stops the app/);
+  assert.match(r, /removes environment variables without restoring/);
+  assert.match(r, /Two error shapes/);
+  assert.match(r, /must come from the server-side session/);
+  assert.match(r, /built from the request body/);
+  const login = (await callTool("touchque_check_integration", { code: "new HostedLogin({ clientSecret: 'abcdefghijkl' })", feature: "touchque_login", framework: "express" }, ws, { callTool: async () => { throw new Error("static checklist must not run for Login"); } }, loadConfig({}))).content[0].text;
+  assert.match(login, /client secret is written in the code/);
+});
+
+test("the checklist accepts the SDK's default client reading the environment (Node guard with options, Go touchque.New())", async () => {
+  const { handlers } = require("../index.js");
+  const run = async (code, framework, language) => (await handlers.callTool({ params: { name: "validate_integration", arguments: { code, framework, language } } })).content[0].text;
+  assert.match(await run("const { requireTouchque } = require('@touchque/node');\nrouter.post('/', requireTouchque('SEND_MONEY', { user: (req) => req.session.user.id }), h);", "express"), /✅ Environment variables used for secrets/);
+  assert.match(await run('import "github.com/Touchque/touchque-go/v5/touchque"\ntq, err := touchque.New()\nif err != nil {}\nmux.Handle("/w", touchque.Require(tq, "WITHDRAW", h, touchque.RequireOptions{User: u}))', "net-http", "go"), /✅ Environment variables used for secrets/);
+});

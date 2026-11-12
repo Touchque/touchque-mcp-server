@@ -28,7 +28,22 @@ const INTEGRATIONS = {
   offline: { feature: "core_2fa", label: "Offline sign (QR + a 7-character code)", docs: "/offline-sign" },
   silent_sign_ins: { feature: "core_2fa", label: "Silent sign-ins (no prompt when nothing is new)", docs: "/silent-sign-ins" },
   ai_agents: { feature: "ai_agents", label: "AI agents (an identity per agent; a person approves on the phone)", docs: "/agents" },
+  mobile_sdk: { feature: "mobile_sdk", label: "Mobile SDK (the company's own app approves)", docs: "/sdk-intro" },
 };
+
+// What every integration keeps, in this order: the person's working code comes first.
+const CONTRACT = `Integration contract (the person's code comes first):
+1. Before editing, run the project's own tests (and formatter/linter if it has one); note the result.
+2. Change only what this feature needs. Do not rename, reformat, reorder or move existing code, or rewrite existing comments and docs (except a line the change makes untrue).
+3. Keep the project's style: module system, quotes, naming, error response shape, test framework.
+4. Put the guard AFTER the route's own checks (input, ownership, balance), so nothing invalid reaches the phone; build details from values the route already validated, never from the raw request body.
+5. The user being approved comes from the server-side session, never from a header, query or body.
+6. Missing TQ keys or config: the app still starts and every existing route still works; the guarded route answers in the project's own error shape. Refuse to start only if the person asks for that.
+7. Turn on no SDK route or option the person did not ask for.
+8. Install with the project's own tools (its package manager, its venv's python -m pip); never write outside the project; say if the install raises a language version (go directive, engines, python_requires).
+9. Every existing test still passes, unchanged. Add tests for the new behaviour through the SDK's public API (inject a client; no patching of internals), restoring any environment you change.
+10. Report: tests before and after, files changed and why, every behaviour change, every workspace change still waiting for the person's yes.
+Then touchque_check_integration with the code, feature, diff and test results.`;
 const INTEGRATION_NAMES = Object.keys(INTEGRATIONS);
 const LANGS = Object.keys(SDKS);
 
@@ -93,15 +108,15 @@ const TOOLS = [
     description: "What to write for one feature in one language: the SDK's own README sections (the real API), this workspace's values, what is missing first (e.g. the action type), and the steps. Refuses a feature that is OFF. Then edit the files yourself and run touchque_check_integration.",
     inputSchema: {
       type: "object",
-      properties: { feature: { type: "string", enum: INTEGRATION_NAMES }, language: { type: "string", enum: LANGS, description: "The backend language" }, framework: { type: "string", description: "Backend framework (express, nextjs, laravel, flask…); add the frontend as frontend" }, frontend: { type: "string", enum: ["react", "vue", "web", "none"], description: "The app's frontend, for the browser part" }, action: { type: "string", description: "The action type to protect, e.g. SEND_MONEY" } },
+      properties: { feature: { type: "string", enum: INTEGRATION_NAMES }, language: { type: "string", enum: LANGS, description: "The backend language" }, framework: { type: "string", description: "Backend framework (express, nextjs, laravel, flask…); add the frontend as frontend" }, frontend: { type: "string", enum: ["react", "vue", "web", "plain", "none"], description: "The app's frontend: plain = pages without a bundler" }, mode: { type: "string", enum: ["step_up", "sign_in"], description: "passkeys: sign_in (passkey sign-in, no action type) or step_up (a passkey approves an action)" }, action: { type: "string", description: "The action type to protect, e.g. SEND_MONEY" } },
       required: ["feature", "language"],
     },
     annotations: { readOnlyHint: true, title: "Generate integration" },
   },
   {
     name: "touchque_check_integration",
-    description: "Checks integration code against the live workspace (feature on, active key, action types exist, redirect URIs registered, webhook set) and the SDK's rules (static checklist when framework is given).",
-    inputSchema: { type: "object", properties: { code: STR, language: { type: "string", enum: LANGS }, framework: STR, redirectUris: { type: "array", items: STR }, clientId: STR } },
+    description: "Checks an integration: against the live workspace (feature on, key, action types, redirect URIs, webhook), the SDK's rules (with framework), and, with diff and test results, whether the person's existing code and tests were kept.",
+    inputSchema: { type: "object", properties: { code: STR, language: { type: "string", enum: LANGS }, framework: STR, feature: { type: "string", enum: INTEGRATION_NAMES }, diff: { type: "string", description: "git diff of the change (unified)" }, testsBefore: { type: "string", description: "the project's test result before, e.g. '5 passed'" }, testsAfter: { type: "string", description: "after, e.g. '7 passed'" }, redirectUris: { type: "array", items: STR }, clientId: STR } },
     annotations: { readOnlyHint: true, title: "Check integration" },
   },
   {
@@ -418,6 +433,8 @@ async function checkIntegration(ws, args, core) {
   const mark = (ok, label) => lines.push(`${ok ? "✅" : "❌"} ${label}`);
   const info = (label) => lines.push(`ℹ️ ${label}`);
   const language = args.language && SDKS[args.language] ? args.language : "node";
+  const warn = (label) => lines.push(`⚠️ ${label}`);
+  const feature = args.feature || null;
 
   const activeKeys = (setup.apiKeys.keys || []).filter((k) => k.status === "ACTIVE");
   if (setup.apiKeys.error) info(`API keys could not be read: ${setup.apiKeys.error.message}`);
@@ -449,24 +466,72 @@ async function checkIntegration(ws, args, core) {
     for (const t of types) {
       const row = known.get(t);
       if (row && row.active === false) mark(false, `Action type ${t} is turned off: the guard refuses it until it is on (dashboard → Developers → Action types)`);
-      else mark(Boolean(row) || definesInCode, row ? `Action type ${t} exists` : definesInCode ? `Action type ${t} is not in the workspace yet, but the code defines it at startup` : `Action type ${t} does not exist yet: define it (touchque_define_action_type, the dashboard, or at startup: ${DEFINE_ACTION[language](t, exampleName(t))})`);
+      else if (row) mark(true, `Action type ${t} exists`);
+      else if (definesInCode) warn(`Action type ${t} is not in the workspace yet; the code defines it at startup, which changes the organization at every start: make sure the person wants that`);
+      else mark(false, `Action type ${t} does not exist yet: ask the person, then touchque_define_action_type or the dashboard → Developers → Action types`);
     }
   }
   if (/webhook|callback/i.test(code) && /signature|X-Touch[Qq]ue-Signature|x-signature|verifyWebhook|webhooks?\.verify|construct/i.test(code)) {
     if (setup.webhook.error) info("The webhook could not be read just now.");
     else mark(Boolean(setup.webhook.url), setup.webhook.url ? `Webhook URL set: ${clean(setup.webhook.url, 200)}` : "The code handles Touchque webhooks, but no webhook URL is set (dashboard → Developers → Webhooks)");
   }
-  if (/passkey|webauthn/i.test(code) && !setup.passkey.error) info(setup.passkey.rpId ? `Passkey domain: ${setup.passkey.rpId}` : "No passkey domain of your own (passkeys use Touchque's domain; set yours in the dashboard → Passkey domain)");
+  if (/passkey|webauthn/i.test(code) && !setup.passkey.error) info(setup.passkey.rpId ? `Passkey domain: ${setup.passkey.rpId}` : "No passkey domain of your own (passkeys use Touchque's domain; set yours in the dashboard → Developers → App user policy)");
+  // Where the approved user and the details come from.
+  if (/requireTouch[Qq]ue|require_touchque|RequireTouch[Qq]ue|touchque\.Require|touchque:/.test(code)) {
+    if (/req\.headers\[|req\.get\(\s*['"]x-|req\.header\(|r\.Header\.Get\(|request\.headers(\.get)?\[?\(?\s*['"]x-/i.test(code)) warn("The code reads a request header near the guard: the approved user must come from the server-side session, never from a header");
+    if (/details[\s\S]{0,160}(req\.body|request\.(get_)?json|r\.Body|r\.FormValue|\$request->input)/.test(code)) warn("details are built from the request body: build them from values the route already validated (the guard can run before your own checks)");
+  }
+
+  // Did the change keep the person's code and tests?
+  const count = (s) => {
+    const m = /(\d+)\s*(passed|pass\b|ok\b|tests? passed)/i.exec(String(s || ""));
+    return m ? Number(m[1]) : null;
+  };
+  if (args.testsBefore || args.testsAfter) {
+    const b = count(args.testsBefore);
+    const a = count(args.testsAfter);
+    const failed = /\b([1-9]\d*)\s*(failed|fail\b|errors?)/i.test(String(args.testsAfter || ""));
+    if (a === null || b === null) info(`Tests before: ${clean(args.testsBefore || "?", 60)}; after: ${clean(args.testsAfter || "?", 60)}`);
+    else mark(a >= b && !failed, `Project tests: ${b} passed before, ${a} after${failed ? ", with failures" : ""}`);
+  } else if (args.diff) mark(false, "Project tests were not reported: run them before and after, and pass testsBefore and testsAfter");
+  if (typeof args.diff === "string" && args.diff.trim()) {
+    const files = [];
+    let cur = null;
+    for (const line of args.diff.split("\n")) {
+      const m = /^diff --git a\/(\S+) b\/(\S+)/.exec(line);
+      if (m) { cur = { file: m[2], isNew: false, add: [], del: [] }; files.push(cur); continue; }
+      if (!cur) continue;
+      if (/^new file mode/.test(line)) cur.isNew = true;
+      else if (line.startsWith("+") && !line.startsWith("+++")) cur.add.push(line.slice(1));
+      else if (line.startsWith("-") && !line.startsWith("---")) cur.del.push(line.slice(1));
+    }
+    const lock = /(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|go\.sum|poetry\.lock|composer\.lock|Gemfile\.lock)$/;
+    const existing = files.filter((f) => !f.isNew && !lock.test(f.file));
+    const removed = existing.reduce((n, f) => n + f.del.length, 0);
+    const wsOnly = existing.reduce((n, f) => n + f.del.filter((d) => f.add.some((x) => x !== d && x.replace(/\s+/g, "") === d.replace(/\s+/g, ""))).length, 0);
+    info(`Change: ${files.length} file(s), ${files.filter((f) => f.isNew).length} new; ${removed} line(s) removed or changed in existing files.`);
+    if (wsOnly) warn(`${wsOnly} line(s) changed only in whitespace or formatting: revert them (keep the project's formatting)`);
+    const added = files.flatMap((f) => f.add.map((l) => ({ f: f.file, l })));
+    const removedAll = files.flatMap((f) => f.del.map((l) => ({ f: f.file, l })));
+    if (added.some((x) => /^go\s+\d/.test(x.l) && /go\.mod$/.test(x.f)) || added.some((x) => /"engines"|python_requires|requires-python/.test(x.l))) warn("The change raises a language/toolchain version (go directive, engines, python_requires): tell the person");
+    if (added.some((x) => /process\.exit\(|log\.Fatal|sys\.exit\(|raise SystemExit|os\.Exit\(/.test(x.l) && !/test/i.test(x.f))) warn("New code stops the app (exit/Fatal): with keys missing, the app should still start and its existing routes work");
+    if (added.some((x) => /delete process\.env|os\.environ\.pop|os\.Unsetenv|unset\(\$_ENV/.test(x.l)) && !added.some((x) => /process\.env\.[A-Z_]+\s*=|monkeypatch\.(set|del)env|t\.Setenv|finally/.test(x.l))) warn("A test removes environment variables without restoring them");
+    if (added.some((x) => /monkeypatch\.setattr\([^)]*touchque|jest\.mock\(['"]@touchque|sinon\.stub\([^)]*touchque/i.test(x.l))) warn("A test patches Touchque internals: inject a client through the SDK's public options instead");
+    if (added.some((x) => /error:\s*\{\s*code/.test(x.l)) && removedAll.concat(added).some((x) => /error:\s*['"`]/.test(x.l))) warn("Two error shapes on one API now ({ error: { code } } next to the project's { error: '...' }): map the guard's errors to the project's shape");
+    const touched = existing.filter((f) => !/(^|\/)(README|CHANGELOG)[^/]*$|\.env\.example$|(^|\/)(package\.json|go\.mod|requirements[^/]*\.txt|pyproject\.toml|composer\.json|Gemfile)$/.test(f.file));
+    if (touched.length > 4) warn(`${touched.length} existing source files changed: check each one is needed for this feature`);
+  } else if (feature) info("Pass diff (git diff) and testsBefore/testsAfter to check that the existing code and tests were kept.");
 
   let staticReport = "";
-  if (code && args.framework) {
+  if (code && args.framework && feature !== "touchque_login" && feature !== "mobile_sdk") {
     try {
       const r = await core.callTool({ params: { name: "validate_integration", arguments: { code, framework: args.framework, language: args.language } } });
       staticReport = `\n\n${r.content[0].text}`;
     } catch (err) {
       staticReport = `\n\n(static checklist failed: ${err.message})`;
     }
-  } else if (code) info("Pass framework to also run the SDK's static checklist.");
+  } else if (code && feature !== "touchque_login") info("Pass framework to also run the SDK's static checklist.");
+  if (feature === "touchque_login" && /client_?secret\s*[:=]\s*['"][^'"]{8,}['"]/i.test(code)) mark(false, "The Touchque Login client secret is written in the code: read it from an environment variable");
   return `Live check (${ctx.organization.name})\n${lines.join("\n")}${staticReport}`;
 }
 
@@ -590,6 +655,7 @@ async function call(name, args, ws, core, config) {
     const ctx = await ws.context();
     if (!isOn(ctx, spec.feature)) {
       const f = CATALOG.features.find((x) => x.id === spec.feature);
+      if ((ctx.platformOff || []).includes(spec.feature)) return fail(`${spec.label} is not available on Touchque yet: do not write this integration or change any file for it. Say so, and offer what is ON instead (e.g. phone approval through the 2FA API).`);
       return fail(`${spec.label} needs ${f ? f.name : spec.feature}, which is OFF for ${ctx.organization.name}: do not write this integration. ${ctx.organization.role === "owner" ? "The person is the owner and can" : "An owner can"} turn it on in the dashboard → Organization → Features.`);
     }
     const setup = await workspaceSetup(ws, ctx);
@@ -597,12 +663,15 @@ async function call(name, args, ws, core, config) {
     const types = Array.isArray(setup.actionTypes) ? setup.actionTypes.map((t) => t.type) : [];
     const before = [];
     if (!sdk.published) before.push(`The ${sdk.label} SDK is not released yet: say so; prefer a released SDK (Node, PHP, Go, Python, Java, Ruby) if the stack allows.`);
-    if (!(setup.apiKeys.keys || []).some((k) => k.status === "ACTIVE")) before.push("No active API key: touchque_create_api_key (owners and admins), then TQ_API_KEY / TQ_API_SECRET in .env.");
-    if (["phone_approval", "passkeys", "offline", "silent_sign_ins"].includes(args.feature)) {
+    const login = args.feature === "touchque_login";
+    const needsAction = ["phone_approval", "offline", "silent_sign_ins"].includes(args.feature) || (args.feature === "passkeys" && args.mode === "step_up");
+    if (!login && !(setup.apiKeys.keys || []).some((k) => k.status === "ACTIVE")) before.push("No active API key: touchque_create_api_key (owners and admins), then TQ_API_KEY / TQ_API_SECRET in .env.");
+    if (args.feature === "passkeys" && !args.mode) before.push("Passkey sign-in (mode sign_in) or a passkey approving an action (mode step_up)? Call again with mode.");
+    if (needsAction) {
       const action = args.action ? String(args.action).trim() : null;
       const known = Array.isArray(setup.actionTypes) ? setup.actionTypes.find((t) => t.type === action) : null;
       if (!action) before.push("Which action does the route protect? Pick an action type name (e.g. SEND_MONEY for a transfer) and call again with action, or define a new one.");
-      else if (!known) before.push(`Action type ${action} does not exist in this organization; the guard refuses an unknown one. Create it once: touchque_define_action_type (with the person's yes), the dashboard → Developers → Action types, or at startup:\n  ${DEFINE_ACTION[args.language](action, exampleName(action))}`);
+      else if (!known) before.push(`Action type ${action} does not exist in this organization; the guard refuses an unknown one. Tell the person and let them choose: touchque_define_action_type (asks them first), the dashboard → Developers → Action types, or, if they want it in their code, at startup (this changes the organization at every start):\n  ${DEFINE_ACTION[args.language](action, exampleName(action))}`);
       else if (known.active === false) before.push(`Action type ${action} is turned off; the guard refuses it until it is on (dashboard → Developers → Action types).`);
     }
     if (args.feature === "touchque_login" && Array.isArray(setup.login.apps)) {
@@ -611,22 +680,22 @@ async function call(name, args, ws, core, config) {
     }
     const facts = {
       install: sdk.install || null,
-      apiKey: (setup.apiKeys.keys || []).find((k) => k.status === "ACTIVE" && k.mine)?.keyId || null,
-      actionTypes: types.length <= 12 ? types : `${types.length} (look one up: touchque_workspace_setup actionType)`,
+      ...(!login && { apiKey: (setup.apiKeys.keys || []).find((k) => k.status === "ACTIVE" && k.mine)?.keyId || null }),
+      ...(needsAction && { actionTypes: types.length <= 12 ? types : `${types.length} (look one up: touchque_workspace_setup actionType)` }),
       ...(args.feature === "webhooks" && { webhook: setup.webhook.url || "not set" }),
       ...(args.feature === "touchque_login" && { login: setup.login }),
       ...(args.feature === "passkeys" && { passkeyDomain: setup.passkey.rpId || "not set" }),
     };
     const ui = ["phone_approval", "passkeys", "offline"].includes(args.feature);
     const fe = args.frontend || (/react|next/i.test(String(args.framework || "")) ? "react" : null);
-    let frontend = ui ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web)." : "";
-    if (ui && fe && fe !== "none") {
+    let frontend = ui && fe === "plain" ? "\nFrontend (plain pages, no bundler): the guarded route answers 202 { touchque, token } until the phone approves; show touchque.number (or the first-time QR), then send the same request again with the header X-Touchque-Token: <token> every 2 s, and stop when the answer is not 202 or the step's expiresAt has passed. Or load @touchque/web through the project's bundler if it has one." : ui ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web)." : "";
+    if (ui && fe && fe !== "none" && fe !== "plain") {
       const lang = fe === "react" ? "react" : "web";
       const part = readmeSections(readme(lang)).filter((x) => /^(install|quick start|drop-in)/i.test(x.title)).map((x) => x.text).join("\n\n");
       if (part) frontend += `\n\n## From the ${packageOf(lang)} README\n${cap(part, 3500)}`;
     }
     const sectionsText = cap(sectionsFor(args.language, args.feature), fe && fe !== "none" ? 6500 : 9000);
-    return text(`# ${spec.label}, ${sdk.label}${args.framework ? ` (${args.framework})` : ""}\n${before.length ? `\nBefore this works:\n${before.map((b) => `- ${b}`).join("\n")}\n` : ""}\nWorkspace: ${json(facts)}\n\nSteps: read the person's code (sign-in, the action, the framework); install; keys in .env; guard the route as the README shows (keep the current sign-in working); then touchque_check_integration.${frontend}\nDocs: ${config.docsUrl}${spec.docs}\n\n## From the ${sdk.package} README\n${sectionsText}`);
+    return text(`# ${spec.label}, ${sdk.label}${args.framework ? ` (${args.framework})` : ""}\n${before.length ? `\nBefore this works:\n${before.map((b) => `- ${b}`).join("\n")}\n` : ""}\nWorkspace: ${json(facts)}\n\n${CONTRACT}${login ? "\nTouchque Login: keep the existing sign-in; link a Touchque account to an existing user by verified email (ask the person what to do with new ones); regenerate the existing session after the callback; keep the client secret in an env var; show the callback's error to the user." : ""}${frontend}\nDocs: ${config.docsUrl}${spec.docs}\n\n## From the ${sdk.package} README\n${sectionsText}`);
   }
 
   if (name === "touchque_check_integration") return text(await checkIntegration(ws, args, core));

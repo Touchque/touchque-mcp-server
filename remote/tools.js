@@ -38,7 +38,7 @@ const CONTRACT = `Integration contract (the person's code comes first):
 3. Keep the project's style: module system, quotes, naming, error response shape, test framework.
 4. Put the guard AFTER the route's own checks (input, ownership, balance), so nothing invalid reaches the phone; build details from values the route already validated, never from the raw request body.
 5. The user being approved comes from the server-side session, never from a header, query or body.
-6. Missing TQ keys or config: the app still starts and every existing route still works; the guarded route answers in the project's own error shape. Refuse to start only if the person asks for that.
+6. Missing TQ keys or config: the app still starts and every existing route still works; the guarded route answers in the project's own error shape (through the SDK's own error-shape option where it has one, not a wrapper). Refuse to start only if the person asks for that.
 7. Turn on no SDK route or option the person did not ask for.
 8. Install with the project's own tools (its package manager, its venv's python -m pip); never write outside the project; say if the install raises a language version (go directive, engines, python_requires).
 9. Every existing test still passes, unchanged. Add tests for the new behaviour through the SDK's public API (inject a client; no patching of internals), restoring any environment you change.
@@ -290,7 +290,10 @@ function readmeToc(language) {
 
 function readmeSection(language, section) {
   const want = docs.fold(section);
-  const picked = readmeSections(readme(language)).filter((s) => docs.fold(s.title).includes(want));
+  const all = readmeSections(readme(language));
+  let picked = all.filter((s) => docs.fold(s.title).includes(want));
+  // A "### " part by its own title (e.g. "No API key" inside Node's "Framework adapters").
+  if (!picked.length) picked = all.flatMap((s) => s.subs || []).filter((s) => docs.fold(s.title).includes(want));
   if (!picked.length) return null;
   return cap(picked.map((s) => s.text).join("\n\n"), 10000);
 }
@@ -524,8 +527,13 @@ async function checkIntegration(ws, args, core) {
     const EXIT = /process\.exit\(|log\.Fatal|sys\.exit\(|raise SystemExit|os\.Exit\(/;
     if (added.some((x) => EXIT.test(x.l) && !/test/i.test(x.f) && !removedAll.some((r) => r.f === x.f && EXIT.test(r.l)))) warn("New code stops the app (exit/Fatal): with keys missing, the app should still start and its existing routes work");
     if (added.some((x) => /delete process\.env|os\.environ\.pop|os\.Unsetenv|unset\(\$_ENV/.test(x.l)) && !added.some((x) => /process\.env\.[A-Z_]+\s*=|monkeypatch\.(set|del)env|t\.Setenv|finally/.test(x.l))) warn("A test removes environment variables without restoring them");
-    if (added.some((x) => /monkeypatch\.setattr\([^)]*touchque|jest\.mock\(['"]@touchque|sinon\.stub\([^)]*touchque/i.test(x.l))) warn("A test patches Touchque internals: inject a client through the SDK's public options instead");
-    if (added.some((x) => /error:\s*\{\s*code/.test(x.l)) && removedAll.concat(added).some((x) => /error:\s*['"`]/.test(x.l))) warn("Two error shapes on one API now ({ error: { code } } next to the project's { error: '...' }): map the guard's errors to the project's shape");
+    if (added.some((x) => /monkeypatch\.setattr\([^)]*touchque|jest\.mock\(['"]@touchque|sinon\.stub\([^)]*touchque/i.test(x.l))) warn(`A test patches Touchque internals: inject a client through the SDK's public options instead${SDKS[language].guard?.tests ? ` (${SDKS[language].guard.tests})` : ""}`);
+    if (added.some((x) => /error:\s*\{\s*code/.test(x.l)) && removedAll.concat(added).some((x) => /error:\s*['"`]/.test(x.l))) warn(`Two error shapes on one API now ({ error: { code } } next to the project's { error: '...' }): map the guard's errors to the project's shape${SDKS[language].guard?.v51 ? ` (the adapter's ${SDKS[language].guard.errorBody} option; with the guard inside the handler, shape its body yourself)` : ""}`);
+    const web = added.find((x) => /package\.json$/.test(x.f) && /"@touchque\/web"\s*:\s*"[~^]?(\d+)\.(\d+)/.test(x.l));
+    if (web && SDKS[language].guard?.v51) {
+      const [, maj, min] = /"@touchque\/web"\s*:\s*"[~^]?(\d+)\.(\d+)/.exec(web.l);
+      if (Number(maj) < 2 || (Number(maj) === 2 && Number(min) < 1)) warn("@touchque/web below 2.1.0 with a 5.1 server SDK: the first-time QR needs @touchque/web 2.1.0 (npm install @touchque/web@^2.1.0)");
+    }
     const touched = existing.filter((f) => !/(^|\/)(README|CHANGELOG)[^/]*$|\.env\.example$|(^|\/)(package\.json|go\.mod|requirements[^/]*\.txt|pyproject\.toml|composer\.json|Gemfile)$/.test(f.file));
     if (touched.length > 4) warn(`${touched.length} existing source files changed: check each one is needed for this feature`);
   } else if (feature) info("Pass diff (git diff) and testsBefore/testsAfter to check that the existing code and tests were kept.");
@@ -697,14 +705,27 @@ async function call(name, args, ws, core, config) {
     const ui = ["phone_approval", "passkeys", "offline"].includes(args.feature);
     const fe = args.frontend || (/react|next/i.test(String(args.framework || "")) ? "react" : null);
     const stepUp = ui && !(args.feature === "passkeys" && args.mode !== "step_up");
-    let frontend = stepUp && fe === "plain" ? "\nFrontend (plain pages, no bundler): the guarded route answers 202 { touchque, token } until the phone approves. State waiting: show touchque.number, then send the same request again with the header X-Touchque-Token: <token> every 2 s; keep the first step's expiresAt and stop when it has passed or the answer is not 202. State enroll (the first time): show the QR and the recovery codes ONCE, and retry only after the person says they scanned it (a retry before that starts a new enrollment). Or load @touchque/web through the project's bundler if it has one." : stepUp ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web)." : "";
+    const g = sdk.guard || {};
+    const ver = sdk.published || "not on a registry yet";
+    const enrollPlain = g.v51
+      ? "While the QR is up the answers are { state: \"enroll\", expiresAt } without enroll: keep what you show. About 15 s before the QR expires (touchque.enroll.expiresAt) an answer brings a new enroll with a new qrCodeDataUrl, new recoveryCodes (the earlier codes stop working) and a new expiresAt: replace the QR and the codes. Once the phone is linked the answer turns into waiting."
+      : "Show them ONCE, and retry only after the person says they scanned it (with this SDK's guard a retry before that starts a new enrollment, with a new QR and new recovery codes).";
+    let frontend = stepUp && fe === "plain"
+      ? `\nFrontend (plain pages, no bundler): the guarded route answers 202 { touchque: step, token } until the phone approves. Send the same request again every 2 s with the header X-Touchque-Token set to the token of the LATEST answer (it changes each time). State waiting: show touchque.number when it is there (polls repeat it); keep the touchque.expiresAt of the first waiting answer (polls leave it out) and stop when it has passed or the answer is not 202 (an expired push answers 408). State enroll with touchque.enroll.qrCodeDataUrl (the first time): show it and touchque.enroll.recoveryCodes, and keep polling. ${enrollPlain} State enroll with reason already_linked (linked in the meantime): keep polling with the new token; the next answer is waiting. Any other 202 (passkey_required, offline, or an enroll answer with no QR while you show none, as a route with enrollment turned off answers): a plain page cannot finish it; stop and show a message, or use @touchque/web. Or load @touchque/web through the project's bundler if it has one.`
+      : stepUp
+        ? `\nFrontend: the guarded route answers 202 { touchque: step, token } until the phone approves; show the step's number (or the first-time QR) and retry with that answer's token in X-Touchque-Token. @touchque/web (npm install @touchque/web@^2.1.0) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web@^2.1.0).${g.v51 ? "" : " With this SDK's guard, every retry during a first-time QR makes a new QR and new recovery codes: in onStep, on state enroll with enroll.qrCodeDataUrl, show it once and call controls.cancel(); the call then rejects with an error named AbortError (no request is sent after it): catch that one and keep the QR on screen, then call again after the person scanned it. With @touchque/react's useTouchqueAction, call a.cancel() when a.step is enroll with enroll.qrCodeDataUrl and treat its error status with an AbortError as \"QR shown\", not a failure."}`
+        : "";
+    const guardNote = !(needsAction || stepUp) ? ""
+      : g.v51
+        ? `\nThis SDK's guard (${ver}). The adapter (${g.adapter}): with TQ keys missing it never throws, the app starts, and a guarded route answers 500 misconfigured (401 with no signed-in user); its ${g.errorBody} option gives refusals the project's own error shape. Use these, not a wrapper. To run the route's own checks first, put the guard inside the handler (README: Guard inside your handler); there: ${g.inHandler}${g.extra ? ` ${g.extra}` : ""} Tests: ${g.tests}.`
+        : `\nThis SDK's published guard (${ver}) has no error-shape option and no answer of its own for missing keys (5.1, which has both, is not on ${sdk.registry} yet). ${g.note} Send a 202 body unchanged (it carries the token the page polls with). Refusals are any status >= 400: the body is { touchque, token } for 403/408/423/429 and { touchque, error: { code, message } } only for 401/500/503; map them to the project's shape with the code from error.code, else touchque.reason, else touchque.state, keeping touchque. Send Cache-Control: no-store on every guard answer, plus Retry-After when the step has one (touchque.retryAfter), as the SDK's own middleware does. Tests: ${g.tests}.`;
     if (stepUp && fe && fe !== "none" && fe !== "plain") {
       const lang = fe === "react" ? "react" : "web";
       const part = readmeSections(readme(lang)).filter((x) => /^(install|quick start|drop-in)/i.test(x.title)).map((x) => x.text).join("\n\n");
       if (part) frontend += `\n\n## From the ${packageOf(lang)} README\n${cap(part, 3500)}`;
     }
-    const sectionsText = cap(sectionsFor(args.language, args.feature), fe && fe !== "none" ? 6500 : 9000);
-    return text(`# ${spec.label}, ${sdk.label}${args.framework ? ` (${args.framework})` : ""}\n${before.length ? `\nBefore this works:\n${before.map((b) => `- ${b}`).join("\n")}\n` : ""}\nWorkspace: ${json(facts)}\n\n${CONTRACT}${login ? "\nTouchque Login: keep the existing sign-in; link a Touchque account to an existing user by verified email (ask the person what to do with new ones); regenerate the existing session after the callback; keep the client secret in an env var; show the callback's error to the user." : ""}${frontend}\nDocs: ${config.docsUrl}${spec.docs}\n\n## From the ${sdk.package} README\n${sectionsText}`);
+    const sectionsText = sectionsFor(args.language, args.feature, fe && fe !== "none" ? 12000 : 14000, args.framework);
+    return text(`# ${spec.label}, ${sdk.label}${args.framework ? ` (${args.framework})` : ""}\n${before.length ? `\nBefore this works:\n${before.map((b) => `- ${b}`).join("\n")}\n` : ""}\nWorkspace: ${json(facts)}\n\n${CONTRACT}${login ? "\nTouchque Login: keep the existing sign-in; link a Touchque account to an existing user by verified email (ask the person what to do with new ones); regenerate the existing session after the callback; keep the client secret in an env var; show the callback's error to the user." : ""}${guardNote}${frontend}\nDocs: ${config.docsUrl}${spec.docs}\n\n## From the ${sdk.package} README\n${sectionsText}`);
   }
 
   if (name === "touchque_check_integration") return text(await checkIntegration(ws, args, core));

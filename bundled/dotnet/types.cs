@@ -42,8 +42,7 @@ public sealed class TouchqueOptions
     /// <summary>The options with the environment filled in, checked.</summary>
     internal ResolvedOptions Resolve()
     {
-        var apiKey = ApiKey ?? Environment.GetEnvironmentVariable("TQ_API_KEY");
-        var apiSecret = ApiSecret ?? Environment.GetEnvironmentVariable("TQ_API_SECRET");
+        var (apiKey, apiSecret) = Keys();
         var baseUrl = BaseUrl ?? Environment.GetEnvironmentVariable("TQ_API_URL");
         if (string.IsNullOrEmpty(baseUrl)) baseUrl = DefaultBaseUrl;
         if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
@@ -56,6 +55,17 @@ public sealed class TouchqueOptions
         }
         AssertSafeBaseUrl(baseUrl, "BaseUrl");
         return new ResolvedOptions(apiKey, apiSecret, baseUrl.TrimEnd('/'), Timeout, new Internal.SdkLog(Logger, Debug));
+    }
+
+    /// <summary>The key and secret: these options, else TQ_API_KEY / TQ_API_SECRET.</summary>
+    private (string? ApiKey, string? ApiSecret) Keys() =>
+        (ApiKey ?? Environment.GetEnvironmentVariable("TQ_API_KEY"), ApiSecret ?? Environment.GetEnvironmentVariable("TQ_API_SECRET"));
+
+    /// <summary>No API key or secret here or in the environment: no client can be built.</summary>
+    internal bool KeysMissing()
+    {
+        var (apiKey, apiSecret) = Keys();
+        return string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret);
     }
 
     /// <summary>Allow plaintext http only for localhost / loopback (local development).</summary>
@@ -228,6 +238,7 @@ public sealed class TouchqueClient
 // From Flow/Steps.cs — the headless step-up flow and the Step record
 // ─────────────────────────────────────────────────────────────
 
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -269,6 +280,7 @@ public sealed record StepEnroll
 {
     public string? QrCodeDataUrl { get; init; }
     public IReadOnlyList<string>? RecoveryCodes { get; init; }
+    /// <summary>When the QR stops working (ISO 8601).</summary>
     public string? ExpiresAt { get; init; }
 }
 
@@ -415,7 +427,7 @@ internal static class Steps
         try
         {
             var gen = await client.Auth.GenerateSecretAsync(user, ct).ConfigureAwait(false);
-            return new Step { State = "enroll", Enroll = new StepEnroll { QrCodeDataUrl = gen.QrCodeDataUrl, RecoveryCodes = gen.RecoveryCodes, ExpiresAt = gen.ExpiresAt } };
+            return new Step { State = "enroll", Enroll = new StepEnroll { QrCodeDataUrl = gen.QrCodeDataUrl, RecoveryCodes = gen.RecoveryCodes, ExpiresAt = QrExpiresAt(gen.ExpiresAt, gen.TtlMs) } };
         }
         catch (TouchqueApiException e) when (e.Status == 409)
         {
@@ -433,9 +445,28 @@ internal static class Steps
                 return new Step { State = "enroll", Reason = "already_linked" };
             }
             var reset = await client.Auth.ResetSecretAsync(user, ct).ConfigureAwait(false);
-            return new Step { State = "enroll", Enroll = new StepEnroll { QrCodeDataUrl = reset.QrCodeDataUrl, RecoveryCodes = reset.RecoveryCodes, ExpiresAt = reset.ExpiresAt } };
+            return new Step { State = "enroll", Enroll = new StepEnroll { QrCodeDataUrl = reset.QrCodeDataUrl, RecoveryCodes = reset.RecoveryCodes, ExpiresAt = QrExpiresAt(reset.ExpiresAt, reset.TtlMs) } };
         }
     }
+
+    /// <summary>When a first-time QR stops working: the API's expiresAt when it is ISO 8601, else now + ttlMs, else unknown.</summary>
+    private static string? QrExpiresAt(string? expiresAt, long? ttlMs)
+    {
+        if (EpochMillis(expiresAt) is not null) return expiresAt;
+        return ttlMs is > 0 ? Iso(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ttlMs.Value) : null;
+    }
+
+    private static readonly string[] IsoFormats = { "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz" };
+
+    /// <summary>An ISO 8601 date-time with an offset (<c>Z</c> or <c>+03:00</c>) in ms since the epoch, or null.</summary>
+    internal static long? EpochMillis(string? iso) =>
+        !string.IsNullOrEmpty(iso) && DateTimeOffset.TryParseExact(iso, IsoFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var at)
+            ? at.ToUnixTimeMilliseconds()
+            : null;
+
+    /// <summary>ms since the epoch as ISO 8601 in UTC with milliseconds, like JavaScript's toISOString.</summary>
+    internal static string Iso(long epochMillis) =>
+        DateTimeOffset.FromUnixTimeMilliseconds(epochMillis).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
 
     public static async Task<Step> CheckAsync(TouchqueClient client, string requestId, CancellationToken ct)
     {
@@ -552,6 +583,15 @@ public sealed record GuardInput
     public SilentSignInOptions? SilentSignIn { get; init; }
     /// <summary>For your Touchque Actions only (<c>event.context</c>).</summary>
     public IReadOnlyDictionary<string, object?>? Context { get; init; }
+
+    /// <summary>
+    /// Called at most once, only for the token of a first-time QR (<c>enroll</c> with its expiry),
+    /// right before the guard starts something instead of answering "keep the QR": a silent check
+    /// or a push once the phone is linked, or a new QR once the old one expired, is about to, or is
+    /// gone. A result is answered as it is and nothing starts. Relays charge the start here like a
+    /// fresh attempt, so a status poll never starts anything on the poll budget.
+    /// </summary>
+    public Func<Task<GuardResult?>>? BeforeStart { get; init; }
 }
 
 /// <summary>
@@ -568,6 +608,60 @@ public sealed record GuardResult
 
     /// <summary>Seconds for a Retry-After header (frozen, rate limited).</summary>
     public int? RetryAfter => Step?.RetryAfter is > 0 ? Step.RetryAfter : null;
+
+    /// <summary>
+    /// The headers of a refused answer (status 400 or more): <c>X-Touchque-State</c>, and
+    /// <c>X-Touchque-Reason</c> when the step has a reason; none otherwise. <c>@touchque/web</c>
+    /// reads the step from them when a body has no <c>touchque</c> (an ErrorBody's string, say).
+    /// </summary>
+    public IReadOnlyDictionary<string, string> RefusalHeaders
+    {
+        get
+        {
+            var headers = new Dictionary<string, string>();
+            if (Status < 400 || string.IsNullOrEmpty(Step?.State)) return headers;
+            headers[Guard.StateHeader] = Step.State;
+            if (!string.IsNullOrEmpty(Step.Reason)) headers[Guard.ReasonHeader] = Step.Reason;
+            return headers;
+        }
+    }
+}
+
+/// <summary>A refused answer (status 400 or more), as an adapter's <c>ErrorBody</c> callback sees it.</summary>
+public sealed record GuardRefusal
+{
+    public int Status { get; init; }
+    /// <summary><c>error.code</c> when the guard set one, else the step's reason, else its state.</summary>
+    public string Code { get; init; } = "";
+    /// <summary><c>error.message</c> when set, else a sentence for the state.</summary>
+    public string Message { get; init; } = "";
+    /// <summary>The step as it would be sent (<c>touchque</c>).</summary>
+    public JsonObject Touchque { get; init; } = new();
+
+    /// <summary>The refusal in a guard's answer, or null for a 202 step or an approval.</summary>
+    public static GuardRefusal? From(GuardResult result)
+    {
+        if (result.Approved is not null || result.Status < 400 || result.Body is null) return null;
+        var step = result.Body["touchque"] as JsonObject;
+        var error = result.Body["error"];
+        var state = Json.Str(step, "state");
+        var code = Json.Str(error, "code");
+        if (string.IsNullOrEmpty(code)) code = Json.Str(step, "reason");
+        if (string.IsNullOrEmpty(code)) code = state;
+        var message = Json.Str(error, "message");
+        if (string.IsNullOrEmpty(message))
+        {
+            message = state switch
+            {
+                "rejected" => "The approval was rejected.",
+                "expired" => "The approval expired. Try again.",
+                "frozen" => "Too many rejected approvals. Try again later.",
+                "rate_limited" => "Too many attempts. Try again later.",
+                _ => "The approval was refused.",
+            };
+        }
+        return new GuardRefusal { Status = result.Status, Code = code ?? "", Message = message, Touchque = (step?.DeepClone() as JsonObject) ?? new JsonObject() };
+    }
 }
 
 /// <summary>
@@ -576,6 +670,8 @@ public sealed record GuardResult
 /// <list type="bullet">
 /// <item>1st request → 202 <c>{"touchque": step, "token": ...}</c>: show the step in your UI;</item>
 /// <item>repeat with the token (header <c>X-Touchque-Token</c>) → 202 while waiting, then the protected action runs once;</item>
+/// <item>while the first-time linking QR is up → 202 <c>{"touchque": {"state": "enroll", "expiresAt": ...}}</c> without
+/// <c>enroll</c>: keep showing that QR; a new one comes with <c>enroll.qrCodeDataUrl</c> once it expired;</item>
 /// <item>refused → 403 / 408 / 423 / 429 <c>{"touchque": {"state": ...}}</c>.</item>
 /// </list>
 /// </summary>
@@ -586,8 +682,14 @@ public static class Guard
     public const string CodeHeader = "X-Touchque-Code";
     public const string CodeTypeHeader = "X-Touchque-Code-Type";
     public const string BrowserHeader = "X-Touchque-Browser";
+    /// <summary>On every refused answer (status 400 or more): the step's state.</summary>
+    public const string StateHeader = "X-Touchque-State";
+    /// <summary>On a refused answer whose step has a reason: that reason.</summary>
+    public const string ReasonHeader = "X-Touchque-Reason";
 
     private const long TokenTtlMs = 10 * 60 * 1000;
+    /// <summary>A first-time QR this close to its expiry is replaced instead of kept: the user could not scan it in time.</summary>
+    private const long EnrollRenewMs = 15 * 1000;
     /// <summary>A real proof is a few hundred characters; anything far larger is not one.</summary>
     private const int MaxBrowserProof = 4096;
 
@@ -600,18 +702,33 @@ public static class Guard
     private static readonly HashSet<string> Waiting = new() { "waiting", "passkey_required", "offline" };
 
     /// <summary>
-    /// True when this request only polls an approval already on its way: a valid token
-    /// bound to this user/action/details, still waiting, and no offline switch or typed
-    /// code. It can only read the status, so relays do not count it against the
-    /// per-user push limit.
+    /// True when this request only reads a state: it polls an approval already on its way (a
+    /// valid token bound to this user/action/details, still waiting) or a first-time linking
+    /// QR still up (a bound <c>enroll</c> token whose QR expires in more than 15 s), with no
+    /// offline switch or typed code. Relays do not count it against the per-user push limit. A
+    /// start such a poll leads to (a push once the phone is linked, a new QR) goes through
+    /// <see cref="GuardInput.BeforeStart"/>, where relays charge it like a fresh attempt: every
+    /// start is counted.
     /// </summary>
     public static bool IsStatusPoll(TouchqueClient client, GuardInput input)
     {
         if (string.IsNullOrEmpty(input.User) || string.IsNullOrEmpty(input.Token) || input.Offline || !string.IsNullOrEmpty(input.Code)) return false;
         var claims = Steps.VerifyGuardToken(client.ApiSecret, input.Token);
-        if (claims is null || string.IsNullOrEmpty(Json.Str(claims, "rid"))) return false;
-        return Bound(claims, input) && Waiting.Contains(Json.Str(claims, "st") ?? "");
+        if (claims is null || !Bound(claims, input)) return false;
+        var st = Json.Str(claims, "st");
+        if (st == "enroll") return QrStillUp(Json.Long(claims, "ee"));
+        return !string.IsNullOrEmpty(Json.Str(claims, "rid")) && Waiting.Contains(st ?? "");
     }
+
+    /// <summary>A first-time QR that expires at <paramref name="ee"/> (ms since the epoch) can still be scanned: more than 15 s left.</summary>
+    private static bool QrStillUp(long? ee) => ee is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < ee - EnrollRenewMs;
+
+    /// <summary>
+    /// The guard's answer when no client can be built (TQ_API_KEY / TQ_API_SECRET missing): 401
+    /// <c>unauthenticated</c> without a user, else 500 <c>misconfigured</c>. An adapter that
+    /// builds its client on first use answers this instead of throwing.
+    /// </summary>
+    public static GuardResult WithoutClient(GuardInput input) => string.IsNullOrEmpty(input.User) ? Unauthenticated() : Misconfigured();
 
     private static bool Bound(JsonObject claims, GuardInput input) =>
         Json.Str(claims, "u") == input.User && Json.Str(claims, "a") == input.Action
@@ -623,13 +740,14 @@ public static class Guard
     /// (<c>Risk.CheckAsync</c>); when it answers exactly <c>prompt: false</c> the guard
     /// approves at once with no push (<c>assurance.method</c> silent, <c>ConfirmedVia</c>
     /// SILENT, <c>RequestId</c> silent). Otherwise, and on any error, the usual push starts.
+    /// First-time linking: a poll with the token of an <c>enroll</c> step only reads the link
+    /// state (<c>Auth.GetUserAsync</c>). Not linked yet and the QR good for more than 15 s: 202
+    /// <c>{"state": "enroll", "expiresAt": ...}</c> without <c>enroll</c>, so the page keeps its
+    /// QR. Linked: the push starts. Expired or about to: a new QR.
     /// </summary>
     public static async Task<GuardResult> RunAsync(TouchqueClient client, GuardInput input, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(input.User))
-        {
-            return Error(401, new Step { State = "blocked", Reason = "unauthenticated" }, "unauthenticated", "Sign in first.");
-        }
+        if (string.IsNullOrEmpty(input.User)) return Unauthenticated();
         var user = input.User;
         var action = input.Action;
         var norm = Details.Normalize(input.Details);
@@ -646,6 +764,8 @@ public static class Guard
                 ["exp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + TokenTtlMs,
             };
             if (step.CaseCode is not null) claims["cc"] = step.CaseCode;
+            // A first-time QR: its polls keep it until it expires (ee, ms since the epoch).
+            if (!string.IsNullOrEmpty(step.Enroll?.QrCodeDataUrl) && Steps.EpochMillis(step.Enroll.ExpiresAt) is { } qrExpiry) claims["ee"] = qrExpiry;
             if (extra is not null)
             {
                 foreach (var (k, v) in extra) claims[k] = v?.DeepClone();
@@ -768,6 +888,29 @@ public static class Guard
                 return Issue(new Step { State = now.State, RequestId = rid });
             }
 
+            // The first-time linking QR is up (its token carries the QR's expiry, ee): one QR per enrollment, not one per poll.
+            if (st == "enroll" && Json.Long(bound, "ee") is { } ee)
+            {
+                TouchqueUser? current;
+                try
+                {
+                    current = await client.Auth.GetUserAsync(user, ct).ConfigureAwait(false);
+                }
+                catch (TouchqueApiException e) when (e.Status == 404)
+                {
+                    current = null; // no such user: the QR is gone, a new one below
+                }
+                var linked = current is not null && (current.Used || !string.IsNullOrEmpty(current.DeviceId));
+                if (current is not null && !linked && QrStillUp(ee))
+                {
+                    // Nothing changed for the user: the page keeps the QR and recovery codes it shows.
+                    return Issue(new Step { State = "enroll", ExpiresAt = Steps.Iso(ee) }, new JsonObject { ["ee"] = ee });
+                }
+                // Linked: the push starts below. Not linked, and the QR expired or is about to: a new QR below.
+                // Either way something starts: the caller may charge it, or answer instead.
+                if (input.BeforeStart is not null && await input.BeforeStart().ConfigureAwait(false) is { } instead) return instead;
+            }
+
             // Anything else (no or foreign token, enrollment finished, new attempt): start.
             var proof = !string.IsNullOrEmpty(input.BrowserProof) && input.BrowserProof.Length <= MaxBrowserProof ? input.BrowserProof : null;
             if (proof is not null && input.SilentSignIn is not null)
@@ -785,7 +928,7 @@ public static class Guard
         catch (TouchqueConfigException e)
         {
             client.Log.Error("[Touchque] " + e.Message);
-            return Error(500, new Step { State = "blocked", Reason = "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.");
+            return Misconfigured();
         }
         // A mismatch here means Touchque holds another transaction than this request: fail closed, never a 500.
         catch (Exception e) when (e is TouchqueNetworkException or TouchqueApiException or TouchqueApprovalMismatchException)
@@ -801,6 +944,12 @@ public static class Guard
         Step = step,
         Body = new JsonObject { ["touchque"] = Json.ToNode(step), ["error"] = new JsonObject { ["code"] = code, ["message"] = message } },
     };
+
+    private static GuardResult Unauthenticated() =>
+        Error(401, new Step { State = "blocked", Reason = "unauthenticated" }, "unauthenticated", "Sign in first.");
+
+    private static GuardResult Misconfigured() =>
+        Error(500, new Step { State = "blocked", Reason = "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.");
 
     /// <summary>
     /// Asks Touchque whether this known browser may sign in without the phone. Fails
@@ -1620,11 +1769,18 @@ public static class TouchqueHttpContextExtensions
 // From Touchque.AspNetCore/RequireTouchque.cs — .RequireTouchque("ACTION") / [RequireTouchque("ACTION")]
 // ─────────────────────────────────────────────────────────────
 
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Touchque.Internal;
+using HttpJsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
+using MvcJsonOptions = Microsoft.AspNetCore.Mvc.JsonOptions;
 
 namespace Touchque.AspNetCore;
 
@@ -1669,6 +1825,20 @@ public sealed class TouchqueGuardOptions
 
     /// <summary>False: never show the first-time linking QR.</summary>
     public bool Enroll { get; set; } = true;
+
+    /// <summary>
+    /// Your app's own JSON body for refused answers (status 400 or more: 401, 403, 408, 423,
+    /// 429, 500, 503); never called for a 202 step or on approval. What it returns is written
+    /// with your app's JSON options (MVC's for <c>[RequireTouchque]</c>). When that gives a JSON
+    /// object (an anonymous object, a record, a dictionary, a <c>JsonObject</c>), it is sent with
+    /// <c>touchque</c> set to the step, so <c>@touchque/web</c> still sees the state; no token is
+    /// added. Anything else (a string, a number, an array, null) is sent as it is. Status and
+    /// headers stay the same (<c>Cache-Control: no-store</c>, <c>Retry-After</c>,
+    /// <c>X-Touchque-State</c>, <c>X-Touchque-Reason</c>). When it throws, or returns what the
+    /// serializer cannot write, the default body is sent and <c>[Touchque] errorBody failed:
+    /// &lt;message&gt;</c> is logged. It gets a copy of the step.
+    /// </summary>
+    public Func<GuardRefusal, object?>? ErrorBody { get; set; }
 }
 
 /// <summary>
@@ -1692,22 +1862,29 @@ public static class RequireTouchqueExtensions
         builder.AddEndpointFilter(async (ctx, next) =>
         {
             var guardContext = new TouchqueGuardContext(ctx.HttpContext, ctx.Arguments.ToList());
-            var result = await TouchqueGuardRunner.RunAsync(guardContext, action, options).ConfigureAwait(false);
+            var result = await TouchqueGuardRunner.RunAsync(guardContext, action, options, mvc: false).ConfigureAwait(false);
             return result is null ? await next(ctx).ConfigureAwait(false) : result;
         });
         return builder;
     }
 }
 
+/// <summary>
+/// The guard for one request. The client is built on the first guarded request and kept (a
+/// singleton); while it cannot be built (no API key or secret) the endpoint answers 500
+/// <c>misconfigured</c> (401 without a signed-in user) and never runs.
+/// </summary>
 internal static class TouchqueGuardRunner
 {
-    /// <summary>Null: approved, run the endpoint. Otherwise the answer to send.</summary>
-    public static async Task<IResult?> RunAsync(TouchqueGuardContext context, string action, TouchqueGuardOptions options)
+    /// <summary>Why guarded endpoints answer 500 is logged once per process.</summary>
+    private static int _noClientLogged;
+
+    /// <summary>Null: approved, run the endpoint. Otherwise the answer to send. <paramref name="mvc"/>: a controller action.</summary>
+    public static async Task<IResult?> RunAsync(TouchqueGuardContext context, string action, TouchqueGuardOptions options, bool mvc)
     {
         var http = context.HttpContext;
-        var client = http.RequestServices.GetRequiredService<TouchqueClient>();
         var req = http.Request;
-        var result = await Guard.RunAsync(client, new GuardInput
+        var input = new GuardInput
         {
             User = options.User is null ? http.User.TouchqueUser() : options.User(context),
             Action = action,
@@ -1723,7 +1900,9 @@ internal static class TouchqueGuardRunner
             BrowserProof = options.SilentSignIn is null ? null : req.Header(Guard.BrowserHeader),
             SilentSignIn = options.SilentSignIn,
             Context = options.Context?.Invoke(context),
-        }, http.RequestAborted).ConfigureAwait(false);
+        };
+        var client = Client(http);
+        var result = client is null ? Guard.WithoutClient(input) : await Guard.RunAsync(client, input, http.RequestAborted).ConfigureAwait(false);
         if (result.Approved is not null)
         {
             http.Items[TouchqueHttpContextExtensions.ApprovalKey] = result.Approved;
@@ -1731,7 +1910,69 @@ internal static class TouchqueGuardRunner
         }
         http.Response.Headers.CacheControl = "no-store";
         if (result.RetryAfter is { } ra) http.Response.Headers.RetryAfter = ra.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var (name, value) in result.RefusalHeaders) http.Response.Headers[name] = value;
+        return Answer(http, result, options.ErrorBody, client, mvc);
+    }
+
+    /// <summary>The registered client (built once, then kept). Null while it cannot be built for a setup error (logged once).</summary>
+    private static TouchqueClient? Client(HttpContext http)
+    {
+        try
+        {
+            return http.RequestServices.GetRequiredService<TouchqueClient>();
+        }
+        catch (TouchqueConfigException e)
+        {
+            if (Interlocked.Exchange(ref _noClientLogged, 1) == 0)
+            {
+                var o = http.RequestServices.GetService<IOptions<TouchqueOptions>>()?.Value ?? new TouchqueOptions();
+                Log(http, null).Error(o.KeysMissing()
+                    ? "[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured."
+                    : "[Touchque] " + e.Message);
+            }
+            return null;
+        }
+    }
+
+    /// <summary>The body to send: the guard's, or for a refusal (400 or more) the ErrorBody's when one is set.</summary>
+    private static IResult Answer(HttpContext http, GuardResult result, Func<GuardRefusal, object?>? errorBody, TouchqueClient? client, bool mvc)
+    {
+        var refusal = errorBody is null ? null : GuardRefusal.From(result);
+        if (refusal is not null)
+        {
+            try
+            {
+                // An object is decided by its JSON encoding with the app's options; what they cannot write falls back below.
+                var value = errorBody!(refusal);
+                var node = value is null ? null : JsonNode.Parse(JsonSerializer.SerializeToUtf8Bytes(value, value.GetType(), SerializerOptions(http, mvc)));
+                if (node is JsonObject o)
+                {
+                    // The SDK's key wins, so @touchque/web still sees the state: no other spelling of it is left.
+                    foreach (var key in o.Select(p => p.Key).Where(k => string.Equals(k, "touchque", StringComparison.OrdinalIgnoreCase)).ToList()) o.Remove(key);
+                    o["touchque"] = result.Body!["touchque"]!.DeepClone();
+                }
+                return node is null ? Results.Text("null", "application/json", Encoding.UTF8, result.Status) : Results.Json(node, statusCode: result.Status);
+            }
+            catch (Exception e)
+            {
+                Log(http, client).Error("[Touchque] errorBody failed: " + e.Message);
+            }
+        }
         return Results.Json(result.Body, statusCode: result.Status);
+    }
+
+    /// <summary>The app's JSON options: MVC's for a controller action, else the minimal APIs' ones.</summary>
+    private static JsonSerializerOptions SerializerOptions(HttpContext http, bool mvc) =>
+        (mvc ? http.RequestServices.GetService<IOptions<MvcJsonOptions>>()?.Value.JsonSerializerOptions : null)
+        ?? http.RequestServices.GetService<IOptions<HttpJsonOptions>>()?.Value.SerializerOptions
+        ?? new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+    /// <summary>The SDK's logger: the client's, or without one, the one TouchqueOptions.Logger / Debug set.</summary>
+    private static SdkLog Log(HttpContext http, TouchqueClient? client)
+    {
+        if (client is not null) return client.Log;
+        var o = http.RequestServices.GetService<IOptions<TouchqueOptions>>()?.Value;
+        return new SdkLog(o?.Logger, o?.Debug ?? false);
     }
 }
 
@@ -1754,7 +1995,7 @@ public sealed class RequireTouchqueAttribute : Attribute, IAsyncActionFilter
         var options = context.HttpContext.RequestServices.GetService<Microsoft.Extensions.Options.IOptionsMonitor<TouchqueGuardOptions>>()?.Get(Action)
             ?? new TouchqueGuardOptions();
         var guardContext = new TouchqueGuardContext(context.HttpContext, context.ActionArguments.Values.ToList());
-        var result = await TouchqueGuardRunner.RunAsync(guardContext, Action, options).ConfigureAwait(false);
+        var result = await TouchqueGuardRunner.RunAsync(guardContext, Action, options, mvc: true).ConfigureAwait(false);
         if (result is null)
         {
             await next().ConfigureAwait(false);

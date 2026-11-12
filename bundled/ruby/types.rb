@@ -17,6 +17,9 @@ module Touchque
   #
   # Thread-safe: create one and reuse it (in Rails, Touchque.client).
   class Client
+    # @api private: the ConfigError message for a missing key or secret.
+    MISSING_KEYS = "Set TQ_API_KEY and TQ_API_SECRET (or pass api_key: and api_secret:)."
+
     attr_reader :auth, :login, :webauthn, :webhook, :offline, :action_types, :actions, :risk, :recovery,
                 :assist, :agents, :identity, :mobile, :qr_pairings, :device_risk, :safe_guard
 
@@ -26,9 +29,7 @@ module Touchque
       api_key ||= ENV.fetch("TQ_API_KEY", nil)
       api_secret ||= ENV.fetch("TQ_API_SECRET", nil)
       base_url ||= ENV["TQ_API_URL"].to_s.empty? ? DEFAULT_BASE_URL : ENV.fetch("TQ_API_URL")
-      if api_key.to_s.empty? || api_secret.to_s.empty?
-        raise ConfigError, "Set TQ_API_KEY and TQ_API_SECRET (or pass api_key: and api_secret:)."
-      end
+      raise ConfigError, MISSING_KEYS if api_key.to_s.empty? || api_secret.to_s.empty?
       raise ConfigError, "api_key must start with \"tq_\". Did you accidentally swap api_key and api_secret?" unless api_key.start_with?("tq_")
 
       Util.assert_safe_url!(base_url, "base_url")
@@ -399,8 +400,7 @@ module Touchque
     # First-time linking. Never unlinks a phone: a secret is only re-issued when the
     # account is confirmed NOT linked.
     def enroll_step(client, user)
-      gen = client.auth.generate_secret(user)
-      { "state" => "enroll", "enroll" => gen.slice("qrCodeDataUrl", "recoveryCodes", "expiresAt") }
+      enroll_qr(client.auth.generate_secret(user))
     rescue APIError => e
       raise unless e.status == 409
 
@@ -411,8 +411,38 @@ module Touchque
       end
       return { "state" => "enroll", "reason" => "already_linked" } if current && (current["used"] || current["deviceId"])
 
-      reset = client.auth.reset_secret(user)
-      { "state" => "enroll", "enroll" => reset.slice("qrCodeDataUrl", "recoveryCodes", "expiresAt") }
+      enroll_qr(client.auth.reset_secret(user))
+    end
+
+    # The enroll step for a new linking QR. "expiresAt" is when the QR stops working: the
+    # API's expiresAt when it is an ISO 8601 date-time, else now + its ttlMs, else none.
+    def enroll_qr(res)
+      enroll = res.slice("qrCodeDataUrl", "recoveryCodes")
+      if iso_ms(res["expiresAt"])
+        enroll["expiresAt"] = res["expiresAt"]
+      elsif res["ttlMs"].is_a?(Numeric) && res["ttlMs"].positive?
+        enroll["expiresAt"] = iso_of(Util.now_ms + res["ttlMs"].to_i)
+      end
+      { "state" => "enroll", "enroll" => enroll }
+    end
+
+    ISO_8601 = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})\z/i
+
+    # @api private: milliseconds since the epoch of an ISO 8601 date-time with a zone
+    # ("2026-11-12T10:05:00.000Z"), or nil.
+    def iso_ms(value)
+      return nil unless value.is_a?(String) && value.match?(ISO_8601)
+
+      require "time"
+      time = Time.iso8601(value)
+      time.to_i * 1000 + time.usec / 1000
+    rescue ArgumentError
+      nil
+    end
+
+    # @api private: milliseconds since the epoch as ISO 8601 in UTC, like JavaScript's toISOString().
+    def iso_of(ms)
+      Time.at(ms / 1000, ms % 1000, :millisecond).utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ")
     end
 
     # "Why?": the case code and plain reasons of a login request's answer, for its step.
@@ -492,6 +522,9 @@ module Touchque
   #   1st request            -> 202 {"touchque" => step, "token" => ...}  show the step in your UI
   #   repeat with the token   -> 202 while waiting, then the protected action runs once
   #   refused                 -> 403 / 408 / 423 / 429 {"touchque" => {"state" => ...}}
+  #   first-time QR up        -> 202 {"touchque" => {"state" => "enroll", "expiresAt" => ...}} with no
+  #                              "enroll": keep showing the QR; a new one comes with
+  #                              "enroll" => {"qrCodeDataUrl"} once the old one expired
   # Request headers the browser sends back: X-Touchque-Token, X-Touchque-Offline: 1,
   # X-Touchque-Code (+ X-Touchque-Code-Type: totp), X-Touchque-Browser (silent sign-ins).
   module Guard
@@ -506,6 +539,22 @@ module Touchque
     STATUS = { "waiting" => 202, "enroll" => 202, "passkey_required" => 202, "offline" => 202, "approved" => 200,
                "rejected" => 403, "blocked" => 403, "expired" => 408, "frozen" => 423, "rate_limited" => 429 }.freeze
     WAITING = %w[waiting passkey_required offline].freeze
+    # A first-time QR this close to its expiry is replaced instead of kept on screen.
+    ENROLL_MARGIN_MS = 15_000
+    # The refusal message for a state when the guard set none (anything else: "The approval was refused.").
+    REFUSAL_MESSAGES = {
+      "rejected" => "The approval was rejected.",
+      "expired" => "The approval expired. Try again.",
+      "frozen" => "Too many rejected approvals. Try again later.",
+      "rate_limited" => "Too many attempts. Try again later."
+    }.freeze
+
+    @unconfigured_logged = false
+
+    class << self
+      # @api private: the adapters logged once that the client cannot be built.
+      attr_accessor :unconfigured_logged
+    end
 
     module_function
 
@@ -535,30 +584,132 @@ module Touchque
     end
 
     # True when this request only polls an approval already on its way: a valid token
-    # bound to this user/action/details, still waiting, and no offline switch or code.
+    # bound to this user/action/details, still waiting, or showing the first-time QR while
+    # it is up (more than 15 s before it expires), and no offline switch or code. Relays do
+    # not count it against the per-user push limit. Such an enroll poll can still start
+    # (the user linked, or the QR is gone): relays charge that through run's before_start.
+    # Renewing an expiring QR counts.
     def status_poll?(client, user, action, details: nil, reference_id: nil, token: nil, offline: false, code: nil)
       return false if user.to_s.empty? || token.to_s.empty? || offline || !code.to_s.empty?
 
       claims = Steps.verify_guard_token(client.api_secret, token)
-      return false unless claims && claims["rid"]
+      return false unless claims && bound?(claims, user, action, details, reference_id)
+      return claims["ee"].is_a?(Integer) && Util.now_ms < claims["ee"] - ENROLL_MARGIN_MS if claims["st"] == "enroll"
 
-      bound?(claims, user, action, details, reference_id) && WAITING.include?(claims["st"])
+      claims["rid"] ? WAITING.include?(claims["st"]) : false
+    end
+
+    # The headers for a result that is not an approval: Cache-Control: no-store,
+    # Retry-After when the step has one (423, 429) and, for status >= 400,
+    # X-Touchque-State plus X-Touchque-Reason when the step has a reason. @touchque/web
+    # rebuilds the step from them when a body has no "touchque" key; cross-origin pages
+    # need them in Access-Control-Expose-Headers.
+    def headers(result)
+      step = result[:body].is_a?(Hash) && result[:body]["touchque"].is_a?(Hash) ? result[:body]["touchque"] : {}
+      out = { "Cache-Control" => "no-store" }
+      out["Retry-After"] = step["retryAfter"].to_s if step["retryAfter"]
+      if result[:status] >= 400 && header_code?(step["state"])
+        out["X-Touchque-State"] = step["state"]
+        out["X-Touchque-Reason"] = step["reason"] if header_code?(step["reason"])
+      end
+      out
+    end
+
+    # A state or reason code that is safe as a header value.
+    def header_code?(value)
+      value.is_a?(String) && value.match?(/\A[A-Za-z0-9_.:-]{1,100}\z/)
     end
 
     def bound?(claims, user, action, details, reference_id)
       claims["u"] == user && claims["a"] == action && claims["d"] == Details.digest(details) && claims["r"] == reference_id
     end
 
+    # Touchque.client for the per-route adapters: built on the request, kept once built.
+    # nil when it cannot be built (TQ_API_KEY / TQ_API_SECRET missing, a bad key or URL),
+    # logged once per process; the adapter then answers 500 misconfigured.
+    def default_client
+      Touchque.client
+    rescue ConfigError => e
+      unless Guard.unconfigured_logged
+        Guard.unconfigured_logged = true
+        line = if e.message.end_with?(Client::MISSING_KEYS)
+                 "[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured."
+               else
+                 "[Touchque] #{e.message}"
+               end
+        Touchque.log :error, line
+      end
+      nil
+    end
+
+    # The 401 for a request without a signed-in user.
+    def unauthenticated
+      error(401, { "state" => "blocked", "reason" => "unauthenticated" }, "unauthenticated", "Sign in first.")
+    end
+
+    # The 500 for a setup error: missing keys, an undefined action type.
+    def misconfigured
+      error(500, { "state" => "blocked", "reason" => "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.")
+    end
+
+    # What an error_body callable gets for a result with status >= 400:
+    # { status:, code:, message:, touchque: }. code: the error's code, else the step's
+    # reason, else its state; message: the error's message, else one for the state ("The
+    # approval was rejected." ...); touchque: a copy of the step as it would be sent.
+    def refusal(result)
+      body = Util.deep_copy(result[:body]) # the callable may change what it gets, never the answer
+      step = body["touchque"] || {}
+      error = body["error"] || {}
+      { status: result[:status], code: error["code"] || step["reason"] || step["state"],
+        message: error["message"] || REFUSAL_MESSAGES.fetch(step["state"], "The approval was refused."), touchque: step }
+    end
+
+    # Your own error shape for a result with status >= 400, as the JSON text to send: what
+    # +callable+ returns for refusal(result). What it encodes to decides (a Struct or Data as
+    # its Hash, to_hash, an as_json Hash, else to_json): a JSON object gets "touchque" set
+    # to the step, replacing yours, so @touchque/web still sees the state (no token is
+    # added); anything else is sent as it is. When the callable raises, or its result cannot
+    # be encoded, this logs "[Touchque] errorBody failed: ..." and returns the default body.
+    def error_body(result, callable)
+      json = jsonable(callable.call(refusal(result))).to_json
+      return json unless json.start_with?("{")
+
+      JSON.parse(json).merge("touchque" => result[:body]["touchque"]).to_json
+    rescue StandardError => e
+      Touchque.log :error, "[Touchque] errorBody failed: #{e.message}"
+      result[:body].to_json
+    end
+
+    # An error_body result in the form it is encoded in: a Struct or Data as its Hash, an
+    # object with to_hash as that, one whose as_json is a Hash as that; anything else as it is.
+    def jsonable(value)
+      case value
+      when Hash, Array, String, Numeric, Symbol, true, false, nil then value
+      when Struct then value.to_h
+      else
+        return value.to_h if defined?(::Data) && value.is_a?(::Data)
+        return value.to_hash if value.respond_to?(:to_hash)
+
+        json = value.respond_to?(:as_json) ? value.as_json : nil
+        json.is_a?(Hash) ? json : value
+      end
+    end
+
     # Runs one step of the guard: {status: 200, approved: approval} (run your protected
-    # action once) or {status:, body: {"touchque" => step, "token" => ...}} to send back.
+    # action once) or {status:, body: {"touchque" => step, "token" => ...}} to send back
+    # with headers(result).
     # Silent sign-ins: with +silent_sign_in+ on, a new attempt that carries a browser
     # proof first asks Touchque (risk.check); only an answer of exactly prompt: false
     # approves at once with no push. Otherwise, and on any error, the usual push starts.
+    # +before_start+ (for rate limiters): called at most once, only for a poll with a
+    # first-time QR token, right before it would start instead of keeping the QR (the user
+    # linked: the silent check or the push; the QR expired, is about to, or is gone: a new
+    # QR). Return nil or false to go on, or a result ({status:, body:}) to answer instead;
+    # anything else fails closed (503 unavailable), so nothing starts. A relay charges the
+    # user's budget there, since status_poll? exempted that poll.
     def run(client, user, action, details: nil, reference_id: nil, ip: nil, user_agent: nil, token: nil, offline: false,
-            code: nil, code_type: nil, enroll: true, browser_proof: nil, silent_sign_in: false, context: nil)
-      if user.to_s.empty?
-        return error(401, { "state" => "blocked", "reason" => "unauthenticated" }, "unauthenticated", "Sign in first.")
-      end
+            code: nil, code_type: nil, enroll: true, browser_proof: nil, silent_sign_in: false, context: nil, before_start: nil)
+      return unauthenticated if user.to_s.empty?
 
       norm = Details.normalize(details)
       norm = nil if norm.empty?
@@ -569,6 +720,11 @@ module Touchque
         claims = base.merge("st" => step["state"], "rid" => step["requestId"], "n" => step["number"],
                             "oc" => step.dig("offline", "challengeId"), "exp" => Util.now_ms + TOKEN_TTL_MS)
         claims["cc"] = step["caseCode"] if step["caseCode"]
+        # A first-time QR: its token carries when the QR expires (ee), so polls keep it on screen.
+        if step["state"] == "enroll" && step["enroll"].is_a?(Hash) && !step["enroll"]["qrCodeDataUrl"].to_s.empty?
+          ee = Steps.iso_ms(step["enroll"]["expiresAt"])
+          claims["ee"] = ee if ee
+        end
         claims.merge!(extra)
         { status: STATUS.fetch(step["state"]), body: { "touchque" => step.compact, "token" => Steps.sign_guard_token(secret, claims) } }
       end
@@ -655,6 +811,26 @@ module Touchque
           return issue.call({ "state" => now["state"], "requestId" => rid })
         end
 
+        # The first-time QR is up: while the phone is not linked and the QR lives, keep it on screen
+        # (no new secret, no push); the page keeps the QR and recovery codes it shows. Linked,
+        # expiring or gone: start.
+        if bound && st == "enroll" && (ee = bound["ee"]).is_a?(Integer)
+          if link_state(client, user) == false && Util.now_ms < ee - ENROLL_MARGIN_MS
+            return issue.call({ "state" => "enroll", "expiresAt" => Steps.iso_of(ee) }, { "ee" => ee })
+          end
+
+          # This poll starts after all (a push, or a new QR): the caller may charge or refuse it first.
+          # Anything truthy it returns is the answer; what is not a result fails closed (503).
+          instead = before_start&.call
+          if instead
+            unless instead.is_a?(Hash) && instead[:status].is_a?(Integer) && instead[:body].is_a?(Hash)
+              raise ArgumentError, "before_start must return nil or false to go on, or a result { status:, body: } to answer"
+            end
+
+            return instead
+          end
+        end
+
         # Anything else (no or foreign token, enrollment finished, new attempt): start.
         proof = browser_proof.is_a?(String) && !browser_proof.empty? && browser_proof.length <= MAX_BROWSER_PROOF ? browser_proof : nil
         if proof && silent_on?(silent_sign_in)
@@ -665,7 +841,7 @@ module Touchque
                                                      enroll: enroll, browser_proof: proof, context: context))
       rescue ConfigError => e
         Touchque.log :error, "[Touchque] #{e.message}"
-        error(500, { "state" => "blocked", "reason" => "misconfigured" }, "misconfigured", "Two-factor approval is not configured correctly.")
+        misconfigured
       rescue StandardError => e
         # Anything else (Touchque unreachable, an approval for another transaction, a bug)
         # fails closed with the contract's 503, never a bare 500.
@@ -676,6 +852,17 @@ module Touchque
 
     def error(status, step, code, message)
       { status: status, body: { "touchque" => step, "error" => { "code" => code, "message" => message } } }
+    end
+
+    # Whether a phone is linked to the user (used, or a deviceId); nil when Touchque does
+    # not know the user (404: the QR is gone). Other errors raise.
+    def link_state(client, user)
+      current = client.auth.get_user(user)
+      current["used"] || current["deviceId"] ? true : false
+    rescue APIError => e
+      raise unless e.status == 404
+
+      nil
     end
 
     # Fails closed: only an answer of exactly prompt: false approves.
@@ -1278,17 +1465,38 @@ module Touchque
     # 423 / 429 with Retry-After. Options: user: (default: current_user's email, id or
     # username; for your login action, whoever just passed your password check), details:,
     # reference_id:, context: (procs run in the controller, or method names),
-    # silent_sign_in: (true or { max_age_seconds: }), enroll:, and before_action's
-    # only: / except: / if: / unless:.
+    # silent_sign_in: (true or { max_age_seconds: }), enroll:, error_body:, and
+    # before_action's only: / except: / if: / unless:.
+    #
+    # Every answer of 400 and above carries X-Touchque-State (and X-Touchque-Reason when the
+    # step has a reason).
+    #
+    # error_body: your own error shape for every answer of 400 and above (never a 202 step,
+    # never an approval): a proc run in the controller, or a method name, given the refusal
+    # ({ status:, code:, message:, touchque: }, with a copy of the step). What it encodes to
+    # decides: a JSON object (a Hash, Struct, Data...) is sent with "touchque" set to the
+    # step; anything else as it is. Status and headers stay; one that raises, or a result
+    # that cannot be encoded, is logged and the default body sent.
+    #
+    #   require_touchque "SEND_MONEY", error_body: ->(r) { { message: r[:message], code: r[:code] } }
+    #
+    # Touchque.client is built on the first request: without TQ_API_KEY / TQ_API_SECRET the
+    # action answers 500 misconfigured (401 without a signed-in user) and never runs.
     module Guard
       def self.included(base)
         base.extend(ClassMethods)
       end
 
       module ClassMethods
-        def require_touchque(action, user: nil, details: nil, reference_id: nil, context: nil, silent_sign_in: false, enroll: true, **filter_options)
+        def require_touchque(action, user: nil, details: nil, reference_id: nil, context: nil, silent_sign_in: false, enroll: true,
+                             error_body: nil, **filter_options)
           Touchque::Guard.assert_silent_sign_in!(silent_sign_in, "require_touchque")
-          options = { user: user, details: details, reference_id: reference_id, context: context, silent_sign_in: silent_sign_in, enroll: enroll }
+          unless error_body.nil? || error_body.is_a?(Symbol) || error_body.respond_to?(:call)
+            raise ArgumentError, "require_touchque: error_body must be a proc, a method name or respond to call."
+          end
+
+          options = { user: user, details: details, reference_id: reference_id, context: context, silent_sign_in: silent_sign_in,
+                      enroll: enroll, error_body: error_body }
           before_action(**filter_options) { touchque_guard!(action, options) }
         end
       end
@@ -1301,25 +1509,44 @@ module Touchque
       private
 
       def touchque_guard!(action, options)
-        header = ->(name) { request.headers[name] }
-        input = Touchque::Guard.input_from_headers(header)
-        silent = options[:silent_sign_in]
-        result = Touchque::Guard.run(
-          Touchque.client, touchque_value(options[:user]) || touchque_default_user, action,
-          details: touchque_value(options[:details]), reference_id: touchque_value(options[:reference_id]),
-          ip: request.remote_ip, user_agent: request.user_agent, token: input[:token], offline: input[:offline],
-          code: input[:code], code_type: input[:code_type], enroll: options[:enroll],
-          browser_proof: Touchque::Guard.silent_on?(silent) ? header.call(Touchque::Guard::BROWSER_HEADER) : nil,
-          silent_sign_in: silent, context: touchque_value(options[:context])
-        )
+        user = touchque_value(options[:user]) || touchque_default_user
+        client = Touchque::Guard.default_client
+        result = if client.nil?
+                   # No client (TQ_API_KEY / TQ_API_SECRET missing): an answer, never an exception.
+                   user.to_s.empty? ? Touchque::Guard.unauthenticated : Touchque::Guard.misconfigured
+                 else
+                   header = ->(name) { request.headers[name] }
+                   input = Touchque::Guard.input_from_headers(header)
+                   silent = options[:silent_sign_in]
+                   Touchque::Guard.run(
+                     client, user, action,
+                     details: touchque_value(options[:details]), reference_id: touchque_value(options[:reference_id]),
+                     ip: request.remote_ip, user_agent: request.user_agent, token: input[:token], offline: input[:offline],
+                     code: input[:code], code_type: input[:code_type], enroll: options[:enroll],
+                     browser_proof: Touchque::Guard.silent_on?(silent) ? header.call(Touchque::Guard::BROWSER_HEADER) : nil,
+                     silent_sign_in: silent, context: touchque_value(options[:context])
+                   )
+                 end
         if result[:approved]
           request.env["touchque.approval"] = result[:approved]
           return
         end
-        response.headers["Cache-Control"] = "no-store"
-        retry_after = result[:body].dig("touchque", "retryAfter")
-        response.headers["Retry-After"] = retry_after.to_s if retry_after
-        render json: result[:body], status: result[:status]
+        Touchque::Guard.headers(result).each { |name, value| response.headers[name] = value }
+        render json: touchque_body(result, options[:error_body]), status: result[:status]
+      end
+
+      # The guard's body, or error_body's (JSON text; the default body when it fails) for an
+      # answer of 400 and above.
+      def touchque_body(result, error_body)
+        return result[:body] if error_body.nil? || result[:status] < 400
+
+        Touchque::Guard.error_body(result, lambda { |refusal|
+          case error_body
+          when Proc then instance_exec(refusal, &error_body)
+          when Symbol then send(error_body, refusal)
+          else error_body.call(refusal)
+          end
+        })
       end
 
       def touchque_value(option)

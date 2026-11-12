@@ -1,5 +1,31 @@
 # Changelog
 
+## 4.4.0 (2026-11-12)
+
+SDK 5.1 (Node, Python, Go, Ruby on their registries; @touchque/web 2.1.0). Two independent reviews checked every
+claim the integration material makes against the SDK sources, each finding challenged by a second agent; all 56
+confirmed findings are fixed here.
+
+- Bundles from sdks 8be2753 for Node, Python, Go, Ruby, .NET and @touchque/web; PHP and Java stay on their published
+  5.0.0 (14ccd7d) until 5.1 is on Packagist and Maven Central. pick_sdk: 5.1.0 (Python with a >=5.1.0 floor, Ruby
+  ~> 5.1, Go's go 1.26 note), web 2.1.0, Java needs Java 17+ / Spring Boot 3.
+- generate_integration, per SDK (remote/sdks.js guard): the adapter path (never throws without keys: 500
+  misconfigured, 401 without a user; the error-shape option: errorBody, error_body=, RequireOptions.ErrorBody,
+  error_body:, ErrorBody) and, separately, the guard inside the handler, where those protections do not apply: how
+  to get the client per request, how to answer without keys, and that only refusals (>= 400) are reshaped while a
+  202 goes out unchanged with its token. Tests: FakeTouchque for Python, a real client with a tq_ key against a
+  local stub elsewhere. PHP and Java 5.0: what their published guard does without keys, the in-handler call
+  (Guard::run argument order; ObjectProvider in Spring), the real refusal body shapes and headers.
+- Plain-page protocol: the latest answer's token; the waiting step's expiresAt only on the first answer; the
+  first-time QR's expiry in touchque.enroll.expiresAt, renewed about 15 s before it with new recovery codes
+  (5.1); already_linked keeps polling; passkey_required, offline and an enroll answer without a QR stop with a
+  message. @touchque/web with a 5.0 server: cancel the loop on the first QR (AbortError), also for React.
+- README material: sections in priority order with the guard parts first; a section too long as a whole gives its
+  lead and the "### " parts that fit; what is left is named for get_touchque_docs, which now also finds "### "
+  parts; Framework adapters first when the project's framework is not the quick start's; budget 14,000 / 12,000.
+- check_integration: warns about @touchque/web below 2.1.0 next to a 5.1 SDK, names the error-shape option for
+  two error shapes, and the test hint per SDK; these use the same default language as the other checks.
+
 ## 4.3.2 (2026-11-12)
 
 - get_sdk_types (Node) now answers runGuard and its types (GuardInput, GuardResult), requireTouchque and

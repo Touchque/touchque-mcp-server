@@ -43,7 +43,7 @@ const CONTRACT = `Integration contract (the person's code comes first):
 8. Install with the project's own tools (its package manager, its venv's python -m pip); never write outside the project; say if the install raises a language version (go directive, engines, python_requires).
 9. Every existing test still passes, unchanged. Add tests for the new behaviour through the SDK's public API (inject a client; no patching of internals), restoring any environment you change.
 10. Report: tests before and after, files changed and why, every behaviour change, every workspace change still waiting for the person's yes.
-Then touchque_check_integration with the code, feature, diff and test results.`;
+Then touchque_check_integration with the code, feature, action, the diff (git add -N . && git diff, so new files are in it) and the test results.`;
 const INTEGRATION_NAMES = Object.keys(INTEGRATIONS);
 const LANGS = Object.keys(SDKS);
 
@@ -116,7 +116,7 @@ const TOOLS = [
   {
     name: "touchque_check_integration",
     description: "Checks an integration: against the live workspace (feature on, key, action types, redirect URIs, webhook), the SDK's rules (with framework), and, with diff and test results, whether the person's existing code and tests were kept.",
-    inputSchema: { type: "object", properties: { code: STR, language: { type: "string", enum: LANGS }, framework: STR, feature: { type: "string", enum: INTEGRATION_NAMES }, diff: { type: "string", description: "git diff of the change (unified)" }, testsBefore: { type: "string", description: "the project's test result before, e.g. '5 passed'" }, testsAfter: { type: "string", description: "after, e.g. '7 passed'" }, redirectUris: { type: "array", items: STR }, clientId: STR } },
+    inputSchema: { type: "object", properties: { code: STR, language: { type: "string", enum: LANGS }, framework: STR, feature: { type: "string", enum: INTEGRATION_NAMES }, diff: { type: "string", description: "git diff of the change (unified)" }, testsBefore: { type: "string", description: "the project's test result before, e.g. '5 passed'" }, testsAfter: { type: "string", description: "after, e.g. '7 passed'" }, action: { type: "string", description: "The action type the code uses, e.g. SEND_MONEY" }, redirectUris: { type: "array", items: STR }, clientId: STR } },
     annotations: { readOnlyHint: true, title: "Check integration" },
   },
   {
@@ -419,6 +419,8 @@ function actionTypesIn(code) {
     /requireTouch[Qq]ue\(\s*['"`]([A-Z0-9_]{2,64})['"`]/g, /require_touchque\(?\s*['"]([A-Z0-9_]{2,64})['"]/g, /RequireTouch[Qq]ue\(\s*"([A-Z0-9_]{2,64})"/g,
     /touchque:([A-Z0-9_]{2,64})/g, /touchque\.Require\([^,]*,\s*"([A-Z0-9_]{2,64})"/g, /touchque\.Require\(\s*"([A-Z0-9_]{2,64})"/g,
     /\btype\s*[:=]\s*['"`]([A-Z][A-Z0-9_]{1,63})['"`]/g, /actionType\s*[:=(]\s*['"`]([A-Z][A-Z0-9_]{1,63})['"`]/g,
+    // A guard run inside a handler, and a constant that names the action: runGuard(tq, 'X'), run_guard(c, "X"), const ACTION = 'X', WithdrawAction = "X".
+    /\brun_?[Gg]uard\s*\([^,]*,\s*['"`]([A-Z][A-Z0-9_]{1,63})['"`]/g, /\b\w*(?:ACTION|[Aa]ction)\w*\s*:?=\s*['"`]([A-Z][A-Z0-9_]{2,63})['"`]/g,
   ];
   for (const re of res) for (const m of code.matchAll(re)) found.add(m[1]);
   return [...found];
@@ -437,7 +439,7 @@ async function checkIntegration(ws, args, core) {
   const feature = args.feature || null;
 
   const activeKeys = (setup.apiKeys.keys || []).filter((k) => k.status === "ACTIVE");
-  if (setup.apiKeys.error) info(`API keys could not be read: ${setup.apiKeys.error.message}`);
+  if (feature === "touchque_login") { /* Touchque Login does not use the 2FA API key */ } else if (setup.apiKeys.error) info(`API keys could not be read: ${setup.apiKeys.error.message}`);
   else mark(activeKeys.length > 0, activeKeys.length ? `Active API key: ${activeKeys.map((k) => `${k.keyId}${k.creatorStillMember === false ? " (its creator left: refused)" : ""}${k.requiresRotation ? " (needs rotation)" : ""}`).join(", ")}` : "No active API key in this organization");
 
   const usesLogin = /touchque[\s_-]?login|\.login\.touchque\.com|Touch[Qq]ueLogin|ciam|openid|oidc|authorization_code/i.test(code) || (args.redirectUris || []).length > 0 || args.clientId;
@@ -458,7 +460,10 @@ async function checkIntegration(ws, args, core) {
     }
   }
 
-  const types = code ? actionTypesIn(code) : [];
+  const addedText = typeof args.diff === "string" ? args.diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n") : "";
+  const guarded = /requireTouch[Qq]ue|runGuard|require_touchque|run_guard|RequireTouch[Qq]ue|touchque\.Require|touchque:/.test(`${code}\n${addedText}`);
+  const types = [...new Set([...(args.action ? [String(args.action).trim()] : []), ...actionTypesIn(`${code}\n${addedText}`)])];
+  if (guarded && !types.length && !args.action) info("No action type found in the code: pass action so it can be checked against the workspace");
   if (types.length && !Array.isArray(setup.actionTypes)) info("Action types could not be read just now.");
   if (types.length && Array.isArray(setup.actionTypes)) {
     const known = new Map(setup.actionTypes.map((t) => [t.type, t]));
@@ -477,9 +482,10 @@ async function checkIntegration(ws, args, core) {
   }
   if (/passkey|webauthn/i.test(code) && !setup.passkey.error) info(setup.passkey.rpId ? `Passkey domain: ${setup.passkey.rpId}` : "No passkey domain of your own (passkeys use Touchque's domain; set yours in the dashboard → Developers → App user policy)");
   // Where the approved user and the details come from.
-  if (/requireTouch[Qq]ue|require_touchque|RequireTouch[Qq]ue|touchque\.Require|touchque:/.test(code)) {
-    if (/req\.headers\[|req\.get\(\s*['"]x-|req\.header\(|r\.Header\.Get\(|request\.headers(\.get)?\[?\(?\s*['"]x-/i.test(code)) warn("The code reads a request header near the guard: the approved user must come from the server-side session, never from a header");
-    if (/details[\s\S]{0,160}(req\.body|request\.(get_)?json|r\.Body|r\.FormValue|\$request->input)/.test(code)) warn("details are built from the request body: build them from values the route already validated (the guard can run before your own checks)");
+  const scan = addedText || code;
+  if (/requireTouch[Qq]ue|runGuard|require_touchque|run_guard|RequireTouch[Qq]ue|touchque\.Require|touchque:/.test(scan)) {
+    if (/req\.headers\[|req\.get\(\s*['"]x-|req\.header\(|r\.Header\.Get\(|request\.headers(\.get)?\[?\(?\s*['"]x-/i.test(scan)) warn("The code reads a request header near the guard: the approved user must come from the server-side session, never from a header");
+    if (/details[\s\S]{0,160}(req\.body|request\.(get_)?json|r\.Body|r\.FormValue|\$request->input)/.test(scan)) warn("details are built from the request body: build them from values the route already validated (the guard can run before your own checks)");
   }
 
   // Did the change keep the person's code and tests?
@@ -510,11 +516,13 @@ async function checkIntegration(ws, args, core) {
     const removed = existing.reduce((n, f) => n + f.del.length, 0);
     const wsOnly = existing.reduce((n, f) => n + f.del.filter((d) => f.add.some((x) => x !== d && x.replace(/\s+/g, "") === d.replace(/\s+/g, ""))).length, 0);
     info(`Change: ${files.length} file(s), ${files.filter((f) => f.isNew).length} new; ${removed} line(s) removed or changed in existing files.`);
+    if (!files.some((f) => f.isNew) && /require\(\s*['"]\.{1,2}\/|from\s+['"]\.{1,2}\/|from\s+\.\w|import\s+["'][^"']*\/internal\//.test(addedText)) info("The diff has no new files but the change imports local modules: new files may be missing from it (git add -N . && git diff)");
     if (wsOnly) warn(`${wsOnly} line(s) changed only in whitespace or formatting: revert them (keep the project's formatting)`);
     const added = files.flatMap((f) => f.add.map((l) => ({ f: f.file, l })));
     const removedAll = files.flatMap((f) => f.del.map((l) => ({ f: f.file, l })));
     if (added.some((x) => /^go\s+\d/.test(x.l) && /go\.mod$/.test(x.f)) || added.some((x) => /"engines"|python_requires|requires-python/.test(x.l))) warn("The change raises a language/toolchain version (go directive, engines, python_requires): tell the person");
-    if (added.some((x) => /process\.exit\(|log\.Fatal|sys\.exit\(|raise SystemExit|os\.Exit\(/.test(x.l) && !/test/i.test(x.f))) warn("New code stops the app (exit/Fatal): with keys missing, the app should still start and its existing routes work");
+    const EXIT = /process\.exit\(|log\.Fatal|sys\.exit\(|raise SystemExit|os\.Exit\(/;
+    if (added.some((x) => EXIT.test(x.l) && !/test/i.test(x.f) && !removedAll.some((r) => r.f === x.f && EXIT.test(r.l)))) warn("New code stops the app (exit/Fatal): with keys missing, the app should still start and its existing routes work");
     if (added.some((x) => /delete process\.env|os\.environ\.pop|os\.Unsetenv|unset\(\$_ENV/.test(x.l)) && !added.some((x) => /process\.env\.[A-Z_]+\s*=|monkeypatch\.(set|del)env|t\.Setenv|finally/.test(x.l))) warn("A test removes environment variables without restoring them");
     if (added.some((x) => /monkeypatch\.setattr\([^)]*touchque|jest\.mock\(['"]@touchque|sinon\.stub\([^)]*touchque/i.test(x.l))) warn("A test patches Touchque internals: inject a client through the SDK's public options instead");
     if (added.some((x) => /error:\s*\{\s*code/.test(x.l)) && removedAll.concat(added).some((x) => /error:\s*['"`]/.test(x.l))) warn("Two error shapes on one API now ({ error: { code } } next to the project's { error: '...' }): map the guard's errors to the project's shape");
@@ -688,8 +696,9 @@ async function call(name, args, ws, core, config) {
     };
     const ui = ["phone_approval", "passkeys", "offline"].includes(args.feature);
     const fe = args.frontend || (/react|next/i.test(String(args.framework || "")) ? "react" : null);
-    let frontend = ui && fe === "plain" ? "\nFrontend (plain pages, no bundler): the guarded route answers 202 { touchque, token } until the phone approves; show touchque.number (or the first-time QR), then send the same request again with the header X-Touchque-Token: <token> every 2 s, and stop when the answer is not 202 or the step's expiresAt has passed. Or load @touchque/web through the project's bundler if it has one." : ui ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web)." : "";
-    if (ui && fe && fe !== "none" && fe !== "plain") {
+    const stepUp = ui && !(args.feature === "passkeys" && args.mode !== "step_up");
+    let frontend = stepUp && fe === "plain" ? "\nFrontend (plain pages, no bundler): the guarded route answers 202 { touchque, token } until the phone approves. State waiting: show touchque.number, then send the same request again with the header X-Touchque-Token: <token> every 2 s; keep the first step's expiresAt and stop when it has passed or the answer is not 202. State enroll (the first time): show the QR and the recovery codes ONCE, and retry only after the person says they scanned it (a retry before that starts a new enrollment). Or load @touchque/web through the project's bundler if it has one." : stepUp ? "\nFrontend: the guarded route answers 202 with a step until the phone approves; show its number (or the first-time QR) and retry with the step's token. @touchque/web (npm install @touchque/web) does this loop; @touchque/react adds components (npm install @touchque/react @touchque/web)." : "";
+    if (stepUp && fe && fe !== "none" && fe !== "plain") {
       const lang = fe === "react" ? "react" : "web";
       const part = readmeSections(readme(lang)).filter((x) => /^(install|quick start|drop-in)/i.test(x.title)).map((x) => x.text).join("\n\n");
       if (part) frontend += `\n\n## From the ${packageOf(lang)} README\n${cap(part, 3500)}`;

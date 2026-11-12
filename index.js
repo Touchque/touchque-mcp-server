@@ -136,7 +136,8 @@ const VALIDATION_PATTERNS = {
   node: {
     guardName: "requireTouchque/withTouchque/touchqueRouter",
     import: /require\s*\(\s*['"]@touchque\/node['"]\s*\)|from\s+['"]@touchque\/node['"]/,
-    stepUpGuard: /requireTouch[Qq]ue\s*\(|withTouch[Qq]ue\s*\(|touchqueRouter\s*\(/,
+    // runGuard: the same guard run inside a handler, after the handler's own checks.
+    stepUpGuard: /requireTouch[Qq]ue\s*\(|withTouch[Qq]ue\s*\(|touchqueRouter\s*\(|\brunGuard\s*\(/,
     legacyGuard: /tq\.protect\(|touchqueMiddleware|tqMiddleware|tq\.middleware/,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.actionTypes.define(...)" },
@@ -161,12 +162,12 @@ const VALIDATION_PATTERNS = {
     // The relay adapters (Flask blueprint, FastAPI router, Django view/urls)
     // and the framework-agnostic RelayHandler run the same guard for POST
     // /login as the decorators do — same as touchqueRouter on Node.
-    stepUpGuard: /@require_touchque\s*\(|RequireTouch[Qq]ue\s*\(|touchque_relay_(?:blueprint|router|view|urls)\s*\(|\bRelayHandler\s*\(/,
+    stepUpGuard: /@?require_touchque\s*\(|RequireTouch[Qq]ue\s*\(|touchque_relay_(?:blueprint|router|view|urls)\s*\(|\bRelayHandler\s*\(|\brun_guard\s*\(/,
     legacyGuard: null,
     syncVerify: /\.login\.verify\s*\(/,
     oldActionTypes: { re: /\.actions\s*\.\s*define\s*\(/, now: "tq.action_types.define(...)" },
     hardcodedSecret: /api_secret\s*=\s*['"][a-zA-Z0-9]{10,}['"]|api_key\s*=\s*['"]tq_[a-zA-Z0-9]{10,}['"]/,
-    envVar: /os\.environ|os\.getenv\s*\(|\bTouch[Qq]ue\s*\(\s*\)|@require_touchque\s*\(|RequireTouch[Qq]ue\s*\(/,
+    envVar: /os\.environ|os\.getenv\s*\(|\bTouch[Qq]ue\s*\(\s*\)|@?require_touchque\s*\(|RequireTouch[Qq]ue\s*\(|get_default_client\s*\(|\brun_guard\s*\(/,
     errorHandling: /try\s*:|except\b/,
     offlineChallenge: /\.offline\s*\.\s*challenge\s*\(/,
     offlineLinked: /\brequest_id\b/,

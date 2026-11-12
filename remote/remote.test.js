@@ -372,6 +372,7 @@ test("check_integration reads the diff and the test results for the person's cod
 +router.post('/',  async (req, res) => {
 +  if (!process.env.TQ_API_KEY) process.exit(1);
 +  res.status(500).json({ error: { code: 'misconfigured' } });
++router.post('/', requireTouchque('SEND_MONEY', { details: (req) => ({ amount: req.body.amount }), user: (req) => req.headers['x-user'] }));
 -  return res.status(400).json({ error: 'invalid_transfer' });
 +  return res.status(400).json({ error: 'invalid_transfer' });
 diff --git a/go.mod b/go.mod
@@ -402,4 +403,23 @@ test("the checklist accepts the SDK's default client reading the environment (No
   const run = async (code, framework, language) => (await handlers.callTool({ params: { name: "validate_integration", arguments: { code, framework, language } } })).content[0].text;
   assert.match(await run("const { requireTouchque } = require('@touchque/node');\nrouter.post('/', requireTouchque('SEND_MONEY', { user: (req) => req.session.user.id }), h);", "express"), /✅ Environment variables used for secrets/);
   assert.match(await run('import "github.com/Touchque/touchque-go/v5/touchque"\ntq, err := touchque.New()\nif err != nil {}\nmux.Handle("/w", touchque.Require(tq, "WITHDRAW", h, touchque.RequireOptions{User: u}))', "net-http", "go"), /✅ Environment variables used for secrets/);
+});
+
+test("4.3.1: the checks accept what the contract leads to, and find the action type in the diff", async () => {
+  const { handlers } = require("../index.js");
+  const run = async (code, framework, language) => (await handlers.callTool({ params: { name: "validate_integration", arguments: { code, framework, language } } })).content[0].text;
+  assert.match(await run("const { runGuard } = require('@touchque/node');\nasync function askPhone(req) { try { return await runGuard(tq, 'SEND_MONEY', input); } catch (e) { return null; } }", "express"), /✅ Route protection applied/);
+  const py = await run("from touchque import get_default_client, run_guard\ndef approval():\n    try:\n        return run_guard(get_default_client(), 'DELETE_ACCOUNT', {})\n    except Exception:\n        return None", "flask", "python");
+  assert.match(py, /✅ Route protection applied/);
+  assert.match(py, /✅ Environment variables used for secrets/);
+  const ws = fakeWorkspace({ actionTypes: [] });
+  const diff = "diff --git a/src/approval.js b/src/approval.js\nnew file mode 100644\n--- /dev/null\n+++ b/src/approval.js\n+const r = await runGuard(tq, ACTION, input);\n+const ACTION = 'SEND_MONEY';\ndiff --git a/cmd/main.go b/cmd/main.go\n--- a/cmd/main.go\n+++ b/cmd/main.go\n-\tlog.Fatal(http.ListenAndServe(addr, h))\n+\tlog.Fatal(http.ListenAndServe(addr, wallet.Handler(store, user, opts)))\n";
+  const r = (await callTool("touchque_check_integration", { code: "", feature: "phone_approval", diff, testsBefore: "5 passed", testsAfter: "7 passed" }, ws, {}, loadConfig({}))).content[0].text;
+  assert.match(r, /❌ Action type SEND_MONEY does not exist yet/);
+  assert.doesNotMatch(r, /New code stops the app/);
+  assert.match(r, /✅ Project tests: 5 passed before, 7 after/);
+  const none = (await callTool("touchque_check_integration", { code: "router.post('/', requireTouchque(ACTION))", feature: "phone_approval" }, ws, {}, loadConfig({}))).content[0].text;
+  assert.match(none, /No action type found in the code: pass action/);
+  const login = (await callTool("touchque_check_integration", { code: "new HostedLogin({})", feature: "touchque_login" }, ws, {}, loadConfig({}))).content[0].text;
+  assert.doesNotMatch(login, /API key/);
 });

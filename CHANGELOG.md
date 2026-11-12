@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.3.1 (2026-11-12)
+
+Second measured round of the six integrations (4.3.0): existing tests kept 6/6, the OFF feature refused by
+the tool, guards after the route's own checks 3/3, apps start without keys 5/5, and every agent ran
+check_integration with the diff and the test results. Its findings:
+
+- The checklist accepts what the contract leads to: runGuard (Node), run_guard and get_default_client
+  (Python), require_touchque without the decorator.
+- The live action-type check also reads the diff's added lines, constants (const ACTION = 'X',
+  WithdrawAction = "X") and runGuard calls, takes action, and says when it found none.
+- With a diff, the header and request-body warnings look at the added lines only; a changed exit line is
+  not reported as new; a diff without new files that imports local modules gets a hint
+  (git add -N . && git diff).
+- Plain-page frontend: keep the first step's expiry; in the enroll state show the QR and recovery codes
+  once and retry only after the person scanned it; not given for passkey sign-in.
+- Touchque Login checks leave out the 2FA API key.
+
 ## 4.3.0 (2026-11-12)
 
 Integrations keep the person's code (owner: "the user's code quality must not be broken"). Measured first:

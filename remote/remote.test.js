@@ -435,6 +435,10 @@ test("get_sdk_types answers runGuard, requireTouchque's options and HostedLogin,
   assert.match(hosted, /handleCallback\(/);
   assert.doesNotMatch(hosted, /private|loadKeys/);
   for (const n of ["HostedLogin", "HostedLoginError", "TokenSet", "GuardResult", "TouchqueMiddlewareOptions"]) assert.ok(typeNames("node").includes(n), n);
+  const guard = typeBlock("php", "Guard");
+  assert.match(guard, /public static function run\(/);
+  assert.match(guard, /public static function errorBody\(array \$result, callable \$errorBody\);/);
+  assert.doesNotMatch(guard, /private (static )?function/);
 });
 
 test("5.1: the README material puts the guard parts first, never repeats a part, and names what did not fit", () => {
@@ -469,11 +473,28 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   assert.match(node, /getDefaultClient\(\) in a try\/catch/);
   assert.doesNotMatch(node, /every retry during a first-time QR makes a new QR/);
   assert.match(await gen("go", "plain"), /RequireOptions\.ErrorBody/);
+  // An SDK whose registry still has the older guard (none today): the 5.0 advice.
+  const saved = { guard: SDKS.java.guard, published: SDKS.java.published };
+  Object.assign(SDKS.java, { published: "5.0.0", guard: { v51: false, note: "OLD NOTE.", tests: "old tests" } });
+  try {
+    const java = await gen("java", "plain");
+    assert.match(java, /published guard \(5\.0\.0\) has no error-shape option/);
+    assert.match(java, /OLD NOTE\./);
+    assert.match(java, /retry only after the person says they scanned it/);
+    assert.match(java, /\{ touchque, token \} for 403\/408\/423\/429/);
+    assert.match(await gen("java", "web"), /every retry during a first-time QR makes a new QR/);
+  } finally { Object.assign(SDKS.java, saved); }
+  const java51 = await gen("java", "plain");
+  assert.match(java51, /Guard\.withoutClient\(input\)/);
+  assert.match(java51, /ObjectProvider<TouchqueClient>/);
+  assert.match(java51, /never @Lazy TouchqueClient \(TouchqueClient is a final class/);
+  assert.match(java51, /touchque\.api-key=/);
+  assert.match(await gen("php", "plain"), /new Config\('tq_test', 'test-secret'/);
   const php = await gen("php", "plain");
-  assert.match(php, /published guard \(5\.0\.0\) has no error-shape option/);
-  assert.match(php, /retry only after the person says they scanned it/);
-  assert.match(php, /\{ touchque, token \} for 403\/408\/423\/429/);
-  assert.match(await gen("java", "web"), /every retry during a first-time QR makes a new QR/);
+  assert.match(php, /guard \(5\.1\.0\)\. The adapter \(the Laravel middleware/);
+  assert.match(php, /Guard::misconfigured\(\) : Guard::unauthenticated\(\)/);
+  assert.match(php, /Guard::headers\(\$result\)/);
+  assert.doesNotMatch(await gen("java", "web"), /every retry during a first-time QR makes a new QR/);
 });
 
 test("5.1: check_integration flags an old @touchque/web next to a 5.1 SDK, and names errorBody for two error shapes", async () => {

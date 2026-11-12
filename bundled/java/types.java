@@ -362,7 +362,7 @@ public record Step(String state, String requestId, String number, String expires
     public record Canary(String url) {
     }
 
-    /** First-time linking: show {@code qrCodeDataUrl}. */
+    /** First-time linking: show {@code qrCodeDataUrl}. {@code expiresAt}: when the QR stops working (ISO 8601). */
     public record Enroll(String qrCodeDataUrl, List<String> recoveryCodes, String expiresAt) {
     }
 
@@ -381,6 +381,10 @@ public record Step(String state, String requestId, String number, String expires
 
     public Step withNumber(String v) {
         return new Step(state, requestId, v, expiresAt, details, caseCode, reasons, telemetryToken, canary, enroll, offline, reason, retryAfter, assurance);
+    }
+
+    public Step withExpiresAt(String v) {
+        return new Step(state, requestId, number, v, details, caseCode, reasons, telemetryToken, canary, enroll, offline, reason, retryAfter, assurance);
     }
 
     public Step withDetails(List<LoginDetail> v) {
@@ -497,6 +501,8 @@ public record Approval(String requestId, String user, String action, Assurance a
  * <ul>
  * <li>1st request: 202 {@code {"touchque": step, "token": ...}}; show the step in your UI;</li>
  * <li>repeat with the token (header {@code X-Touchque-Token}): 202 while waiting, then the protected action runs once;</li>
+ * <li>while the first-time linking QR is up: 202 {@code {"touchque": {"state": "enroll", "expiresAt": ...}}} without
+ * {@code enroll}, keep showing that QR; a new one comes with {@code enroll.qrCodeDataUrl} once it expired;</li>
  * <li>refused: 403 / 408 / 423 / 429 {@code {"touchque": {"state": ...}}}.</li>
  * </ul>
  */
@@ -506,8 +512,14 @@ public final class Guard {
     public static final String CODE_HEADER = "X-Touchque-Code";
     public static final String CODE_TYPE_HEADER = "X-Touchque-Code-Type";
     public static final String BROWSER_HEADER = "X-Touchque-Browser";
+    /** On every refused answer (status 400 or more): the step's state. */
+    public static final String STATE_HEADER = "X-Touchque-State";
+    /** On a refused answer whose step has a reason: that reason. */
+    public static final String REASON_HEADER = "X-Touchque-Reason";
 
     private static final long TOKEN_TTL_MS = 10 * 60 * 1000;
+    /** A first-time QR this close to its expiry is replaced instead of kept: the user could not scan it in time. */
+    private static final long ENROLL_RENEW_MS = 15 * 1000;
     /** A real proof is a few hundred characters; anything far larger is not one. */
     private static final int MAX_BROWSER_PROOF = 4096;
 
@@ -543,6 +555,7 @@ public final class Guard {
         String browserProof;
         SilentSignIn silentSignIn;
         Map<String, Object> context;
+        Supplier<Optional<Result>> beforeStart;
 
         public Input(String user, String action) {
             this.user = user;
@@ -618,6 +631,18 @@ public final class Guard {
             return this;
         }
 
+        /**
+         * Called at most once, only for the token of a first-time QR ({@code enroll} with its expiry),
+         * right before the guard starts something instead of answering "keep the QR": a silent check
+         * or a push once the phone is linked, or a new QR once the old one expired, is about to, or is
+         * gone. A result is answered as it is and nothing starts. Relays charge the start here like a
+         * fresh attempt, so a status poll never starts anything on the poll budget.
+         */
+        public Input beforeStart(Supplier<Optional<Result>> v) {
+            this.beforeStart = v;
+            return this;
+        }
+
         /** Reads the guard headers (token, offline switch, code, code type, browser proof) with a header getter. */
         public Input headers(java.util.function.Function<String, String> header) {
             this.token = header.apply(TOKEN_HEADER);
@@ -638,18 +663,80 @@ public final class Guard {
         public Integer retryAfter() {
             return step != null && step.retryAfter() != null && step.retryAfter() > 0 ? step.retryAfter() : null;
         }
+
+        /**
+         * The headers of a refused answer (status 400 or more): {@code X-Touchque-State}, and
+         * {@code X-Touchque-Reason} when the step has a reason; none otherwise. {@code @touchque/web}
+         * reads the step from them when a body has no {@code touchque} (an errorBody's string, say).
+         */
+        public Map<String, String> refusalHeaders() {
+            if (status < 400 || step == null || empty(step.state())) return Map.of();
+            Map<String, String> headers = new LinkedHashMap<>();
+            headers.put(STATE_HEADER, step.state());
+            if (!empty(step.reason())) headers.put(REASON_HEADER, step.reason());
+            return headers;
+        }
     }
 
     /**
-     * True when this request only polls an approval already on its way: a valid token bound to this
-     * user/action/details, still waiting, and no offline switch or typed code. It can only read the
-     * status, so relays do not count it against the per-user push limit.
+     * A refused answer (status 400 or more), as an adapter's {@code errorBody} callback sees it.
+     * {@code code}: {@code error.code} when the guard set one, else the step's reason, else its state.
+     * {@code message}: {@code error.message} when set, else a sentence for the state.
+     * {@code touchque}: the step as it would be sent.
+     */
+    public record Refusal(int status, String code, String message, JsonNode touchque) {
+        /** The refusal in a guard's answer, or null for a 202 step or an approval. */
+        public static Refusal of(Result result) {
+            if (result == null || result.approved() != null || result.status() < 400 || result.body() == null) return null;
+            JsonNode step = result.body().get("touchque");
+            JsonNode error = result.body().get("error");
+            String state = Json.str(step, "state");
+            String code = Json.str(error, "code");
+            if (empty(code)) code = Json.str(step, "reason");
+            if (empty(code)) code = state;
+            String message = Json.str(error, "message");
+            if (empty(message)) {
+                message = switch (String.valueOf(state)) {
+                    case "rejected" -> "The approval was rejected.";
+                    case "expired" -> "The approval expired. Try again.";
+                    case "frozen" -> "Too many rejected approvals. Try again later.";
+                    case "rate_limited" -> "Too many attempts. Try again later.";
+                    default -> "The approval was refused.";
+                };
+            }
+            return new Refusal(result.status(), code, message, step == null ? null : step.deepCopy());
+        }
+    }
+
+    /**
+     * True when this request only reads a state: it polls an approval already on its way (a valid
+     * token bound to this user/action/details, still waiting) or a first-time linking QR still up (a
+     * bound {@code enroll} token whose QR expires in more than 15 s), with no offline switch or typed
+     * code. Relays do not count it against the per-user push limit. A start such a poll leads to (a
+     * push once the phone is linked, a new QR) goes through {@link Input#beforeStart}, where relays
+     * charge it like a fresh attempt: every start is counted.
      */
     public static boolean isStatusPoll(TouchqueClient client, Input input) {
         if (empty(input.user) || empty(input.token) || input.offline || !empty(input.code)) return false;
         ObjectNode claims = Steps.verifyGuardToken(client.apiSecret(), input.token);
-        if (claims == null || empty(Json.str(claims, "rid"))) return false;
-        return bound(claims, input) && WAITING.contains(String.valueOf(Json.str(claims, "st")));
+        if (claims == null || !bound(claims, input)) return false;
+        String st = Json.str(claims, "st");
+        if ("enroll".equals(st)) return qrStillUp(Json.lng(claims, "ee"));
+        return !empty(Json.str(claims, "rid")) && WAITING.contains(String.valueOf(st));
+    }
+
+    /** A first-time QR that expires at {@code ee} (ms since the epoch) can still be scanned: more than 15 s left. */
+    private static boolean qrStillUp(Long ee) {
+        return ee != null && System.currentTimeMillis() < ee - ENROLL_RENEW_MS;
+    }
+
+    /**
+     * The guard's answer when no client can be built (TQ_API_KEY / TQ_API_SECRET missing): 401
+     * {@code unauthenticated} without a user, else 500 {@code misconfigured}. An adapter that builds
+     * its client on first use answers this instead of throwing.
+     */
+    public static Result withoutClient(Input input) {
+        return empty(input.user) ? unauthenticated() : misconfigured();
     }
 
     public static Result run(TouchqueClient client, Input input);  // implementation omitted
@@ -1348,6 +1435,7 @@ public final class RelayHandler<T> {
  *
  * Who approves is the signed-in user (email, else sub, else name). For transaction details, a
  * login route's user or silent sign-ins, declare a {@link TouchqueGuardOptions} bean for the action.
+ * Refusals keep your app's error shape with a {@link TouchqueErrorBody} bean.
  */
 @Target({ElementType.METHOD, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
@@ -1376,6 +1464,7 @@ public final class TouchqueGuardOptions {
     private Function<TouchqueGuardContext, Map<String, Object>> context;
     private Guard.SilentSignIn silentSignIn;
     private boolean enroll = true;
+    private TouchqueErrorBody errorBody;
 
     private TouchqueGuardOptions(String action) {
         this.action = action;
@@ -1428,6 +1517,12 @@ public final class TouchqueGuardOptions {
         return this;
     }
 
+    /** Your own body for this action's refusals (400 or more), instead of the {@link TouchqueErrorBody} bean's or the default one. */
+    public TouchqueGuardOptions errorBody(TouchqueErrorBody v) {
+        this.errorBody = v;
+        return this;
+    }
+
     Function<TouchqueGuardContext, String> user() {
         return user;
     }
@@ -1450,6 +1545,10 @@ public final class TouchqueGuardOptions {
 
     boolean enroll() {
         return enroll;
+    }
+
+    TouchqueErrorBody errorBody() {
+        return errorBody;
     }
 }
 

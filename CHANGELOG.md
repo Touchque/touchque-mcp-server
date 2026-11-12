@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.4.1 (2026-11-12)
+
+PHP 5.1.0 is on Packagist and Java 5.1.0 on Maven Central: every server SDK except .NET is on 5.1 here. Both were
+checked against their source by an independent review with a challenge per finding (5 confirmed, all fixed).
+
+- PHP: bundles from sdks 8be2753; composer require "touchque-authenticator/php-sdk:^5.1"; the guidance names the
+  Laravel middleware's errorBody binding and, inside the handler, Guard::misconfigured() / unauthenticated(),
+  Guard::errorBody (only for >= 400) and Guard::headers; the test client uses positional Config arguments (PHP 7.4
+  has no named arguments).
+- get_sdk_types php answers Guard: scripts/sync-bundled.js bundles its public constants and signatures with the
+  class's contract docblock (phpPublic, which throws on a layout it cannot read instead of cutting it short).
+- Java: 5.1.0 coordinates; inside the handler ObjectProvider<TouchqueClient> with getObject() in a try/catch and
+  Guard.withoutClient(input), never a plain or @Lazy TouchqueClient injection (a final class: no lazy proxy, no
+  startup); Guard.Refusal.of(r), r.retryAfter(), r.refusalHeaders(); tests set touchque.api-key / api-secret empty
+  instead of "unsetting" the environment.
+- The older-guard advice stays for an SDK whose registry lags behind (none today) and is tested with a stand-in.
+
 ## 4.4.0 (2026-11-12)
 
 SDK 5.1 (Node, Python, Go, Ruby on their registries; @touchque/web 2.1.0). Two independent reviews checked every

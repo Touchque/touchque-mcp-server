@@ -85,6 +85,56 @@ const classPublic = (label, text, name) => {
   return [...out, "}"].join("\n");
 };
 
+// A PHP class with its public constants and method signatures only (doc comments kept, bodies and private members
+// cut away). Signatures may span lines up to the opening brace.
+const phpPublic = (label, text, name) => {
+  const lines = stripPhpOpen(text).split("\n");
+  const i = lines.findIndex((l) => new RegExp(`^(final\\s+|abstract\\s+)?class\\s+${name}\\b`).test(l));
+  if (i < 0) throw new Error(`${label}: class ${name} not found — update scripts/sync-bundled.js`);
+  // The class's own doc comment (its contract) right above it.
+  let d = i;
+  while (d > 0 && /^(\/\*\*|\s*\*)/.test(lines[d - 1])) d -= 1;
+  const out = [...lines.slice(0, d).filter((l) => /^(namespace|use) /.test(l)), "", ...lines.slice(d, i + 1)];
+  let j = i;
+  while (!/\{\s*$/.test(lines[j])) {
+    j += 1;
+    if (j >= lines.length || j - i > 5) throw new Error(`${label}: opening brace of class ${name} not found — update scripts/sync-bundled.js`);
+    out.push(lines[j]);
+  }
+  j += 1;
+  // The class must end at the file's last "}" line: a "}" at column 0 earlier (a heredoc, a second class) would cut
+  // it short without a sound, so that throws instead.
+  const last = lines.map((l, k) => (/^\}/.test(l) ? k : -1)).filter((k) => k > i);
+  if (!last.length || last[0] !== last[last.length - 1] || lines.slice(last[0] + 1).some((l) => l.trim())) {
+    throw new Error(`${label}: class ${name} is not the file's only top-level block — update scripts/sync-bundled.js`);
+  }
+  let doc = [];
+  for (; j < last[0]; j += 1) {
+    const l = lines[j];
+    if (/^ {4}\/\*\*/.test(l)) { doc = [l]; if (/\*\/\s*$/.test(l)) continue; for (j += 1; j < lines.length; j += 1) { doc.push(lines[j]); if (/\*\/\s*$/.test(lines[j])) break; } continue; }
+    if (/^ {4}public\s+const\s/.test(l)) {
+      if (!/;\s*$/.test(l)) throw new Error(`${label}: ${name} constant spans lines: ${l.trim()} — update scripts/sync-bundled.js`);
+      out.push(...doc, l); doc = []; continue;
+    }
+    if (/^ {4}public\s+(static\s+)?function\s/.test(l)) {
+      const sig = [l];
+      while (!/\{\s*$/.test(sig[sig.length - 1]) && !/;\s*$/.test(sig[sig.length - 1])) {
+        j += 1;
+        if (sig.length > 30 || /^ {4}\S/.test(lines[j]) && !/^ {4}\{|^ {4}\)/.test(lines[j])) throw new Error(`${label}: ${name} signature not closed: ${l.trim()} — update scripts/sync-bundled.js`);
+        sig.push(lines[j]);
+      }
+      if (/\}\s*$/.test(sig[sig.length - 1].replace(/\{\s*$/, ""))) throw new Error(`${label}: ${name} one-line body: ${l.trim()} — update scripts/sync-bundled.js`);
+      sig[sig.length - 1] = sig[sig.length - 1].replace(/\s*\{\s*$/, ";");
+      if (sig.length > 1 && sig[sig.length - 1].trim() === ";") { sig.pop(); sig[sig.length - 1] += ";"; } // brace on its own line
+      out.push("", ...doc, ...sig);
+      doc = [];
+      continue;
+    }
+    if (/^ {4}\S/.test(l)) doc = [];
+  }
+  return [...out, "}"].join("\n");
+};
+
 // node
 const nodeRouter = read("touchque-node", "src", "router.ts");
 const nodeGuard = read("touchque-node", "src", "guard.ts");
@@ -185,7 +235,7 @@ write("php", "types.php", [
   "// Touchque PHP SDK — bundled type/API reference for AI assistants.",
   "// Concatenation of touchque-php/src/{Config.php,Touchque.php,Steps.php,ApprovalProof.php,Resources/Login.php,",
   "// Resources/Offline.php,Relay/RelayResponse.php,Relay/RateLimitStore.php,Laravel/TouchqueMiddleware.php,",
-  "// Laravel/TouchqueRelay.php} plus the public part of src/Relay/RelayHandler.php.",
+  "// Laravel/TouchqueRelay.php} plus the public parts of src/Guard.php and src/Relay/RelayHandler.php.",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API changes.",
   "",
   stripPhpOpen(read("touchque-php", "src", "Config.php")).trimEnd(),
@@ -204,6 +254,9 @@ write("php", "types.php", [
   "",
   sep("//", "From src/Resources/Offline.php — Offline Sign (QR + code)"),
   stripPhpOpen(read("touchque-php", "src", "Resources", "Offline.php")).trimEnd(),
+  "",
+  sep("//", "From src/Guard.php — Guard::run, the guard inside your handler, and its helpers (public part)"),
+  phpPublic("php Guard.php", read("touchque-php", "src", "Guard.php"), "Guard"),
   "",
   sep("//", "From src/Relay/RelayHandler.php — the relay routes @touchque/web calls (public part)"),
   excerpt("php RelayHandler.php", phpRelay, null, /^ {4}\/\/ ── Classic push 2FA: enrollment/m),

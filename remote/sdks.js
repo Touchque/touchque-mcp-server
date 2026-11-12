@@ -8,9 +8,8 @@ const path = require("path");
 
 const BUNDLED = path.join(__dirname, "..", "bundled");
 
-// What is on the registries, 2026-11-12: 5.1.0 for Node, Python, Go and Ruby (sdks 8be2753), @touchque/web 2.1.0;
-// PHP and Java still 5.0.0 (5.1.0 waits for the owner on Packagist and Maven Central), .NET not on NuGet. The bundled
-// READMEs and types are those releases: node, python, go, ruby, dotnet, web from 8be2753; php and java from 14ccd7d.
+// What is on the registries, 2026-11-12: 5.1.0 for Node, Python, Go, Ruby, PHP and Java (sdks 8be2753), @touchque/web
+// 2.1.0; .NET not on NuGet. The bundled READMEs and types are that release (sdks 8be2753).
 // guard: the 5.1 guard (no throw without keys: 500 misconfigured; an option for the app's own error shape; one QR per
 // enrollment). When PHP / Java 5.1 are published: set published + guard here and re-sync their bundles.
 // guard: what the integration material says about the step-up guard, per SDK. v51: the 5.1 guard (its adapter never
@@ -28,13 +27,13 @@ const SDKS = {
     },
   },
   php: {
-    label: "PHP", package: "touchque-authenticator/php-sdk", import: "use Touchque\\Touchque;", published: "5.0.0",
-    install: "composer require touchque-authenticator/php-sdk",
+    label: "PHP", package: "touchque-authenticator/php-sdk", import: "use Touchque\\Touchque;", published: "5.1.0",
+    install: "composer require \"touchque-authenticator/php-sdk:^5.1\"",
     registry: "Packagist", manifests: ["composer.json"],
     guard: {
-      v51: false,
-      note: "new Touchque() throws TouchqueConfigException without TQ keys: build the client inside the route in a try/catch and answer 500 (401 without a signed-in user) in the project's shape. The Laravel middleware runs before the controller; to run the route's own checks first, call the guard inside the handler after them: $in = Guard::inputFromHeaders(fn ($n) => $request->header($n)); $r = Guard::run($tq, $user, 'ACTION', $details, null, $request->ip(), $request->userAgent(), $in['token'], $in['offline'], $in['code'], $in['codeType']); it returns ['status' => 200, 'approved' => [...]] (run the action once) or ['status' => ..., 'body' => [...]] (send that body with that status).",
-      tests: "inject new Touchque(new Config(apiKey: 'tq_test', apiSecret: 'test-secret', baseUrl: 'http://localhost:<port>')) against a small local stub of the Touchque endpoints the test needs (the key must start with tq_; without apiKey/apiSecret it reads TQ_API_KEY/TQ_API_SECRET and throws when they are missing)",
+      v51: true, adapter: "the Laravel middleware 'touchque:ACTION'", errorBody: "'errorBody' (bind new TouchqueMiddleware(null, ['errorBody' => fn (array $r) => ...]))",
+      inHandler: "Guard::run($tq, ...) needs a Touchque client: build it per request in a try/catch (new Touchque() throws TouchqueConfigException when a key is missing) and on that exception use $result = $user ? Guard::misconfigured() : Guard::unauthenticated(). Send a 202 $result['body'] unchanged (it carries the token the page polls with); for status >= 400 send Guard::errorBody($result, $errorBody) for the project's shape (only for >= 400; it throws what your callable throws, and JsonException for a result it cannot encode: fall back to $result['body']), or $result['body'] as it is; always with Guard::headers($result).",
+      tests: "the package has no fake: inject new Touchque(new Config('tq_test', 'test-secret', 'http://localhost:<port>')) (positional apiKey, apiSecret, baseUrl: named arguments need PHP 8) against a small local stub of the Touchque endpoints the test needs (the key must start with tq_; without apiKey/apiSecret it reads TQ_API_KEY/TQ_API_SECRET and throws when they are missing), or test the 500 misconfigured / 401 answers with the keys unset",
     },
   },
   go: {
@@ -71,13 +70,14 @@ const SDKS = {
     },
   },
   java: {
-    label: "Java", package: "com.touchque:touchque-spring-boot-starter", import: "import com.touchque.TouchqueClient;  // Spring Boot: @RequireTouchque", published: "5.0.0",
-    install: "Gradle: implementation(\"com.touchque:touchque-spring-boot-starter:5.0.0\") (without Spring: com.touchque:touchque-java:5.0.0); Maven: the same coordinates in a <dependency>. Needs Java 17+; the starter needs Spring Boot 3 (jakarta.servlet)",
+    label: "Java", package: "com.touchque:touchque-spring-boot-starter", import: "import com.touchque.TouchqueClient;  // Spring Boot: @RequireTouchque", published: "5.1.0",
+    install: "Gradle: implementation(\"com.touchque:touchque-spring-boot-starter:5.1.0\") (without Spring: com.touchque:touchque-java:5.1.0); Maven: the same coordinates in a <dependency>. Needs Java 17+; the starter needs Spring Boot 3 (jakarta.servlet)",
     registry: "Maven Central", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"],
     guard: {
-      v51: false,
-      note: "The starter's client bean is lazy, so the app starts without TQ keys, but a @RequireTouchque call then fails with a BeanCreationException (TouchqueConfigException) and Spring's default 500: keep the starter's bean (declare no TouchqueClient bean of your own) and handle that exception to answer 500 misconfigured (401 without a signed-in user) in the project's shape. @RequireTouchque runs before the method body; to run the route's own checks first, call Guard.run(tq, new Guard.Input(user, action).headers(request::getHeader)...) inside the handler after them (README: The three primitives) and act once on approved. Inject the client as ObjectProvider<TouchqueClient> (or @Lazy TouchqueClient), never a plain TouchqueClient field or constructor parameter (that builds it at startup, and the app does not start without TQ keys), and call getObject() inside the handler in a try/catch (BeanCreationException: 500 misconfigured, 401 without a signed-in user).",
-      tests: "a new TouchqueClient(new TouchqueOptions().apiKey(\"tq_test\").apiSecret(\"test-secret\").baseUrl(\"http://localhost:\" + port)) pointing at a local stub of the Touchque endpoints the test needs, as a @Bean in the test context (the key must start with tq_; without them it reads TQ_API_KEY/TQ_API_SECRET and throws when they are missing)",
+      v51: true, adapter: "@RequireTouchque (Spring Boot starter)", errorBody: "TouchqueErrorBody bean (or errorBody on one action's TouchqueGuardOptions)",
+      inHandler: "Guard.run(tq, new Guard.Input(user, action)...) needs a client: inject it as ObjectProvider<TouchqueClient>; never a plain TouchqueClient field or constructor parameter (that builds it at startup, and the app does not start without TQ keys), and never @Lazy TouchqueClient (TouchqueClient is a final class: Spring cannot build the lazy proxy, and the app does not start at all); call getObject() inside the handler in a try/catch (BeanCreationException: r = Guard.withoutClient(input), which answers 500 misconfigured, 401 without a signed-in user). Send a 202 r.body() unchanged (it carries the token the page polls with); for a refusal (r.status() >= 400) build the project's shape from Guard.Refusal.of(r), keeping r.body()'s touchque, or send r.body() as it is. Always Cache-Control: no-store, Retry-After from r.retryAfter() on 423/429, and r.refusalHeaders().",
+      extra: "The relay routes and the webhook endpoint still need the keys when the app starts: leave them off unless the person asks (rule 7).",
+      tests: "a new TouchqueClient(new TouchqueOptions().apiKey(\"tq_test\").apiSecret(\"test-secret\").baseUrl(\"http://localhost:\" + port)) pointing at a local stub of the Touchque endpoints the test needs, as a @Bean in the test context (the key must start with tq_; without them it reads TQ_API_KEY/TQ_API_SECRET and throws when they are missing), or test the 500 misconfigured / 401 answers with @SpringBootTest(properties = {\"touchque.api-key=\", \"touchque.api-secret=\"}): an empty value counts as missing, while leaving them out falls back to TQ_API_KEY / TQ_API_SECRET, which a Java test cannot unset",
     },
   },
 };

@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.2.2 (2026-11-12)
+
+- PHP 5.0.0 is on Packagist (composer require touchque-authenticator/php-sdk, no repository step) and
+  Ruby 5.0.0 on RubyGems (bundle add touchque): pick_sdk says so; the instructions and help name only
+  the .NET SDK as not on a registry yet. Bundles from sdks 14ccd7d.
+
 ## 4.2.1 (2026-11-11)
 
 - Java 5.0.0 is on Maven Central (com.touchque:touchque-spring-boot-starter and com.touchque:touchque-java):

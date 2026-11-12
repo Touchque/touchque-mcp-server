@@ -343,7 +343,7 @@ function typeBlock(language, symbol) {
             if (ch === "{") { depth += 1; opened = true; }
             if (ch === "}") depth -= 1;
           }
-          if ((opened && depth <= 0) || (!opened && /;\s*$/.test(l))) break;
+          if ((opened && depth <= 0) || (!opened && /;\s*(\/\/.*)?$/.test(l))) break;
         }
       }
     }

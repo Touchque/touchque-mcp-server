@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.3.2 (2026-11-12)
+
+- get_sdk_types (Node) now answers runGuard and its types (GuardInput, GuardResult), requireTouchque and
+  TouchqueMiddlewareOptions, and HostedLogin (Touchque Login: authorizationUrl, handleCallback, TokenSet,
+  HostedLoginError): scripts/sync-bundled.js bundles the public parts of src/guard.ts,
+  src/middleware/express.ts and src/hostedLogin.ts (private members and bodies cut away).
+- A bodiless declaration ending in a comment no longer runs into the next ones.
+
 ## 4.3.1 (2026-11-12)
 
 Second measured round of the six integrations (4.3.0): existing tests kept 6/6, the OFF feature refused by

@@ -423,3 +423,16 @@ test("4.3.1: the checks accept what the contract leads to, and find the action t
   const login = (await callTool("touchque_check_integration", { code: "new HostedLogin({})", feature: "touchque_login" }, ws, {}, loadConfig({}))).content[0].text;
   assert.doesNotMatch(login, /API key/);
 });
+
+test("get_sdk_types answers runGuard, requireTouchque's options and HostedLogin, one declaration each", () => {
+  const { typeBlock, typeNames } = require("./tools");
+  const run = typeBlock("node", "runGuard");
+  assert.match(run, /^export async function runGuard\(tq: Touchque, input: GuardInput\): Promise<GuardResult>;/);
+  assert.doesNotMatch(run, /silentInputFromHeaders/);
+  assert.match(typeBlock("node", "TouchqueMiddlewareOptions"), /getUserId\?/);
+  const hosted = typeBlock("node", "HostedLogin");
+  assert.match(hosted, /authorizationUrl\(/);
+  assert.match(hosted, /handleCallback\(/);
+  assert.doesNotMatch(hosted, /private|loadKeys/);
+  for (const n of ["HostedLogin", "HostedLoginError", "TokenSet", "GuardResult", "TouchqueMiddlewareOptions"]) assert.ok(typeNames("node").includes(n), n);
+});

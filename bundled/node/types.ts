@@ -1,6 +1,7 @@
 // Touchque Node.js SDK — bundled type reference for AI assistants.
 // Concatenation of touchque-node/src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}
-// plus the public part of src/router.ts (touchqueRouter), from the SDK source.
+// plus the public parts of src/guard.ts (runGuard), src/middleware/express.ts (requireTouchque),
+// src/hostedLogin.ts (HostedLogin, Touchque Login) and src/router.ts (touchqueRouter), from the SDK source.
 // Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API
 // changes (see touchque-mcp-server/README.md).
 
@@ -2359,3 +2360,398 @@ export interface TouchqueRouterOptions {
 }
 
 export function touchqueRouter(tq: Touchque, options: TouchqueRouterOptions): Router;  // implementation omitted
+
+// ─────────────────────────────────────────────────────────────
+// From src/guard.ts — runGuard, the framework-agnostic guard (run it inside a handler, after its own checks)
+// ─────────────────────────────────────────────────────────────
+
+export const GUARD_HEADERS = {
+  token: 'x-touchque-token',
+  offline: 'x-touchque-offline',
+  code: 'x-touchque-code',
+  codeType: 'x-touchque-code-type',
+  browser: 'x-touchque-browser',
+} as const;
+
+const TOKEN_TTL_MS = 10 * 60 * 1000;
+/** A real proof is a few hundred characters; anything far larger is not one. */
+const MAX_BROWSER_PROOF = 4096;
+
+/** `silentSignIn: { maxAgeSeconds }`: your own limit on the age of the last phone approval in the browser. */
+export interface SilentSignInOptions {
+  /** Seconds (integer); 0 = always ask. Touchque never goes beyond its own limit (7 days). */
+  maxAgeSeconds?: number;
+}
+
+export interface GuardInput {
+  /** The user in YOUR system; undefined = not signed in → 401. */
+  user?: string;
+  /**
+   * Issue a first-time linking QR (and recovery codes) when the user has no
+   * phone yet (default true). Pass false whenever `user` is not proven by your
+   * own sign-in, e.g. a typed username before the password step: the QR would
+   * let anyone link their own phone to that account.
+   */
+  enroll?: boolean;
+  action: string;
+  details?: LoginRequestDetails;
+  referenceId?: string;
+  ip?: string;
+  userAgent?: string;
+  token?: string;
+  offline?: boolean;
+  code?: string;
+  codeType?: string;
+  /**
+   * Silent sign-ins: the browser's device-bound key proof (`X-Touchque-Browser`),
+   * passed through untouched. Attached to the push, so its approval makes the
+   * browser known.
+   */
+  browserProof?: string;
+  /**
+   * Silent sign-ins (default off). A new attempt that carries `browserProof`
+   * first asks Touchque (`risk.check`); when it answers `prompt: false` the
+   * guard approves at once, with no push (`assurance.method: 'silent'`,
+   * `confirmedVia: 'SILENT'`, `reasons`). Otherwise, and on any error, the
+   * usual push starts.
+   */
+  silentSignIn?: boolean | SilentSignInOptions;
+  /** For your Touchque Actions only (`event.context`). Never shown on the phone. */
+  context?: Record<string, unknown>;
+}
+
+export interface GuardBody {
+  touchque: Step;
+  token?: string;
+  error?: { code: string; message: string };
+}
+
+export type GuardResult =
+  | { approved: Approval; status: 200; body?: undefined }
+  | { approved?: undefined; status: number; body: GuardBody };
+
+const STATUS: Record<StepState, number> = {
+  waiting: 202, enroll: 202, passkey_required: 202, offline: 202,
+  approved: 200, rejected: 403, blocked: 403, expired: 408, frozen: 423, rate_limited: 429,
+};
+
+export async function runGuard(tq: Touchque, input: GuardInput): Promise<GuardResult>;  // implementation omitted
+
+/** The guard input an adapter adds for silent sign-ins: the proof header, only when the option is on. */
+export function silentInputFromHeaders(option: boolean | SilentSignInOptions | undefined, get: (name: string) => string | undefined | null): Pick<GuardInput, 'silentSignIn' | 'browserProof'>;  // implementation omitted
+
+/**
+ * True when this request only polls an approval that is already on its way:
+ * a valid token bound to this user/action/details, still waiting, and no
+ * offline switch or typed code. Such a request can only read the status, never
+ * start a push, so relays do not count it against the per-user push limit
+ * (R1-03: with a 1.5 s poll the 6th poll was refused after 7.5 s).
+ */
+export function isStatusPoll(tq: Touchque, input: GuardInput): boolean;  // implementation omitted
+
+/** Reads the guard headers from any headers object (Node IncomingHttpHeaders or Fetch Headers). */
+export function guardInputFromHeaders(get: (name: string) => string | undefined | null);  // implementation omitted
+
+// ─────────────────────────────────────────────────────────────
+// From src/middleware/express.ts — requireTouchque and its options (public part)
+// ─────────────────────────────────────────────────────────────
+
+export interface TouchqueMiddlewareOptions {
+  /** Client to use (default: one built from TQ_API_KEY / TQ_API_SECRET). */
+  client?: Touchque;
+  /**
+   * Who is approving. Default: `req.user.email || req.user.id || req.user.username`
+   * (set by your auth). For the login step, return the user who just passed
+   * your password check, e.g. `(req) => req.session.passwordOk`.
+   */
+  user?: (req: Request) => MaybePromise<string | undefined | null>;
+  /** What the phone shows and the approval is bound to (amount, recipient…). Build it from server-side state. */
+  details?: (req: Request) => MaybePromise<LoginRequestDetails | undefined>;
+  /** Your own transaction id, bound to the approval. */
+  referenceId?: (req: Request) => MaybePromise<string | undefined>;
+  /** For your Touchque Actions only (`event.context`): roles, plan, amount… Never shown on the phone. */
+  context?: (req: Request) => MaybePromise<Record<string, unknown> | undefined>;
+  /** @deprecated use `user` */
+  getUserId?: (req: Request) => string | undefined;
+  /** @deprecated use `details` */
+  getDetails?: (req: Request) => MaybePromise<LoginRequestDetails | undefined>;
+  /** @deprecated use `referenceId` */
+  getReferenceId?: (req: Request) => string | undefined;
+  /** @deprecated no effect — the page polls instead of the server holding the request open */
+  timeout?: number;
+  /**
+   * Silent sign-ins (default off). When on, a new attempt whose browser sent
+   * its device-bound key proof (`X-Touchque-Browser`, added by `@touchque/web`
+   * with `browserKey: true`) first asks Touchque whether anything about it is
+   * new. If nothing is, your handler runs at once with no push
+   * (`touchque.assurance.method === 'silent'`, `touchque.reasons`). Otherwise,
+   * and on any error, the usual push starts and its approval makes the
+   * browser known. `{ maxAgeSeconds }` sets your own limit on how long ago the
+   * last phone approval in that browser may be.
+   */
+  silentSignIn?: boolean | SilentSignInOptions;
+}
+
+const defaultUser = (req: Request): string | undefined => {
+  const u = (req as unknown as { user?: { email?: string; id?: string | number; username?: string } }).user;
+  const id = u?.email ?? u?.id ?? u?.username;
+  return id === undefined || id === null ? undefined : String(id);
+};
+
+/**
+ * Protects a route with Touchque approval.
+ *
+ * @example
+ * app.post('/transfer',
+ *   requireTouchque('SEND_MONEY', { details: (req) => ({ Amount: `${req.body.amount} EUR`, To: req.body.iban }) }),
+ *   (req, res) => res.json({ ok: true }));
+ */
+export function requireTouchque(action: string, options?: TouchqueMiddlewareOptions): (req: Request, res: Response, next: NextFunction) => Promise<void>;
+/** @deprecated pass the client as `options.client` (or rely on the environment) */
+export function requireTouchque(client: Touchque, action: string, options?: TouchqueMiddlewareOptions): (req: Request, res: Response, next: NextFunction) => Promise<void>;
+
+// ─────────────────────────────────────────────────────────────
+// From src/hostedLogin.ts — HostedLogin, Touchque Login (OpenID Connect) for the app's customers (public part)
+// ─────────────────────────────────────────────────────────────
+
+export class HostedLoginError extends TouchqueError {
+  public readonly code: string;
+  public readonly description: string | undefined;
+  public readonly status: number | undefined;
+  constructor(code: string, description?: string, status?: number) {
+    super(description ? `${code}: ${description}` : code);
+    this.name = 'HostedLoginError';
+    this.code = code;
+    this.description = description;
+    this.status = status;
+  }
+}
+
+export interface HostedLoginConfig {
+  /** Your tenant's sign-in domain (acme.login.touchque.com) or full issuer URL (https://; http:// only on localhost). */
+  domain: string;
+  clientId: string;
+  /** Apps with a server: the client secret. SPAs and native apps leave it out. */
+  clientSecret?: string;
+  /** Where Touchque sends users back; must be registered on the app. */
+  redirectUri?: string;
+  /** Default 'openid profile email'. Add 'offline_access' for a refresh token. */
+  scope?: string;
+  /** Your API's identifier, to get an access token for it. */
+  audience?: string;
+  /** Seconds of clock difference allowed when checking tokens. Default 60. */
+  clockToleranceSec?: number;
+  /** For tests or proxies. Defaults to the global fetch. */
+  fetch?: typeof fetch;
+}
+
+export interface AuthorizationUrlOptions {
+  state?: string;
+  nonce?: string;
+  codeVerifier?: string;
+  redirectUri?: string;
+  scope?: string;
+  audience?: string;
+  /** 'login' (always show the page), 'none' (silent), 'consent', 'create' (sign-up page). */
+  prompt?: 'none' | 'login' | 'consent' | 'select_account' | 'create';
+  /** Pre-fills the email. */
+  loginHint?: string;
+  /** 'signup' opens the sign-up page. */
+  screenHint?: 'signup' | 'login';
+  /** 'tr', 'en'… */
+  uiLocales?: string;
+  /** Seconds since the last real sign-in; older sessions sign in again. */
+  maxAge?: number;
+  /** Go straight to a connection (google, apple, an enterprise one…). */
+  connection?: string;
+  organization?: string;
+  invitation?: string;
+  /** e.g. 'http://schemas.openid.net/pape/policies/2007/06/multi-factor' or 'phr' (passkey). */
+  acrValues?: string;
+  responseMode?: 'query' | 'form_post';
+  extraParams?: Record<string, string>;
+}
+
+export interface AuthorizationRequest {
+  url: string;
+  state: string;
+  nonce: string;
+  codeVerifier: string;
+}
+
+export interface CallbackChecks {
+  state: string;
+  nonce: string;
+  codeVerifier: string;
+  redirectUri?: string;
+  /** Reject sign-ins older than this many seconds (with authorizationUrl's maxAge). */
+  maxAge?: number;
+}
+
+export interface IdTokenClaims {
+  iss: string;
+  sub: string;
+  aud: string | string[];
+  exp: number;
+  iat: number;
+  auth_time?: number;
+  nonce?: string;
+  amr?: string[];
+  acr?: string;
+  sid?: string;
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+  given_name?: string;
+  family_name?: string;
+  picture?: string;
+  locale?: string;
+  org_id?: string;
+  org_name?: string;
+  [claim: string]: unknown;
+}
+
+/** requested_token_type for the token vault (getConnectionToken). */
+export const CONNECTION_TOKEN_TYPE = 'urn:touchque:params:oauth:token-type:connection-access-token';
+
+export interface TokenSet {
+  accessToken: string;
+  tokenType: string;
+  /** Unix seconds. */
+  expiresAt: number;
+  scope: string;
+  idToken?: string;
+  refreshToken?: string;
+  /** The verified ID token's claims (when an ID token came back). */
+  claims?: IdTokenClaims;
+  /** What the user approved on the phone (CIBA with authorization_details). */
+  authorizationDetails?: unknown[];
+  /** Token exchange: always the access token type. */
+  issuedTokenType?: string;
+  /** getConnectionToken: the connection the provider token is for. */
+  connection?: string;
+}
+
+export interface AskUserParams {
+  /** The user's e-mail or id (usr_…). */
+  loginHint: string;
+  /** Scopes for the tokens (openid for an ID token too). */
+  scope: string;
+  /** Your API's identifier, for an access token to call it. */
+  audience?: string;
+  /** A short text (at most 64 characters) shown on the phone, marked as the app's own. */
+  bindingMessage?: string;
+  /** RFC 9396 details Touchque draws on the phone (payment_initiation, …). */
+  authorizationDetails?: unknown[];
+  /** Seconds the user has to answer: 30 to 300 (default 300). */
+  requestedExpiry?: number;
+}
+
+export interface UserApprovalRequest {
+  authReqId: string;
+  /** Unix seconds. */
+  expiresAt: number;
+  /** Seconds between polls. */
+  interval: number;
+  /** The number the user picks on the phone: show it in your conversation. */
+  bindingCode?: string;
+}
+
+export interface AccessTokenClaims {
+  iss: string;
+  sub: string;
+  aud: string | string[];
+  exp: number;
+  iat: number;
+  client_id: string;
+  scope?: string;
+  permissions?: string[];
+  org_id?: string;
+  [claim: string]: unknown;
+}
+
+interface Jwk { kty: string; kid?: string; n?: string; e?: string; alg?: string; use?: string }
+
+const b64url = (buf: Buffer) => buf.toString('base64url');
+const random = (bytes = 32) => b64url(randomBytes(bytes));
+
+function safeEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+function decodeJwt(token: string): { header: Record<string, unknown>; payload: Record<string, unknown>; input: string; signature: Buffer } {
+  const parts = String(token).split('.');
+  if (parts.length !== 3) throw new HostedLoginError('invalid_token', 'not a JWT');
+  try {
+    return {
+      header: JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')),
+      payload: JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')),
+      input: `${parts[0]}.${parts[1]}`,
+      signature: Buffer.from(parts[2], 'base64url'),
+    };
+  } catch {
+    throw new HostedLoginError('invalid_token', 'malformed JWT');
+  }
+}
+
+export class HostedLogin {
+  public readonly issuer: string;
+  public readonly clientId: string;
+  public readonly redirectUri: string | undefined;
+  constructor(config: HostedLoginConfig);
+  /** The URL to send the browser to, and the values to keep until the callback. */
+  authorizationUrl(opts: AuthorizationUrlOptions = {}): AuthorizationRequest;
+  /**
+   * Finishes the sign-in: checks state (and iss), exchanges the code with the
+   * PKCE verifier, verifies the ID token. `input` is the callback URL (or its
+   * query/form fields).
+   */
+  async handleCallback(input: string | URL | URLSearchParams | Record<string, string | undefined>, checks: CallbackChecks): Promise<TokenSet>;
+  /** A new access token (and a rotated refresh token). Keep the new refresh token. */
+  async refresh(refreshToken: string, { scope }: { scope?: string } = {}): Promise<TokenSet>;
+  /**
+   * A token for the My Account API (audience https://<domain>/me/) from the
+   * refresh token a first-party app holds. The refresh token rotates: keep
+   * the returned refreshToken. Scopes: read:me, update:me, manage:me:security, delete:me.
+   */
+  async myAccountToken(refreshToken: string, scope = 'read:me update:me'): Promise<TokenSet>;
+  /** The My Account API for the person holding `accessToken` (from myAccountToken or a sign-in for that audience). */
+  myAccount(accessToken: string): MyAccount;
+  /** The hosted account page (profile, security, devices, privacy). */
+  accountUrl(section?: 'security' | 'devices' | 'privacy'): string;
+  /** Machine-to-machine: an access token for your API, with the app's own credentials. */
+  async clientCredentials({ audience, scope }: { audience: string; scope?: string }): Promise<TokenSet>;
+  /**
+   * RFC 8693: a signed-in user's access token, traded for one to call
+   * `audience` on their behalf (sub = the user, act.sub = this app). For a
+   * confidential app the API grants scopes to; never longer than the user's token.
+   */
+  async exchangeToken(subjectToken: string, { audience, scope }: { audience: string; scope?: string }): Promise<TokenSet>;
+  /**
+   * Token vault: the provider's own access token (Google, Microsoft, GitHub…)
+   * for the signed-in user, from a connection that stores tokens. Touchque
+   * refreshes it; the refresh token never leaves. `userAccessToken` is the
+   * user's token for this app (or for an app the connection lists).
+   * HostedLoginError invalid_grant: the user has not signed in with the
+   * connection since it started storing tokens, or they stopped app access.
+   */
+  async getConnectionToken(userAccessToken: string, { connection, scope }: { connection: string; scope?: string }): Promise<TokenSet>;
+  /** CIBA: asks the user to approve on their phone. Show `bindingCode`, then `waitForUser`. */
+  async askUser(p: AskUserParams): Promise<UserApprovalRequest>;
+  /** Polls until the user answers: the tokens, or HostedLoginError access_denied / expired_token. */
+  async waitForUser(r: UserApprovalRequest, { signal }: { signal?: AbortSignal } = {}): Promise<TokenSet>;
+  /** Ends a refresh token (and its rotated family). */
+  async revoke(token: string): Promise<void>;
+  async userinfo(accessToken: string): Promise<Record<string, unknown>>;
+  /** Where to send the browser to sign out of the hosted pages too. */
+  logoutUrl({ idTokenHint, postLogoutRedirectUri, state }: { idTokenHint?: string; postLogoutRedirectUri?: string; state?: string } = {}): string;
+  /**
+   * For your API: checks an access token Touchque issued (signature, issuer,
+   * audience, expiry, typ at+jwt) and, optionally, that it carries scopes.
+   */
+  async verifyAccessToken(token: string, { audience, requiredScopes = [] }: { audience: string; requiredScopes?: string[] }): Promise<AccessTokenClaims>;
+  /** Verifies an ID token from this tenant for this app. */
+  async verifyIdToken(idToken: string, { nonce, accessToken, maxAge }: { nonce?: string; accessToken?: string; maxAge?: number } = {}): Promise<IdTokenClaims>;
+}

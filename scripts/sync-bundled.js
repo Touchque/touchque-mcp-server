@@ -48,13 +48,54 @@ const signature = (label, text, re) => {
   return `${m[0].replace(/\s*\{\s*$/, "")};  // implementation omitted`;
 };
 
+// A function's declaration without its body, also when its parameters span several lines: `export function f(\n a,\n): T {`
+// becomes `export function f(a): T;`. Doc comments right above are kept.
+const fnSignature = (label, text, name) => {
+  const lines = text.split("\n");
+  const i = lines.findIndex((l) => new RegExp(`^export\\s+(?:async\\s+)?function\\s+${name}\\b`).test(l));
+  if (i < 0) throw new Error(`${label}: function ${name} not found — update scripts/sync-bundled.js`);
+  let start = i;
+  while (start > 0 && /^\s*(\/\*\*|\*|\*\/|\/\/)/.test(lines[start - 1])) start -= 1;
+  let end = i;
+  while (end < lines.length && !/\{\s*$/.test(lines[end])) end += 1;
+  if (end >= lines.length) throw new Error(`${label}: body of ${name} not found — update scripts/sync-bundled.js`);
+  const decl = lines.slice(i, end + 1).map((l) => l.trim()).join(" ").replace(/\(\s+/g, "(").replace(/,\s*\)/g, ")").replace(/\s*\{\s*$/, "");
+  return [...lines.slice(start, i), `${decl};  // implementation omitted`].join("\n");
+};
+// A class with its public fields and method signatures only (private members and bodies cut away).
+const classPublic = (label, text, name) => {
+  const lines = text.split("\n");
+  const i = lines.findIndex((l) => new RegExp(`^export\\s+class\\s+${name}\\b.*\\{\\s*$`).test(l));
+  if (i < 0) throw new Error(`${label}: class ${name} not found — update scripts/sync-bundled.js`);
+  const end = lines.findIndex((l, j) => j > i && /^\}/.test(l));
+  if (end < 0) throw new Error(`${label}: end of class ${name} not found — update scripts/sync-bundled.js`);
+  const out = [lines[i]];
+  let doc = [];
+  for (const l of lines.slice(i + 1, end)) {
+    if (/^ {2}(\/\*\*|\/\/)/.test(l) || (doc.length && /^ {3}\*/.test(l))) { doc.push(l); continue; }
+    const member = /^ {2}\S/.test(l);
+    if (member && /^ {2}(private|protected)\b/.test(l)) { doc = []; continue; }
+    if (member && /^ {2}(public\s+)?(readonly\s+)?\w+\??\s*:[^(]*;\s*$/.test(l)) { out.push(...doc, l); doc = []; continue; }
+    if (member && /^ {2}(?:public\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(?:constructor|\w+)\s*\(/.test(l)) {
+      if (!/\{\s*$/.test(l)) throw new Error(`${label}: ${name} member spans lines: ${l.trim()} — update scripts/sync-bundled.js`);
+      out.push(...doc, l.replace(/\s*\{\s*$/, ";"));
+    }
+    if (member) doc = [];
+  }
+  return [...out, "}"].join("\n");
+};
+
 // node
 const nodeRouter = read("touchque-node", "src", "router.ts");
+const nodeGuard = read("touchque-node", "src", "guard.ts");
+const nodeExpress = read("touchque-node", "src", "middleware", "express.ts");
+const nodeHosted = read("touchque-node", "src", "hostedLogin.ts");
 write("node", "sdk-documentation.md", read("touchque-node", "README.md"));
 write("node", "types.ts", [
   "// Touchque Node.js SDK — bundled type reference for AI assistants.",
   "// Concatenation of touchque-node/src/{types.ts,steps.ts,approvalProof.ts,resources/Login.ts}",
-  "// plus the public part of src/router.ts (touchqueRouter), from the SDK source.",
+  "// plus the public parts of src/guard.ts (runGuard), src/middleware/express.ts (requireTouchque),",
+  "// src/hostedLogin.ts (HostedLogin, Touchque Login) and src/router.ts (touchqueRouter), from the SDK source.",
   "// Regenerate with `node scripts/sync-bundled.js` whenever the SDK's public API",
   "// changes (see touchque-mcp-server/README.md).",
   "",
@@ -73,6 +114,19 @@ write("node", "types.ts", [
   excerpt("node router.ts", nodeRouter, null, /^\/\*\* Same status-code mapping/m),
   "",
   signature("node router.ts", nodeRouter, /^export function touchqueRouter\([^\n]*\{$/m),
+  "",
+  sep("//", "From src/guard.ts — runGuard, the framework-agnostic guard (run it inside a handler, after its own checks)"),
+  excerpt("node guard.ts", nodeGuard, /^export const GUARD_HEADERS/m, /^export async function runGuard\(/m),
+  "",
+  ["runGuard", "silentInputFromHeaders", "isStatusPoll", "guardInputFromHeaders"].map((f) => fnSignature("node guard.ts", nodeGuard, f)).join("\n\n"),
+  "",
+  sep("//", "From src/middleware/express.ts — requireTouchque and its options (public part)"),
+  excerpt("node express.ts", nodeExpress, /^export interface TouchqueMiddlewareOptions/m, /^export function requireTouchque\(\s*$/m),
+  "",
+  sep("//", "From src/hostedLogin.ts — HostedLogin, Touchque Login (OpenID Connect) for the app's customers (public part)"),
+  excerpt("node hostedLogin.ts", nodeHosted, /^export class HostedLoginError/m, /^export class HostedLogin \{/m),
+  "",
+  classPublic("node hostedLogin.ts", nodeHosted, "HostedLogin"),
 ].join("\n"));
 
 // python

@@ -329,6 +329,9 @@ class Steps
     /**
      * Starts an approval for `$action` — never waits.
      *
+     * A user with no phone linked gets the linking QR (`enroll`); with
+     * `$enroll = false` they get `['state' => 'enroll', 'reason' => 'enrollment_off']`.
+     *
      * `$browserProof` (silent sign-ins): the browser's device-bound key proof
      * (`X-Touchque-Browser`), passed through untouched. Once the user approves,
      * Touchque knows this browser.
@@ -381,7 +384,8 @@ class Steps
             $why = $err->getCaseCode() !== null ? ['caseCode' => $err->getCaseCode()] : [];
             if ($err->getStatus() === 404 && ($code === 'device_not_linked' || stripos($err->getMessage(), 'linked device') !== false)) {
                 if (!$enroll) {
-                    return ['state' => 'enroll'];
+                    // No phone, and this guard may not show the linking QR: final, a page stops polling.
+                    return ['state' => 'enroll', 'reason' => 'enrollment_off'];
                 }
                 return self::enrollStep($client, $user);
             }
@@ -492,7 +496,11 @@ class Steps
 
     private const STATE_MAP = ['PENDING' => 'waiting', 'CONFIRMED' => 'approved', 'REJECTED' => 'rejected', 'EXPIRED' => 'expired'];
 
-    /** Current state of a started approval. */
+    /**
+     * Current state of a started approval. While it waits (`waiting`,
+     * `passkey_required`) the step has the request's live `expiresAt` when
+     * Touchque sends it: a switch to a passkey during a call extends it.
+     */
     public static function check(Touchque $client, string $requestId): array
     {
         $s = $client->login->status($requestId);
@@ -501,6 +509,9 @@ class Steps
         $step = ['state' => $state, 'requestId' => $requestId];
         if ($state === 'approved' && !empty($s['assurance'])) {
             $step['assurance'] = $s['assurance'];
+        }
+        if (($state === 'waiting' || $state === 'passkey_required') && self::isoMs($s['expiresAt'] ?? null) !== null) {
+            $step['expiresAt'] = $s['expiresAt'];
         }
         return $step;
     }
@@ -1268,11 +1279,16 @@ use Touchque\Exceptions\TouchqueNetworkException;
  *
  * Contract (same in every Touchque server SDK):
  *   1st request            -> 202 {"touchque": step, "token": ...}   show the step in your UI
- *   repeat with the token   -> 202 while waiting, then the protected action runs once
+ *   repeat with the token   -> 202 while waiting (each answer carries the request's live `expiresAt`),
+ *                              then the protected action runs once
  *   refused                 -> 403 / 408 / 423 / 429 {"touchque": {"state": ..., ...}}
  *   first-time QR up        -> 202 {"touchque": {"state": "enroll", "expiresAt": ...}} with no
- *                              `enroll`: keep showing the QR; a new one comes with
- *                              `enroll.qrCodeDataUrl` once the old one expired
+ *                              `enroll`: keep showing the QR; about 15 s before it expires a new
+ *                              one comes with `enroll.qrCodeDataUrl` and new recovery codes
+ *   no phone, `$enroll` off -> 202 {"touchque": {"state": "enroll", "reason": "enrollment_off"}}: final
+ *
+ * `run(null, ...)` uses defaultClient() (setDefaultClient() replaces it);
+ * `response()` turns a result into the status, headers and body to send.
  *
  * Request headers the browser sends back:
  *   X-Touchque-Token         the token from the last response
@@ -1322,9 +1338,11 @@ class Guard
      * push limit (with a 1.5 s poll the 6th poll was refused after 7.5 s). Such an
      * enroll poll can still start (the user linked, or the QR is gone): relays
      * charge that through run()'s `$beforeStart`. Renewing an expiring QR counts.
+     * `$client`: as run()'s; null is the default client, and false while it
+     * cannot be built.
      */
     public static function isStatusPoll(
-        Touchque $client,
+        ?Touchque $client,
         ?string $user,
         string $action,
         ?array $details = null,
@@ -1375,10 +1393,72 @@ class Guard
     public static function errorBody(array $result, callable $errorBody);
 
     /**
+     * The HTTP answer for a result of run() that is not an approval, exactly as
+     * TouchqueMiddleware and the relay send it:
+     * `['status' => int, 'headers' => array, 'body' => mixed]`. Send `body` with
+     * your framework's JSON response (encode `null` yourself: Laravel's
+     * `JsonResponse(null)` sends `{}`).
+     *
+     * `headers` are headers(): `Cache-Control: no-store`, `Retry-After` on 423
+     * and 429, `X-Touchque-State` and `X-Touchque-Reason` on 400 and above.
+     * `body` is the result's body; for 400 and above with `$errorBody`, what
+     * errorBody() makes of it. A callable that throws, or a result that cannot
+     * be encoded, is logged (`[Touchque] errorBody failed: <message>`) and the
+     * default body sent: through `$client`'s logger, else Laravel's logger in a
+     * Laravel app, else nowhere.
+     *
+     * @throws \InvalidArgumentException for an approval: run your action instead
+     */
+    public static function response(array $result, ?callable $errorBody = null, ?Touchque $client = null): array;
+
+    /**
+     * The client `run(null, ...)` and `isStatusPoll(null, ...)` use:
+     *   1. the one given to setDefaultClient();
+     *   2. else, in a Laravel app with a binding of `Touchque`
+     *      (`$app->bind/singleton(Touchque::class, ...)`), the container's, resolved
+     *      on each call (the container owns its lifetime); a contextual binding for
+     *      TouchqueMiddleware is not used;
+     *   3. else one built from TQ_API_KEY / TQ_API_SECRET (and TQ_API_URL) on
+     *      first use and kept once built.
+     * Call it at startup to fail fast: it throws TouchqueConfigException, naming
+     * the problem, while no client can be built (a build that failed is tried
+     * again on the next call).
+     *
+     * @throws TouchqueConfigException
+     */
+    public static function defaultClient(): Touchque;
+
+    /**
+     * Makes `$client` the default client of `run(null, ...)` and
+     * `isStatusPoll(null, ...)`, over a container binding and the environment:
+     * the way to give them your own Config (a logger, a base URL). null forgets
+     * it (and the client built from the environment): the next call uses a
+     * Laravel binding of `Touchque`, else builds from the environment.
+     */
+    public static function setDefaultClient(?Touchque $client): void;
+
+    /**
+     * @internal Logs once per process that the default client cannot be built
+     * (`run(null, ...)`, TouchqueMiddleware). There is no Config to carry your
+     * logger: Laravel's logger in a Laravel app, else nowhere.
+     */
+    public static function logUnconfigured(TouchqueConfigException $err): void;
+
+    /**
      * Runs one step of the guard. Returns either
      * `["approved" => [...], "status" => 200]` (run your protected action) or
      * `["status" => <code>, "body" => ["touchque" => step, "token" => ...]]`
-     * (send that JSON body with that status code and `headers()`).
+     * (send it as response() gives it: that status, `headers()` and that JSON body).
+     *
+     * `$client`: your Touchque, or null for defaultClient(): the one given to
+     * setDefaultClient(), else a Laravel binding of `Touchque`, else one built
+     * from TQ_API_KEY / TQ_API_SECRET on first use and kept once built (a
+     * failed build is tried again on the next request). While it cannot be
+     * built the answer is 500 `misconfigured` (401 `unauthenticated` without a
+     * user), logged once per process through Laravel's logger in a Laravel app.
+     *
+     * `$enroll = false` (a guard that may not show the linking QR): a user with
+     * no phone gets 202 `{"state": "enroll", "reason": "enrollment_off"}`.
      *
      * Silent sign-ins: `$browserProof` is the browser's device-bound key proof
      * (`X-Touchque-Browser`), passed through untouched and attached to the
@@ -1399,7 +1479,7 @@ class Guard
      * user's budget there, since isStatusPoll() exempted that poll.
      */
     public static function run(
-        Touchque $client,
+        ?Touchque $client,
         ?string $user,
         string $action,
         ?array $details = null,
@@ -1466,6 +1546,8 @@ use Touchque\Touchque;
  *   getLoginUser    fn($req): ?string — the user who passed your first factor. STRONGLY RECOMMENDED.
  *                   When set, /login and the offline routes act for this user and ignore any
  *                   username in the body (401 FIRST_FACTOR_REQUIRED when it returns nothing).
+ *                   Without it /login never shows the linking QR: a user with no phone gets 202
+ *                   {touchque: {state: 'enroll', reason: 'enrollment_off'}}, as passkey registration does.
  *   rateLimit       array|false — ['windowMs' => 60000, 'perIp' => 20, 'perUser' => 5,
  *                   'store' => RateLimitStore]; false if you rate limit in front of the relay.
  *                   Under PHP-FPM pass a shared store (see RateLimitStore).
@@ -1754,8 +1836,6 @@ use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Log;
-use Touchque\Config;
 use Touchque\Exceptions\TouchqueConfigException;
 use Touchque\Guard;
 use Touchque\Touchque;
@@ -1863,9 +1943,6 @@ class TouchqueMiddleware
      */
     protected $errorBody = null;
 
-    /** The client could not be built: logged once per process. */
-    private static bool $loggedUnconfigured = false;
-
     /**
      * @param Touchque|null $touchque the client; null (the default) resolves it
      *   from Laravel's container (your binding, or TQ_API_KEY / TQ_API_SECRET) on
@@ -1900,7 +1977,8 @@ class TouchqueMiddleware
         try {
             $touchque = $this->client();
         } catch (TouchqueConfigException $err) {
-            $this->logUnconfigured($err);
+            // Logged once per process, shared with Guard::run(null, ...).
+            Guard::logUnconfigured($err);
             return $this->respond($user ? Guard::misconfigured() : Guard::unauthenticated());
         }
 
@@ -2007,21 +2085,21 @@ class TouchqueMiddleware
         return $app->make(Touchque::class);
     }
 
-    /** The JSON answer for a result that is not an approval: Guard::headers(), your errorBody. */
+    /** The JSON answer for a result that is not an approval: Guard::response() with your errorBody. */
     private function respond(array $result): JsonResponse
     {
-        $headers = Guard::headers($result);
-        if ($this->errorBody !== null && $result['status'] >= 400) {
-            try {
-                $errorBody = $this->errorBody;
-                $body = Guard::errorBody($result, static fn (array $refusal) => self::asJsonResponseEncodes($errorBody($refusal)));
-                // Encoded here so that null is sent as null (JsonResponse would send {}).
-                return new JsonResponse(json_encode($body, JSON_THROW_ON_ERROR), $result['status'], $headers, 0, true);
-            } catch (\Throwable $err) {
-                $this->logError('[Touchque] errorBody failed: ' . $err->getMessage());
-            }
+        $errorBody = $this->errorBody;
+        $answer = Guard::response(
+            $result,
+            $errorBody === null ? null : static fn (array $refusal) => self::asJsonResponseEncodes($errorBody($refusal)),
+            $this->touchque
+        );
+        if ($answer['body'] === null) {
+            // Encoded here so that null is sent as null (JsonResponse would send {}).
+            return new JsonResponse('null', $answer['status'], $answer['headers'], 0, true);
         }
-        return new JsonResponse($result['body'], $result['status'], $headers);
+        // The same bytes, and getOriginalContent() is the body.
+        return new JsonResponse($answer['body'], $answer['status'], $answer['headers']);
     }
 
     /**
@@ -2044,31 +2122,6 @@ class TouchqueMiddleware
             return $value->toArray();
         }
         return $value;
-    }
-
-    private function logUnconfigured(TouchqueConfigException $err): void
-    {
-        if (self::$loggedUnconfigured) {
-            return;
-        }
-        self::$loggedUnconfigured = true;
-        $this->logError($err->getMessage() === Config::MISSING_KEYS
-            ? '[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured.'
-            : '[Touchque] ' . $err->getMessage());
-    }
-
-    /** Through the client's logger; before a client exists, through Laravel's (outside an app: nowhere). */
-    private function logError(string $message): void
-    {
-        if ($this->touchque !== null) {
-            $this->touchque->log('error', $message);
-            return;
-        }
-        try {
-            Log::error($message);
-        } catch (\Throwable $e) {
-            // no Laravel logger here; a logger must never break a request
-        }
     }
 }
 

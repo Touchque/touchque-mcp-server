@@ -341,6 +341,9 @@ type LoginStatusResponse struct {
 	RequiresPasskey bool       `json:"requiresPasskey,omitempty"`
 	ConfirmedVia    string     `json:"confirmedVia,omitempty"`
 	Assurance       *Assurance `json:"assurance,omitempty"`
+	// ExpiresAt is the request's live expiry (ISO 8601): a Vishing Shield
+	// escalation to a passkey extends it.
+	ExpiresAt string `json:"expiresAt,omitempty"`
 	// Reply: a request made with Reply, once the person typed it back (the
 	// ciphertext only; OpenCodeReply opens it). nil for a CONFIRMED request
 	// approved without typing (an older app).
@@ -581,9 +584,10 @@ type Step struct {
 type EnrollStep struct {
 	QRCodeDataURL string   `json:"qrCodeDataUrl,omitempty"`
 	RecoveryCodes []string `json:"recoveryCodes,omitempty"`
-	// ExpiresAt is when the QR stops working (ISO 8601). Until then the
-	// guard's polls answer {state: "enroll", expiresAt} without Enroll: keep
-	// showing this QR.
+	// ExpiresAt is when the QR stops working (ISO 8601). Until about 15 s
+	// before it, the guard's polls answer {state: "enroll", expiresAt} without
+	// Enroll: keep showing this QR. Then a poll brings a new QR with new
+	// recovery codes, and the old QR and the old codes stop working.
 	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
@@ -627,8 +631,9 @@ type StartOptions struct {
 	// IP / UserAgent: the end user's — shown on the phone.
 	IP        string
 	UserAgent string
-	// NoEnroll: set true to get StepEnroll{} (no QR) instead of issuing one,
-	// when the user has no linked phone.
+	// NoEnroll: set true to get Step{State: StepEnroll, Reason:
+	// "enrollment_off"} (no QR) instead of issuing one, when the user has no
+	// linked phone.
 	NoEnroll bool
 	// BrowserProof (silent sign-ins): the browser's device-bound key proof
 	// (X-Touchque-Browser), passed through untouched. Once the user approves,
@@ -698,7 +703,8 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 	switch {
 	case apiErr.StatusCode == 404 && (apiErr.Code == "device_not_linked" || strings.Contains(strings.ToLower(apiErr.Message), "linked device")):
 		if opts.NoEnroll {
-			return &Step{State: StepEnroll}, nil
+			// No phone, and this guard may not show a QR: say so, so the page stops polling.
+			return &Step{State: StepEnroll, Reason: "enrollment_off"}, nil
 		}
 		return enrollStep(c, user)
 	case apiErr.StatusCode == 423:
@@ -794,7 +800,9 @@ var stepStateMap = map[string]StepState{
 	"PENDING": StepWaiting, "CONFIRMED": StepApproved, "REJECTED": StepRejected, "EXPIRED": StepExpired,
 }
 
-// Check reports where a started approval is now.
+// Check reports where a started approval is now, with the request's live
+// ExpiresAt when the API gives it (a Vishing Shield escalation to a passkey
+// extends it).
 func (c *Client) Check(requestID string) (*Step, error) {
 	s, err := c.Login.Status(requestID)
 	if err != nil {
@@ -807,7 +815,7 @@ func (c *Client) Check(requestID string) (*Step, error) {
 	if s.Status == "PENDING" && s.RequiresPasskey {
 		state = StepPasskeyRequired
 	}
-	step := &Step{State: state, RequestID: requestID}
+	step := &Step{State: state, RequestID: requestID, ExpiresAt: s.ExpiresAt}
 	if state == StepApproved && s.Assurance != nil {
 		step.Assurance = s.Assurance
 	}
@@ -860,6 +868,7 @@ type GuardTokenClaims struct {
 	Oc  string `json:"oc,omitempty"`  // offline challenge id
 	Cc  string `json:"cc,omitempty"`  // "Why?" case code, shown while waiting
 	Ee  int64  `json:"ee,omitempty"`  // the first-time QR's expiry, ms since the epoch (enroll steps)
+	Rx  int64  `json:"rx,omitempty"`  // the request's expiry, ms since the epoch (waiting / passkey_required steps)
 	Exp int64  `json:"exp"`           // expiry, ms since the epoch
 }
 
@@ -1478,6 +1487,9 @@ func (l *LoginResource) statusCtx(ctx context.Context, requestID string) (*Login
 	if v, ok := res["confirmedVia"].(string); ok {
 		resp.ConfirmedVia = v
 	}
+	if v, ok := res["expiresAt"].(string); ok {
+		resp.ExpiresAt = v
+	}
 	resp.Assurance = parseAssurance(res)
 	resp.ShieldFields = parseShieldFields(res)
 	if r, ok := res["reply"].(map[string]interface{}); ok {
@@ -1752,6 +1764,7 @@ func (l *LoginResource) ReportFraud(requestID string, opts ReportFraudOptions) (
 package touchque
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -1810,8 +1823,9 @@ type RequireOptions struct {
 	ErrorBody func(GuardRefusal) any
 	// Logger receives Require's own lines (TQ_API_KEY / TQ_API_SECRET not set,
 	// once per process; an ErrorBody that failed) and, with a nil client, the
-	// lines of the client Require builds. nil: the client's Config.Logger;
-	// with a nil client, nothing is logged.
+	// guard's lines on this route (an API error). nil: the client's
+	// Config.Logger; with a nil client, the default client's (see
+	// SetDefaultClient), and nothing for the one built from the environment.
 	Logger *slog.Logger
 }
 
@@ -1900,10 +1914,40 @@ func guardRefusal(result GuardResult) GuardRefusal {
 	return ref
 }
 
-// responseBody is what Require sends for a result that is not an approval:
-// result.Body, or for a refusal what errorBody makes of it.
+// WriteGuardResult sends a RunGuard result that is not an approval, exactly
+// as Require does: the headers (Content-Type: application/json,
+// Cache-Control: no-store, Retry-After on 423 and 429, and on a refusal
+// X-Touchque-State and X-Touchque-Reason), res.Status and the JSON body. Use
+// it only when res.Approved is nil (an approval writes nothing: run your
+// action instead).
+//
+// errorBody (nil: the guard's own body) is RequireOptions.ErrorBody: your
+// app's error shape for a refusal (status 400 and above), never called for a
+// 202 step. A value that encodes to a JSON object is sent with "touchque" set
+// to the step, anything else as it is. A panic, or a value encoding/json
+// cannot encode (a cycle, nesting deeper than encoding/json reads), sends
+// the default body and logs [Touchque] ErrorBody failed to the client's
+// Config.Logger. The body is encoded before anything is written, so a status
+// is never sent without it.
+func WriteGuardResult(w http.ResponseWriter, res GuardResult, errorBody func(GuardRefusal) any) {
+	if res.Approved != nil {
+		return
+	}
+	var out bytes.Buffer
+	if err := json.NewEncoder(&out).Encode(responseBody(res, errorBody, res.logger)); err != nil {
+		sdkLog(res.logger, slog.LevelError, "[Touchque] ErrorBody failed", "error", errorText(err))
+		out.Reset()
+		_ = json.NewEncoder(&out).Encode(res.Body)
+	}
+	setGuardHeaders(w.Header(), res)
+	w.WriteHeader(res.Status)
+	_, _ = w.Write(out.Bytes())
+}
+
+// responseBody is what WriteGuardResult sends for a result that is not an
+// approval: result.Body, or for a refusal what errorBody makes of it.
 func responseBody(result GuardResult, errorBody func(GuardRefusal) any, logger *slog.Logger) (body any) {
-	if errorBody == nil || result.Status < 400 {
+	if errorBody == nil || result.Status < 400 || result.Body == nil {
 		return result.Body
 	}
 	defer func() {
@@ -1929,19 +1973,48 @@ func responseBody(result GuardResult, errorBody func(GuardRefusal) any, logger *
 	return fields
 }
 
-// envClient is the client Require(nil, …) builds from TQ_API_KEY /
-// TQ_API_SECRET / TQ_API_URL on first use and keeps once built; until then
-// every request tries again.
+// defaultClient is the client Require(nil, …), RunGuard(ctx, nil, …) and
+// IsStatusPoll(nil, …) share: built from TQ_API_KEY / TQ_API_SECRET /
+// TQ_API_URL (New) on first use and kept once built; until then every call
+// tries again. SetDefaultClient replaces or forgets it.
+var defaultClient envClient
+
+// SetDefaultClient replaces the default client that Require(nil, …),
+// RunGuard(ctx, nil, …) and IsStatusPoll(nil, …) share. The default one is
+// built from the environment once per process; nil forgets it, so the next
+// call builds it again from TQ_API_KEY / TQ_API_SECRET / TQ_API_URL (a test
+// that changes them, a rotated key).
+//
+// The startup check, to fail fast instead of answering 500 misconfigured:
+//
+//	tq, err := touchque.New() // or touchque.New(cfg)
+//	if err != nil {
+//	    log.Fatal(err) // the ConfigError names the missing keys
+//	}
+//	touchque.SetDefaultClient(tq)
+//
+// It is also how the null-client path gets a logger: the client built from
+// the environment has none, so build yours with New(cfg), cfg from
+// ConfigFromEnv with cfg.Logger set. Safe for concurrent use.
+func SetDefaultClient(c *Client) {
+	defaultClient.mu.Lock()
+	defer defaultClient.mu.Unlock()
+	defaultClient.client.Store(c)
+}
+
+// envClient is a client built from the environment on first use and kept
+// once built. Safe for concurrent use; the zero value is ready.
 type envClient struct {
 	mu     sync.Mutex
 	client atomic.Pointer[Client]
-	logger *slog.Logger
 }
 
 // warnedUnconfigured: the missing keys are logged once per process.
 var warnedUnconfigured atomic.Bool
 
-func (e *envClient) get() *Client {
+// get returns the client, building it when there is none yet, or nil while
+// it cannot be built; logger, when not nil, hears why (once per process).
+func (e *envClient) get(logger *slog.Logger) *Client {
 	if c := e.client.Load(); c != nil {
 		return c
 	}
@@ -1952,17 +2025,14 @@ func (e *envClient) get() *Client {
 	}
 	c, err := New()
 	if err != nil {
-		if e.logger != nil && warnedUnconfigured.CompareAndSwap(false, true) {
+		if logger != nil && warnedUnconfigured.CompareAndSwap(false, true) {
 			if os.Getenv("TQ_API_KEY") == "" || os.Getenv("TQ_API_SECRET") == "" {
-				sdkLog(e.logger, slog.LevelError, "[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured.")
+				sdkLog(logger, slog.LevelError, "[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured.")
 			} else {
-				sdkLog(e.logger, slog.LevelError, "[Touchque] misconfigured", "error", errorText(err))
+				sdkLog(logger, slog.LevelError, "[Touchque] misconfigured", "error", errorText(err))
 			}
 		}
 		return nil
-	}
-	if e.logger != nil {
-		c.logger = e.logger
 	}
 	e.client.Store(c)
 	return c
@@ -2019,10 +2089,13 @@ func guardInputFromRequest(r *http.Request) (token, offline, code, codeType stri
 // "X-Touchque-Token: <token>". Once approved, next runs exactly once, with
 // the approval available via ApprovalFromContext(r.Context()).
 //
-// A nil client is built from TQ_API_KEY / TQ_API_SECRET on the first request
-// (New) and kept once built. While it cannot be built, Require answers 500
-// misconfigured (401 when nobody is signed in) and next never runs; it never
-// panics for it. Require panics only without RequireOptions.User.
+// A nil client is the default client, shared with RunGuard(ctx, nil, …):
+// built from TQ_API_KEY / TQ_API_SECRET on the first request (New) and kept
+// once built (SetDefaultClient replaces or forgets it). While it cannot be
+// built, Require answers 500 misconfigured
+// (401 when nobody is signed in) and next never runs; it never panics for it.
+// Require panics only without RequireOptions.User. Its answers are written
+// by WriteGuardResult.
 func Require(client *Client, action string, next http.Handler, opts RequireOptions) http.Handler {
 	userOf := opts.User
 	if userOf == nil {
@@ -2034,9 +2107,10 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 	if ipOf == nil {
 		ipOf = defaultIP
 	}
-	var env *envClient
+	// With a nil client, the guard's own lines (the missing keys, an API error) go to opts.Logger as well.
+	var guardLogger *slog.Logger
 	if client == nil {
-		env = &envClient{logger: opts.Logger}
+		guardLogger = opts.Logger
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2058,11 +2132,8 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 		if opts.Context != nil {
 			in.Context = opts.Context(r)
 		}
-		c := client
-		if env != nil {
-			c = env.get() // nil while TQ_API_KEY / TQ_API_SECRET are not set: 500 misconfigured
-		}
-		result := runGuardContext(r.Context(), c, in)
+		// A nil client is the default one; 500 misconfigured while TQ_API_KEY / TQ_API_SECRET are not set.
+		result := runGuardContext(r.Context(), client, in, guardLogger)
 
 		if result.Approved != nil {
 			ctx := context.WithValue(r.Context(), approvalContextKey{}, result.Approved)
@@ -2070,14 +2141,10 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 			return
 		}
 
-		logger := opts.Logger
-		if logger == nil && c != nil {
-			logger = c.logger
+		if opts.Logger != nil {
+			result.logger = opts.Logger // Require's own lines (an ErrorBody that failed) go to its Logger
 		}
-		body := responseBody(result, opts.ErrorBody, logger)
-		setGuardHeaders(w.Header(), result)
-		w.WriteHeader(result.Status)
-		_ = json.NewEncoder(w).Encode(body)
+		WriteGuardResult(w, result, opts.ErrorBody)
 	})
 }
 

@@ -427,7 +427,7 @@ test("4.3.1: the checks accept what the contract leads to, and find the action t
 test("get_sdk_types answers runGuard, requireTouchque's options and HostedLogin, one declaration each", () => {
   const { typeBlock, typeNames } = require("./tools");
   const run = typeBlock("node", "runGuard");
-  assert.match(run, /^export async function runGuard\(tq: Touchque, input: GuardInput\): Promise<GuardResult>;/);
+  assert.match(run, /export async function runGuard\(tq: Touchque \| null \| undefined, input: GuardInput\): Promise<GuardResult>;/);
   assert.doesNotMatch(run, /silentInputFromHeaders/);
   assert.match(typeBlock("node", "TouchqueMiddlewareOptions"), /getUserId\?/);
   const hosted = typeBlock("node", "HostedLogin");
@@ -443,7 +443,7 @@ test("get_sdk_types answers runGuard, requireTouchque's options and HostedLogin,
 
 test("5.1: the README material puts the guard parts first, never repeats a part, and names what did not fit", () => {
   for (const lang of ["node", "python", "go", "ruby", "dotnet"]) {
-    const t = sectionsFor(lang, "phone_approval", 13000);
+    const t = sectionsFor(lang, "phone_approval", 14500);
     assert.match(t, /misconfigured/, `${lang}: what happens without keys`);
     assert.match(t, /errorBody|error_body|ErrorBody/, `${lang}: the error-shape option`);
     assert.match(t, /## Guard inside your handler/, `${lang}: guard inside the handler`);
@@ -462,15 +462,18 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   ctx.enabledFeatures = ["core_2fa"];
   const gen = async (language, frontend) => (await callTool("touchque_generate_integration", { feature: "phone_approval", language, action: "SEND_MONEY", frontend }, ws, {}, loadConfig({}))).content[0].text;
   const py = await gen("python", "plain");
-  assert.match(py, /guard \(5\.1\.0\)\. The adapter \(require_touchque \/ RequireTouchque\): with TQ keys missing it never throws/);
-  assert.match(py, /error_body= is not a run_guard option/);
+  assert.match(py, /guard \(5\.2\.0\)\. The adapter \(require_touchque \/ RequireTouchque\): with TQ keys missing it never throws/);
+  assert.match(py, /run_guard\(None, \.\.\.\)/);
+  assert.match(py, /guard_response\(result, error_body\)/);
   assert.match(py, /touchque\.testing\.FakeTouchque/);
   assert.match(py, /token of the LATEST answer/);
   assert.match(py, /without enroll: keep what you show/);
   assert.match(py, /Any other 202 \(passkey_required/);
   const node = await gen("node", "web");
-  assert.match(node, /@touchque\/web@\^2\.1\.0/);
-  assert.match(node, /getDefaultClient\(\) in a try\/catch/);
+  assert.match(node, /@touchque\/web@\^2\.2\.0/);
+  assert.match(node, /runGuard\(null, input\) per request/);
+  assert.match(node, /guardResponse\(result, \{ errorBody \}\)/);
+  assert.match(node, /@touchque\/node\/testing/);
   assert.doesNotMatch(node, /every retry during a first-time QR makes a new QR/);
   assert.match(await gen("go", "plain"), /RequireOptions\.ErrorBody/);
   // An SDK whose registry still has the older guard (none today): the 5.0 advice.
@@ -487,13 +490,14 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   const java51 = await gen("java", "plain");
   assert.match(java51, /Guard\.withoutClient\(input\)/);
   assert.match(java51, /ObjectProvider<TouchqueClient>/);
-  assert.match(java51, /never @Lazy TouchqueClient \(TouchqueClient is a final class/);
+  assert.match(java51, /never @Lazy TouchqueClient: a final class/);
+  assert.match(java51, /Guard\.response\(r, errorBody, objectMapper, logger\)/);
   assert.match(java51, /touchque\.api-key=/);
   assert.match(await gen("php", "plain"), /new Config\('tq_test', 'test-secret'/);
   const php = await gen("php", "plain");
-  assert.match(php, /guard \(5\.1\.0\)\. The adapter \(the Laravel middleware/);
-  assert.match(php, /Guard::misconfigured\(\) : Guard::unauthenticated\(\)/);
-  assert.match(php, /Guard::headers\(\$result\)/);
+  assert.match(php, /guard \(5\.2\.0\)\. The adapter \(the Laravel middleware/);
+  assert.match(php, /Guard::run\(null, \.\.\.\)/);
+  assert.match(php, /Guard::response\(\$result, \$errorBody\)/);
   assert.doesNotMatch(await gen("java", "web"), /every retry during a first-time QR makes a new QR/);
 });
 
@@ -501,10 +505,37 @@ test("5.1: check_integration flags an old @touchque/web next to a 5.1 SDK, and n
   const ws = fakeWorkspace();
   const diff = "diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n+    \"@touchque/web\": \"^2.0.0\",\ndiff --git a/src/app.js b/src/app.js\n--- a/src/app.js\n+++ b/src/app.js\n-  res.status(400).json({ error: 'bad' })\n+  res.status(400).json({ error: 'bad' })\n+  res.status(403).json({ error: { code: 'rejected' } })\n";
   const out = (await callTool("touchque_check_integration", { code: "requireTouchque('SEND_MONEY')", language: "node", feature: "phone_approval", diff }, ws, {}, loadConfig({}))).content[0].text;
-  assert.match(out, /@touchque\/web below 2\.1\.0/);
+  assert.match(out, /@touchque\/web below 2\.2\.0/);
   assert.match(out, /the adapter's errorBody option/);
   const noLang = (await callTool("touchque_check_integration", { code: "requireTouchque('SEND_MONEY')", feature: "phone_approval", diff }, ws, {}, loadConfig({}))).content[0].text;
-  assert.match(noLang, /@touchque\/web below 2\.1\.0/, "language left out: Node, like the rest of the checks");
-  const ok = (await callTool("touchque_check_integration", { code: "requireTouchque('SEND_MONEY')", language: "node", feature: "phone_approval", diff: diff.replace("^2.0.0", "^2.1.0") }, ws, {}, loadConfig({}))).content[0].text;
-  assert.doesNotMatch(ok, /below 2\.1\.0/);
+  assert.match(noLang, /@touchque\/web below 2\.2\.0/, "language left out: Node, like the rest of the checks");
+  const ok = (await callTool("touchque_check_integration", { code: "requireTouchque('SEND_MONEY')", language: "node", feature: "phone_approval", diff: diff.replace("^2.0.0", "^2.2.0") }, ws, {}, loadConfig({}))).content[0].text;
+  assert.doesNotMatch(ok, /below 2\.2\.0/);
+});
+
+test("5.2: .NET is on NuGet; the plain page follows repeated expiresAt and enrollment_off", async () => {
+  const { HELP } = require("./tools");
+  assert.doesNotMatch(HELP, /not on NuGet/);
+  const pick = JSON.parse((await callTool("touchque_pick_sdk", { language: "dotnet" }, fakeWorkspace(), {}, loadConfig({}))).content[0].text);
+  assert.equal(pick.published, true);
+  assert.equal(pick.version, "5.2.0");
+  assert.match(pick.install, /^dotnet add package Touchque\.AspNetCore/);
+  assert.equal(pick.url, "https://www.nuget.org/packages/Touchque.AspNetCore");
+  const ws = fakeWorkspace({ actionTypes: [{ type: "SEND_MONEY", name: "Send money", critical: true, active: true }] });
+  const ctx = await ws.context();
+  ctx.features = [{ id: "core_2fa", enabled: true }];
+  ctx.enabledFeatures = ["core_2fa"];
+  const plain = (await callTool("touchque_generate_integration", { feature: "phone_approval", language: "dotnet", action: "SEND_MONEY", frontend: "plain" }, ws, {}, loadConfig({}))).content[0].text;
+  assert.doesNotMatch(plain, /not released yet/);
+  assert.match(plain, /every waiting answer carries the request's touchque\.expiresAt/);
+  assert.match(plain, /reason enrollment_off .*final/);
+  assert.match(plain, /r\.ToResult\(errorBody\)/);
+  assert.match(plain, /return new EmptyResult\(\)/);
+  assert.match(plain, /services\.Configure<TouchqueOptions>/);
+  const gen = async (language) => (await callTool("touchque_generate_integration", { feature: "phone_approval", language, action: "SEND_MONEY", frontend: "plain" }, ws, {}, loadConfig({}))).content[0].text;
+  assert.match(await gen("php"), /\$this->app->instance\(Touchque::class, \$client\)/);
+  assert.match(await gen("java"), /@TestConfiguration/);
+  assert.match(await gen("python"), /whenever a page reads its answers \(@touchque\/web or a plain page\)/);
+  assert.match(await gen("node"), /withTouchque\(action, handler, \{ user, details, errorBody \}\)/);
+  assert.match(await gen("go"), /POST \/login\/\{requestId\}\/consume/);
 });

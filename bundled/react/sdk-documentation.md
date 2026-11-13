@@ -38,11 +38,16 @@ function TransferButton() {
     <>
       <button onClick={send} disabled={status === 'pending'}>Send</button>
       {step?.state === 'waiting' && step.number && <p>Approve {step.number} on your phone</p>}
-      {step?.state === 'enroll' && <img src={step.enroll!.qrCodeDataUrl} alt="Scan with Touchque" />}
+      {step?.enroll && <img src={step.enroll.qrCodeDataUrl} alt="Scan with Touchque" />}
+      {step?.reason === 'enrollment_off' && <p>No phone is linked to this account yet. Link the Touchque app first.</p>}
     </>
   );
 }
 ```
+
+`status` is `'done'` once your route answered, and `'error'` for a refusal (4xx) or for a final `enrollment_off`
+step (no phone linked, and the route may not link one). That one is a 202, so `res.ok` from `run()` is true: read
+`status`, not `res.ok`.
 
 ## Drop-in approval dialog
 
@@ -52,8 +57,12 @@ import { useTouchqueApproval, TouchqueApproval } from '@touchque/react';
 function SendMoney() {
   const approval = useTouchqueApproval({ baseUrl: '/touchque', credentials: 'include' });
   const send = async () => {
-    const res = await approval.fetch('/api/transfer', { method: 'POST', body: JSON.stringify({ amount: 250 }) });
-    if (res.ok) toast('Sent');
+    try {
+      const res = await approval.fetch('/api/transfer', { method: 'POST', body: JSON.stringify({ amount: 250 }) });
+      if (res.ok) toast('Sent');
+    } catch {
+      // Closed, or no phone linked (enrollment_off): the dialog shows why.
+    }
   };
   return (
     <>
@@ -66,7 +75,8 @@ function SendMoney() {
 
 The dialog opens only when your server asks for an approval. It shows the number to pick on the phone, the
 first-time link QR, the offline QR and code, the passkey step and refusals with their case code; closing it
-rejects the call with an `AbortError`. `approval.login()` runs the push sign-in the same way. Props: `theme`
+rejects the call with an `AbortError`, and a final `enrollment_off` step (no phone linked) with a
+`TouchqueWebAPIError` (status 202) while the dialog shows the not-linked error. `approval.login()` runs the push sign-in the same way. Props: `theme`
 (`light`, `dark`, `auto`), `className`, `style` (set the `--tq-approval-*` CSS variables there). Texts:
 `useTouchqueApproval(config, { texts })`. The hook also returns the state (`phase`, `number`, `offline`,
 `error`…) to render your own.

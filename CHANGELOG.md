@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.5.0 (2026-11-13)
+
+SDK 5.2 on every registry, .NET on NuGet for the first time since 4.2.0 (@touchque/web 2.2.0, @touchque/react
+2.1.0). One reviewer per SDK checked the integration text against the 5.2 source, each finding challenged by a
+second agent (11 confirmed, all fixed).
+
+- Bundles from sdks 7dbba7d. pick_sdk: 5.2.0 everywhere; .NET `dotnet add package Touchque.AspNetCore`
+  (workers and consoles: Touchque), with its NuGet link; the ".NET SDK (not on NuGet yet)" lines are gone from
+  the instructions and help.
+- The guard inside the handler now points at the 5.2 helpers instead of workarounds: a null client is the
+  default client (runGuard(null), run_guard(None), RunGuard(nil), Guard::run(null), Guard.run(nil),
+  Guard.run(null), Guard.RunAsync(null)) and one call gives the answer (guardResponse, guard_response,
+  WriteGuardResult, Guard::response, Guard.response, Guard.response, r.ToResult / WriteAsync). Java and .NET
+  keep the per-request client from the starter / DI with Guard.withoutClient / WithoutClient as the fallback.
+- Tests: FakeTouchque for Node (@touchque/node/testing), Python and Ruby; for PHP, Go, Java and .NET how to
+  reach the client the adapter really uses (Laravel container binding, a @TestConfiguration bean,
+  ConfigureTestServices; setDefaultClient only for the null-client path) and, for Go, the stub endpoints.
+- Node names both adapters' signatures (withTouchque takes the handler second, user required). FastAPI's
+  exception handler is required for plain pages too. .NET: no TouchqueClient in a controller constructor, and
+  IActionResult actions write with WriteAsync.
+- Plain pages: every waiting answer carries the request's expiresAt; enrollment_off is final; @touchque/web
+  ^2.2.0 and @touchque/react ^2.1.0, and check_integration warns below web 2.2.0 next to a 5.2 SDK.
+- README material budget 16,000 / 14,500 characters (Python's handler section with FastAPI is 5.8k); one
+  get_sdk_types declaration up to 12,000 (PHP Guard).
+
 ## 4.4.1 (2026-11-12)
 
 PHP 5.1.0 is on Packagist and Java 5.1.0 on Maven Central: every server SDK except .NET is on 5.1 here. Both were

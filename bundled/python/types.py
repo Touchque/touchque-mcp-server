@@ -11,7 +11,7 @@
 import logging as _logging
 
 from .config import Config
-from .client import Touchque, get_default_client
+from .client import Touchque, get_default_client, set_default_client
 from .exceptions import (
     TouchqueException,
     TouchqueAPIException,
@@ -38,8 +38,8 @@ from .safe_guard import (
     with_safe_approvals,
 )
 from .guard import (
-    run_guard, is_status_poll, guard_input_from_headers, guard_response_headers, silent_input_from_headers, BeforeStart,
-    BROWSER_HEADER,
+    run_guard, is_status_poll, guard_input_from_headers, guard_response, guard_response_body, guard_response_headers,
+    silent_input_from_headers, BeforeStart, ErrorBody, BROWSER_HEADER,
 )
 from .resources.risk import parse_risk_check
 from .resources.recovery import is_recovery_open
@@ -72,6 +72,7 @@ __all__ = [
     'Touchque',
     'Config',
     'get_default_client',
+    'set_default_client',
     'TouchqueException',
     'TouchqueAPIException',
     'TouchqueFeatureException',
@@ -105,7 +106,10 @@ __all__ = [
     'is_status_poll',
     'BeforeStart',
     'guard_input_from_headers',
+    'guard_response',
+    'guard_response_body',
     'guard_response_headers',
+    'ErrorBody',
     'silent_input_from_headers',
     'BROWSER_HEADER',
     'parse_risk_check',
@@ -228,6 +232,7 @@ class Config:
 # From touchque/client.py — the Touchque client class
 # ─────────────────────────────────────────────────────────────
 
+import threading
 from typing import Any, Dict, Optional
 
 from .config import Config
@@ -329,17 +334,45 @@ class Touchque:
 
 
 _default_client: Optional[Touchque] = None
+# Guards building and replacing the default client, so a client set during the first build is never lost.
+_default_lock = threading.Lock()
 
 
 def get_default_client() -> Touchque:
     """The client built from TQ_API_KEY / TQ_API_SECRET, created on first use
-    (raises ``TouchqueConfigException`` while they are not set). The adapters
-    use it when given no ``client``; ``touchque.testing.FakeTouchque().install()``
+    and kept, so the environment is read once per process unless
+    ``set_default_client`` resets it. Raises ``TouchqueConfigException``
+    while they are not set: call it at startup to fail fast. The adapters,
+    ``run_guard(None, ...)`` and ``is_status_poll(None, ...)`` use it when
+    given no ``client``; ``touchque.testing.FakeTouchque().install()``
     replaces it in tests."""
     global _default_client
-    if _default_client is None:
-        _default_client = Touchque()
-    return _default_client
+    client = _default_client
+    if client is not None:
+        return client
+    with _default_lock:  # built once, and never over a client set meanwhile
+        if _default_client is None:
+            _default_client = Touchque()
+        return _default_client
+
+
+def set_default_client(client: Optional[Touchque]) -> None:
+    """Makes ``client`` the default client (``get_default_client()``) that
+    the adapters, ``run_guard(None, ...)`` and ``is_status_poll(None, ...)``
+    use: your own ``Touchque`` (another ``Config``: base URL, timeout).
+    ``None`` forgets it, so the next call builds it again from
+    ``TQ_API_KEY`` / ``TQ_API_SECRET`` / ``TQ_API_URL`` (a test that changes
+    them, a rotated key). The SDK's own lines go to
+    ``logging.getLogger('touchque')`` whichever client is used."""
+    _swap_default_client(client)
+
+
+def _swap_default_client(client: Optional[Touchque]) -> Optional[Touchque]:
+    """Sets the default client under ``_default_lock``; returns the one it replaced."""
+    global _default_client
+    with _default_lock:
+        previous, _default_client = _default_client, client
+        return previous
 
 # ─────────────────────────────────────────────────────────────
 # From touchque/steps.py — the headless step-up flow
@@ -417,6 +450,9 @@ def start(client: 'Touchque', action: str, user: str, details: Optional[LoginDet
           context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Starts an approval for `action` — never waits.
 
+    ``enroll=False``: a user with no phone linked gets
+    ``{'state': 'enroll', 'reason': 'enrollment_off'}`` instead of a first-time QR.
+
     ``browser_proof`` (silent sign-ins): the browser's device-bound key proof
     (``X-Touchque-Browser``), passed through untouched. Once the user
     approves, Touchque knows this browser."""
@@ -454,7 +490,8 @@ def start(client: 'Touchque', action: str, user: str, details: Optional[LoginDet
         why = {'caseCode': err.case_code} if err.case_code else {}
         if err.status == 404 and (code == 'device_not_linked' or 'linked device' in str(err).lower()):
             if not enroll:
-                return {'state': 'enroll'}
+                # No phone, and this guard may not show a QR: say so, so the page stops polling.
+                return {'state': 'enroll', 'reason': 'enrollment_off'}
             return _enroll_step(client, user)
         if err.status == 423:
             return {'state': 'frozen', 'retryAfter': err.retry_after, **why}
@@ -545,11 +582,15 @@ _STATE_MAP = {'PENDING': 'waiting', 'CONFIRMED': 'approved', 'REJECTED': 'reject
 
 
 def check(client: 'Touchque', request_id: str) -> Dict[str, Any]:
-    """Current state of a started approval."""
+    """Current state of a started approval, with the request's live
+    ``expiresAt`` when the API gives it (a Vishing Shield escalation to a
+    passkey extends it)."""
     s = client.login.status(request_id)
     state = 'passkey_required' if s.get('status') == 'PENDING' and s.get('requiresPasskey') \
         else _STATE_MAP.get(s.get('status'), 'waiting')
     step: Dict[str, Any] = {'state': state, 'requestId': request_id}
+    if isinstance(s.get('expiresAt'), str) and s['expiresAt']:
+        step['expiresAt'] = s['expiresAt']
     if state == 'approved' and s.get('assurance'):
         step['assurance'] = s['assurance']
     return step
@@ -1378,10 +1419,13 @@ class RelayHandler:
 
     @property
     def client(self) -> 'Touchque':
-        if self._client is None:
-            from .client import get_default_client
-            self._client = get_default_client()
-        return self._client
+        """The client given to the handler, else the default client, looked
+        up on every request (``get_default_client()`` keeps it process-wide),
+        so ``set_default_client`` and ``FakeTouchque.install()`` reach it."""
+        if self._client is not None:
+            return self._client
+        from .client import get_default_client
+        return get_default_client()
 
     # ── entry point ─────────────────────────────────────────────────────
     def handle(
@@ -1452,15 +1496,13 @@ as one Blueprint - see ``touchque.relay.RelayHandler`` for every option:
     ), url_prefix='/touchque')
 """
 import functools
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from flask import Blueprint, abort, current_app, g, json, jsonify, request
 
 from ..client import Touchque
-from ..guard import (
-    ErrorBody, SilentSignIn, guard_input_from_headers, guard_response_body, guard_response_headers, run_guard,
-    silent_input_from_headers,
-)
+from ..guard import ErrorBody, SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
+from ..guard import guard_response as _guard_response
 from ..relay import RELAY_ROUTES, RelayHandler
 from ..steps import LoginDetails
 
@@ -1472,6 +1514,19 @@ def _default_user() -> Optional[str]:
     if isinstance(u, str):
         return u
     return getattr(u, 'email', None) or getattr(u, 'id', None) or getattr(u, 'username', None)
+
+
+def guard_response(result: Dict[str, Any], error_body: Optional[ErrorBody] = None) -> Tuple[int, Dict[str, str], Any]:
+    """What ``require_touchque`` sends for a ``run_guard`` result that is not
+    an approval, as ``(status, headers, body)``: ``touchque.guard_response``
+    with ``error_body``'s result encoded by your app's JSON provider (dates,
+    ``Decimal``, ``UUID``, dataclasses), as the decorator encodes it. For the
+    guard inside your own view::
+
+        status, headers, body = guard_response(result, error_body)
+        return jsonify(body), status, headers
+    """
+    return _guard_response(result, error_body, encode=json.dumps)
 
 
 def require_touchque(
@@ -1515,8 +1570,9 @@ def require_touchque(
     counts by Flask's JSON encoding: an object (a dict, a dataclass, a pydantic
     model) is sent with ``touchque`` set to the step, anything else as it is.
     Status and headers stay, and every refusal carries ``X-Touchque-State``
-    (and ``X-Touchque-Reason``). Never called for a 202 step (see
-    ``guard_response_body``).
+    (and ``X-Touchque-Reason``). Never called for a 202 step. For
+    ``run_guard`` in your own view, this module's ``guard_response`` gives
+    the same answer.
     """
     user_of = user or _default_user
     tq = client
@@ -1538,9 +1594,10 @@ def require_touchque(
                 g.touchque = result['approved']
                 return view(*args, **kwargs)
             # Encoded like the response (the app's JSON provider), so a value it cannot encode is caught.
-            resp = jsonify(guard_response_body(result, error_body, encode=json.dumps))
-            resp.status_code = result['status']
-            for name, value in guard_response_headers(result).items():
+            status, headers, body = guard_response(result, error_body)
+            resp = jsonify(body)
+            resp.status_code = status
+            for name, value in headers.items():
                 resp.headers[name] = value
             return resp
         return wrapped
@@ -1615,10 +1672,11 @@ header ``X-Touchque-Token: <token>``. Once approved the dependency resolves
 to the approval (once) and your route runs.
 
 FastAPI's default exception handler puts that JSON under a top-level
-``"detail"`` key (``{"detail": {"touchque": ..., "token": ...}}``) — unlike
-the Django/Flask adapters, which return it at the top level. Call
-``install_touchque_exception_handler(app)`` once at startup to flatten it and
-match the other adapters exactly (also what ``error_body`` returns).
+``"detail"`` key (``{"detail": {"touchque": ..., "token": ...}}``), where
+``@touchque/web`` never sees the step. Call
+``install_touchque_exception_handler(app)`` once at startup: it is REQUIRED
+when your pages use ``@touchque/web``. It sends the answer at the top level,
+like the Django/Flask adapters (also what ``error_body`` returns).
 
 ``run_guard`` makes a blocking HTTP call (the ``requests`` library); it runs
 in FastAPI's threadpool via ``anyio.to_thread`` so it never blocks the event
@@ -1642,7 +1700,7 @@ Callbacks may be sync or async:
 """
 import inspect
 import json
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 import anyio
 import anyio.from_thread
@@ -1654,9 +1712,10 @@ from fastapi.responses import JSONResponse, Response
 
 from ..client import Touchque
 from ..guard import (
-    ErrorBody, SilentSignIn, _custom_body, _error_body_failed, _refusal, guard_input_from_headers,
-    guard_response_headers, run_guard, silent_input_from_headers,
+    ErrorBody, SilentSignIn, _custom_body, _error_body_failed, _refusal, guard_input_from_headers, run_guard,
+    silent_input_from_headers,
 )
+from ..guard import guard_response as _guard_response
 from ..relay import RELAY_ROUTES, RelayHandler
 from ..steps import LoginDetails
 
@@ -1675,17 +1734,30 @@ def _encode(value: Any) -> str:
     return json.dumps(jsonable_encoder(value), ensure_ascii=False, allow_nan=False, separators=(',', ':'))
 
 
-async def _response_body(result: Dict[str, Any], error_body: Optional[Callable[[Dict[str, Any]], Any]]) -> Any:
-    """``guard_response_body`` for FastAPI: an ``error_body`` may be async."""
-    if error_body is None or result['status'] < 400:
-        return result['body']
+async def guard_response(result: Dict[str, Any], error_body: Optional[Callable[[Dict[str, Any]], Any]] = None
+                         ) -> Tuple[int, Dict[str, str], Any]:
+    """What ``RequireTouchque`` sends for a ``run_guard`` result that is not
+    an approval, as ``(status, headers, body)``, to await:
+    ``touchque.guard_response`` with an async ``error_body`` awaited and its
+    result encoded by ``jsonable_encoder`` (a pydantic model keeps its
+    aliases), as the dependency does. For the guard inside your own route
+    (``run_guard`` blocks: run it in a thread from an ``async def`` route)::
+
+        result = await anyio.to_thread.run_sync(lambda: run_guard(None, user, 'SEND_MONEY', ...))
+        if 'approved' not in result:
+            status, headers, body = await guard_response(result, error_body)
+            return JSONResponse(body, status_code=status, headers=headers)
+    """
+    status, headers, body = _guard_response(result)
+    if error_body is None or status < 400:
+        return status, headers, body
     try:
         custom = error_body(_refusal(result))
         if inspect.isawaitable(custom):
             custom = await custom
-        return _custom_body(result, custom, _encode, plain=False)  # jsonable_encoder: pydantic aliases kept
+        return status, headers, _custom_body(result, custom, _encode, plain=False)
     except Exception as err:  # noqa: BLE001 - your callback must not turn a refusal into a crash
-        return _error_body_failed(result, err)
+        return status, headers, _error_body_failed(result, err)
 
 
 async def _default_user(request: Request) -> Optional[str]:
@@ -1738,9 +1810,10 @@ def RequireTouchque(  # noqa: N802 — reads as a dependency factory, PascalCase
     an object (a dict, a pydantic model, a dataclass) is sent with
     ``touchque`` set to the step, anything else as it is. Status and headers
     stay, and every refusal carries ``X-Touchque-State`` (and
-    ``X-Touchque-Reason``). Never called for a 202 step (see
-    ``guard_response_body``). With ``install_touchque_exception_handler`` it is
-    the whole body; without it, FastAPI puts it under ``"detail"``.
+    ``X-Touchque-Reason``). Never called for a 202 step. With
+    ``install_touchque_exception_handler`` it is the whole body; without it,
+    FastAPI puts it under ``"detail"``. For ``run_guard`` in your own route,
+    this module's awaitable ``guard_response`` gives the same answer.
     """
     user_of = user or _default_user
     tq = client
@@ -1768,16 +1841,27 @@ def RequireTouchque(  # noqa: N802 — reads as a dependency factory, PascalCase
         ))
         if 'approved' in result:
             return result['approved']
-        raise _GuardAnswer(result['status'], await _response_body(result, error_body), guard_response_headers(result))
+        status, headers, body = await guard_response(result, error_body)
+        raise _GuardAnswer(status, body, headers)
 
     return dependency
 
 
 def install_touchque_exception_handler(app: fastapi.FastAPI) -> None:
-    """Optional: makes a raised Touchque step return the SAME JSON shape as
-    the Django/Flask adapters (no ``{"detail": ...}`` wrapper), and an
-    ``error_body`` result exactly as returned. Every other ``HTTPException``
-    goes to FastAPI's own handler, unchanged (no body on a 204 or 304)."""
+    """Required when your pages use ``@touchque/web``: without it a
+    ``RequireTouchque`` step is sent as ``{"detail": {...}}`` and the page
+    never sees it. Sends Touchque's steps and refusals with the SAME JSON
+    shape as the Django/Flask adapters (no ``{"detail": ...}`` wrapper), and an
+    ``error_body`` result exactly as returned.
+
+    It handles only Touchque's answers (and an ``HTTPException`` whose
+    ``detail`` is a dict with ``touchque``). Every other ``HTTPException``
+    goes to FastAPI's default handler (``http_exception_handler``),
+    unchanged (no body on a 204 or 304). It is registered for
+    ``fastapi.HTTPException``, so it replaces your own handler for that
+    class (one you register after it replaces it instead), and the
+    ``fastapi.HTTPException``s you raise no longer reach a handler you set
+    for Starlette's ``HTTPException``."""
     from fastapi import Request as _Request
     from fastapi.exception_handlers import http_exception_handler
     from fastapi.responses import JSONResponse
@@ -1894,7 +1978,7 @@ or pass ``csrf_exempt=True`` if you protect them another way.
 """
 import functools
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
@@ -1902,10 +1986,8 @@ from django.urls import re_path
 from django.views.decorators.csrf import csrf_exempt as _csrf_exempt
 
 from ..client import Touchque
-from ..guard import (
-    ErrorBody, SilentSignIn, guard_input_from_headers, guard_response_body, guard_response_headers, run_guard,
-    silent_input_from_headers,
-)
+from ..guard import ErrorBody, SilentSignIn, guard_input_from_headers, run_guard, silent_input_from_headers
+from ..guard import guard_response as _guard_response
 from ..relay import RelayHandler
 from ..steps import LoginDetails
 
@@ -1918,6 +2000,22 @@ def _default_user(request: HttpRequest) -> Optional[str]:
         return u
     email = getattr(u, 'email', None)
     return email or getattr(u, 'username', None) or str(getattr(u, 'pk', '') or '') or None
+
+
+def guard_response(result: Dict[str, Any], error_body: Optional[ErrorBody] = None) -> Tuple[int, Dict[str, str], Any]:
+    """What ``require_touchque`` sends for a ``run_guard`` result that is not
+    an approval, as ``(status, headers, body)``: ``touchque.guard_response``
+    with ``error_body``'s result encoded by ``DjangoJSONEncoder`` (dates,
+    ``Decimal``, ``UUID``), as the decorator encodes it. For the guard inside
+    your own view::
+
+        status, headers, body = guard_response(result, error_body)
+        resp = JsonResponse(body, status=status, safe=False)
+        for name, value in headers.items():
+            resp[name] = value
+        return resp
+    """
+    return _guard_response(result, error_body, encode=_encode)
 
 
 def require_touchque(
@@ -1962,7 +2060,8 @@ def require_touchque(
     dataclass, a pydantic model) is sent with ``touchque`` set to the step,
     anything else as it is. Status and headers stay, and every refusal carries
     ``X-Touchque-State`` (and ``X-Touchque-Reason``). Never called for a 202
-    step (see ``guard_response_body``).
+    step. For ``run_guard`` in your own view, this module's ``guard_response``
+    gives the same answer.
     """
     user_of = user or _default_user
     tq = client
@@ -1983,9 +2082,9 @@ def require_touchque(
             if 'approved' in result:
                 request.touchque = result['approved']
                 return view(request, *args, **kwargs)
-            body = guard_response_body(result, error_body, encode=_encode)
-            resp = JsonResponse(body, status=result['status'], safe=False)
-            for name, value in guard_response_headers(result).items():
+            status, headers, body = guard_response(result, error_body)
+            resp = JsonResponse(body, status=status, safe=False)
+            for name, value in headers.items():
                 resp[name] = value
             return resp
         return wrapped

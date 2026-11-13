@@ -465,7 +465,10 @@ public final class StartOptions {
         return this;
     }
 
-    /** False: never show the first-time linking QR (a typed username proves nothing). */
+    /**
+     * False: never show the first-time linking QR (a typed username proves nothing). A user with no
+     * phone then gets {@code enroll} with reason {@code enrollment_off}.
+     */
     public StartOptions enroll(boolean v) {
         this.enroll = v;
         return this;
@@ -500,11 +503,13 @@ public record Approval(String requestId, String user, String action, Assurance a
  * over it). Contract, the same in every Touchque server SDK:
  * <ul>
  * <li>1st request: 202 {@code {"touchque": step, "token": ...}}; show the step in your UI;</li>
- * <li>repeat with the token (header {@code X-Touchque-Token}): 202 while waiting, then the protected action runs once;</li>
+ * <li>repeat with the token (header {@code X-Touchque-Token}): 202 while waiting, then the protected action runs once;
+ * a waiting poll repeats the request's {@code expiresAt};</li>
  * <li>while the first-time linking QR is up: 202 {@code {"touchque": {"state": "enroll", "expiresAt": ...}}} without
- * {@code enroll}, keep showing that QR; a new one comes with {@code enroll.qrCodeDataUrl} once it expired;</li>
+ * {@code enroll}, keep showing that QR; a new one comes with {@code enroll.qrCodeDataUrl} about 15 s before it expires;</li>
  * <li>refused: 403 / 408 / 423 / 429 {@code {"touchque": {"state": ...}}}.</li>
  * </ul>
+ * {@link #response} turns a result that is not an approval into its HTTP answer.
  */
 public final class Guard {
     public static final String TOKEN_HEADER = "X-Touchque-Token";
@@ -528,6 +533,14 @@ public final class Guard {
             "approved", 200, "rejected", 403, "blocked", 403, "expired", 408, "frozen", 423, "rate_limited", 429);
 
     private static final Set<String> WAITING = Set.of("waiting", "passkey_required", "offline");
+    /** A push or a passkey on its way: the steps whose polls repeat the request's expiry. */
+    private static final Set<String> ON_THE_PHONE = Set.of("waiting", "passkey_required");
+
+    /** The client of {@code run(null, …)}: built on first use, then kept (or set with {@link #setDefaultClient}). */
+    private static volatile TouchqueClient sharedClient;
+    private static final Object SHARED_CLIENT_LOCK = new Object();
+    /** How {@link #defaultClient()} builds it: from the environment. Package-private so a test can make a build fail. */
+    static volatile Supplier<TouchqueClient> clientBuilder = TouchqueClient::new;
 
     private Guard() {
     }
@@ -607,7 +620,10 @@ public final class Guard {
             return this;
         }
 
-        /** False: never show the first-time linking QR. */
+        /**
+         * False: never show the first-time linking QR. A user with no phone then gets 202
+         * {@code {"state": "enroll", "reason": "enrollment_off"}}.
+         */
         public Input enroll(boolean v) {
             this.enroll = v;
             return this;
@@ -688,7 +704,7 @@ public final class Guard {
         /** The refusal in a guard's answer, or null for a 202 step or an approval. */
         public static Refusal of(Result result) {
             if (result == null || result.approved() != null || result.status() < 400 || result.body() == null) return null;
-            JsonNode step = result.body().get("touchque");
+            JsonNode step = stepOf(result);
             JsonNode error = result.body().get("error");
             String state = Json.str(step, "state");
             String code = Json.str(error, "code");
@@ -708,16 +724,104 @@ public final class Guard {
         }
     }
 
+    /** The step a result answers: its body's {@code touchque}, else its {@link Result#step()} (a hook's result may carry only that). */
+    private static JsonNode stepOf(Result result) {
+        JsonNode step = result.body() == null ? null : result.body().get("touchque");
+        return step != null || result.step() == null ? step : Steps.toJson(result.step());
+    }
+
+    /**
+     * Your app's own JSON body for refused answers (status 400 or more: 401, 403, 408, 423, 429,
+     * 500, 503). Never called for a 202 step or on approval. What it returns counts by its JSON
+     * encoding: a JSON object is sent with {@code touchque} set to the step (so
+     * {@code @touchque/web} still sees the state; no token is added), anything else (a string, a
+     * number, a list, null) as it is. It gets a copy of the step. See {@link #response}.
+     */
+    @FunctionalInterface
+    public interface ErrorBody {
+        Object body(Refusal refusal);
+    }
+
+    /**
+     * The HTTP answer of a guard result that is not an approval, as {@link #response} builds it:
+     * the status, the headers ({@code Cache-Control: no-store}, {@code Retry-After} on 423 and 429,
+     * {@code X-Touchque-State} and {@code X-Touchque-Reason} on a refusal) and the JSON body (an
+     * object, or what an {@link ErrorBody} returned: a string, a number, a list, null). Send the
+     * body as JSON.
+     */
+    public record Response(int status, Map<String, String> headers, JsonNode body) {
+    }
+
+    /**
+     * What to send for a result that is not an approval: the status and headers
+     * {@code @RequireTouchque} and the relay send (they use this too), and the guard's body.
+     * {@code errorBody} (null: the guard's body) shapes the refusals, status 400 or more; it is
+     * never called for a 202 step. This form writes its result with the SDK's own ObjectMapper and
+     * logs nothing when it fails (the guard's body is sent then). For the answer
+     * {@code @RequireTouchque} sends with an errorBody, written with your app's ObjectMapper and
+     * logged, use {@link #response(Result, ErrorBody, ObjectMapper, System.Logger)}. Without an
+     * errorBody the two forms are the same.
+     *
+     * @throws IllegalArgumentException for an approval: run your action instead
+     */
+    public static Response response(Result result, ErrorBody errorBody) {
+        return response(result, errorBody, null, null);
+    }
+
+    /**
+     * The answer {@code @RequireTouchque} sends: {@link #response(Result, ErrorBody)} with your
+     * app's {@code mapper} writing what {@code errorBody} returns (null: the SDK's; it is read back
+     * with the SDK's limits, so more than 1,000 levels of nesting fall back too), and a
+     * {@code logger} for {@code [Touchque] errorBody failed: <message>} (null: nothing is logged).
+     *
+     * @throws IllegalArgumentException for an approval: run your action instead
+     */
+    public static Response response(Result result, ErrorBody errorBody, ObjectMapper mapper, System.Logger logger) {
+        if (result == null || result.approved() != null) {
+            throw new IllegalArgumentException("Guard.response answers a step or a refusal; on approval, run your action");
+        }
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Cache-Control", "no-store");
+        if (result.retryAfter() != null) headers.put("Retry-After", String.valueOf(result.retryAfter()));
+        headers.putAll(result.refusalHeaders());
+        return new Response(result.status(), Collections.unmodifiableMap(headers), body(result, errorBody, mapper, new SdkLog(logger, false)));
+    }
+
+    /** The guard's body, or for a refusal (400 or more) what {@code errorBody} makes of it. */
+    private static JsonNode body(Result result, ErrorBody errorBody, ObjectMapper mapper, SdkLog log) {
+        Refusal refusal = errorBody == null ? null : Refusal.of(result);
+        if (refusal == null) return result.body();
+        try {
+            // Decided by the real encoding: written with the app's ObjectMapper and read back with the SDK's, so the
+            // answer sent meets the same write and read limits (nesting depth, sizes). What cannot be written falls back below.
+            Object value = errorBody.body(refusal);
+            JsonNode node = value == null ? NullNode.instance : Json.MAPPER.readTree((mapper != null ? mapper : Json.MAPPER).writeValueAsBytes(value));
+            JsonNode step = stepOf(result);
+            // The SDK's key wins, so @touchque/web still sees the state.
+            if (node instanceof ObjectNode object && step != null) object.set("touchque", step.deepCopy());
+            return node != null ? node : NullNode.instance;
+        } catch (Exception | StackOverflowError e) {
+            // Checked exceptions too (a Kotlin lambda, @SneakyThrows), and a cycle in what it returned: the default body.
+            // Jackson's own message, without the reference chain (it names the app's fields and can run to kilobytes).
+            String message = e instanceof JsonProcessingException j ? j.getOriginalMessage() : e.getMessage();
+            log.error("[Touchque] errorBody failed: " + (message != null ? message : e.getClass().getSimpleName()));
+            return result.body();
+        }
+    }
+
     /**
      * True when this request only reads a state: it polls an approval already on its way (a valid
      * token bound to this user/action/details, still waiting) or a first-time linking QR still up (a
      * bound {@code enroll} token whose QR expires in more than 15 s), with no offline switch or typed
      * code. Relays do not count it against the per-user push limit. A start such a poll leads to (a
      * push once the phone is linked, a new QR) goes through {@link Input#beforeStart}, where relays
-     * charge it like a fresh attempt: every start is counted.
+     * charge it like a fresh attempt: every start is counted. A null {@code client} is
+     * {@link #defaultClient()}; while that cannot be built, false.
      */
     public static boolean isStatusPoll(TouchqueClient client, Input input) {
         if (empty(input.user) || empty(input.token) || input.offline || !empty(input.code)) return false;
+        if (client == null) client = defaultClientOrNull();
+        if (client == null) return false;
         ObjectNode claims = Steps.verifyGuardToken(client.apiSecret(), input.token);
         if (claims == null || !bound(claims, input)) return false;
         String st = Json.str(claims, "st");
@@ -737,6 +841,45 @@ public final class Guard {
      */
     public static Result withoutClient(Input input) {
         return empty(input.user) ? unauthenticated() : misconfigured();
+    }
+
+    /**
+     * The client {@link #run} and {@link #isStatusPoll} use when you pass null: the one
+     * {@link #setDefaultClient} set, else one built from {@code TQ_API_KEY}, {@code TQ_API_SECRET}
+     * and {@code TQ_API_URL} on first use and kept. A build that fails is not kept: the next call
+     * tries again. Thread-safe. It is not the Spring Boot starter's bean: that one also reads
+     * {@code touchque.*}. Call it at startup to fail fast: the guard's null-client path answers 500
+     * {@code misconfigured} and logs nothing, while this throws and names the problem.
+     *
+     * @throws TouchqueConfigException while it cannot be built (no key or secret, say)
+     */
+    public static TouchqueClient defaultClient() {
+        TouchqueClient c = sharedClient;
+        if (c != null) return c;
+        synchronized (SHARED_CLIENT_LOCK) {
+            if (sharedClient == null) sharedClient = clientBuilder.get();
+            return sharedClient;
+        }
+    }
+
+    /**
+     * Replaces the client {@code run(null, …)} and {@code isStatusPoll(null, …)} use, process-wide:
+     * a client built with a logger gives that path its log lines. {@code null} forgets it, so the
+     * next call builds one from the environment again.
+     */
+    public static void setDefaultClient(TouchqueClient client) {
+        synchronized (SHARED_CLIENT_LOCK) {
+            sharedClient = client;
+        }
+    }
+
+    /** {@link #defaultClient()}, or null while it cannot be built. */
+    private static TouchqueClient defaultClientOrNull() {
+        try {
+            return defaultClient();
+        } catch (TouchqueConfigException e) {
+            return null;
+        }
     }
 
     public static Result run(TouchqueClient client, Input input);  // implementation omitted
@@ -994,10 +1137,19 @@ public final class Login {
     /**
      * Where a request is: {@code status} PENDING, CONFIRMED, REJECTED or EXPIRED. {@code provisional}:
      * Vishing Shield, approved during a call and waiting for the phone to re-confirm.
+     * {@code expiresAt}: when the request expires (ISO 8601; a Vishing Shield escalation to a passkey
+     * extends it), null when the API did not say.
      */
     public record Status(String status, String externalUsername, String type, String referenceId, List<LoginDetail> details, boolean consumed,
                          boolean requiresPasskey, String confirmedVia, Assurance assurance, String rejectReason, boolean provisional,
-                         String reconfirmedAt, boolean revoked, String revokeReason, JsonNode reply) {
+                         String reconfirmedAt, boolean revoked, String revokeReason, JsonNode reply, String expiresAt) {
+        /** The answer without {@code expiresAt} (null), as before it was added. */
+        public Status(String status, String externalUsername, String type, String referenceId, List<LoginDetail> details, boolean consumed,
+                      boolean requiresPasskey, String confirmedVia, Assurance assurance, String rejectReason, boolean provisional,
+                      String reconfirmedAt, boolean revoked, String revokeReason, JsonNode reply) {
+            this(status, externalUsername, type, referenceId, details, consumed, requiresPasskey, confirmedVia, assurance, rejectReason, provisional,
+                    reconfirmedAt, revoked, revokeReason, reply, null);
+        }
     }
 
     /** An approved request: {@code provisional} means approved during a call (critical actions wait for the phone to re-confirm). */
@@ -1511,7 +1663,10 @@ public final class TouchqueGuardOptions {
         return this;
     }
 
-    /** False: never show the first-time linking QR. */
+    /**
+     * False: never show the first-time linking QR. A user with no phone then gets 202
+     * {@code {"state": "enroll", "reason": "enrollment_off"}}.
+     */
     public TouchqueGuardOptions enroll(boolean v) {
         this.enroll = v;
         return this;

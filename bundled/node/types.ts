@@ -523,6 +523,11 @@ export interface LoginStatusResponse {
    */
   requiresPasskey?: boolean;
   /**
+   * When the request expires (ISO 8601), as it is now: a request moved to a
+   * passkey during a call gets 180 s more for the ceremony.
+   */
+  expiresAt?: string;
+  /**
    * Vishing Shield: approved on the phone during a call. Still CONFIRMED;
    * the user's critical actions are refused (`blocked` / `provisional`) until
    * the phone re-confirms it after the call (`reconfirmedAt`) or the user
@@ -1537,7 +1542,10 @@ export interface StartOptions {
   /** End user's IP / user agent (location and device shown on the phone). */
   ip?: string;
   userAgent?: string;
-  /** Show an enrollment QR when the user has not linked a phone yet (default true). */
+  /**
+   * Show an enrollment QR when the user has not linked a phone yet (default true).
+   * With false such a user gets `{ state: 'enroll', reason: 'enrollment_off' }`: no QR.
+   */
   enroll?: boolean;
   /**
    * Silent sign-ins: the browser's device-bound key proof (`X-Touchque-Browser`),
@@ -1625,7 +1633,8 @@ export async function start(r: Resources, action: string, opts: StartOptions): P
     const data = err.data as { retryAfter?: number; reason?: string; error?: string };
     const why = err.caseCode ? { caseCode: err.caseCode } : {};
     if (err.status === 404 && (code === 'device_not_linked' || /linked device/i.test(err.message))) {
-      if (opts.enroll === false) return { state: 'enroll' };
+      // No QR may be shown here: say why, so a page stops instead of polling a step it cannot finish.
+      if (opts.enroll === false) return { state: 'enroll', reason: 'enrollment_off' };
       return enrollStep(r, opts.user);
     }
     if (err.status === 423) return { state: 'frozen', retryAfter: data.retryAfter, ...why };
@@ -1681,15 +1690,16 @@ async function enrollStep(r: Resources, user: string): Promise<Step> {
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i;
 
+/** An ISO 8601 time that parses. */
+const isIsoTime = (value: unknown): value is string => typeof value === 'string' && ISO_TIME.test(value) && Number.isFinite(Date.parse(value));
+
 /**
  * When a first-time QR stops working: the API's `expiresAt` when it is an ISO 8601
  * time, else now + `ttlMs` when that is positive, else nothing. The guard keeps a QR
  * with an expiry on screen while the page polls (see runGuard).
  */
 function qrExpiry(res: { expiresAt?: unknown; ttlMs?: unknown }): { expiresAt?: string } {
-  if (typeof res.expiresAt === 'string' && ISO_TIME.test(res.expiresAt) && Number.isFinite(Date.parse(res.expiresAt))) {
-    return { expiresAt: res.expiresAt };
-  }
+  if (isIsoTime(res.expiresAt)) return { expiresAt: res.expiresAt };
   if (typeof res.ttlMs === 'number' && res.ttlMs > 0) {
     const at = new Date(Date.now() + res.ttlMs);
     if (Number.isFinite(at.getTime())) return { expiresAt: at.toISOString() };
@@ -1697,12 +1707,18 @@ function qrExpiry(res: { expiresAt?: unknown; ttlMs?: unknown }): { expiresAt?: 
   return {};
 }
 
-/** Current state of a started approval. */
+/**
+ * Current state of a started approval, with the request's live `expiresAt` when
+ * Touchque's answer has one (a request moved to a passkey during a call gets 180 s more).
+ */
 export async function check(r: Resources, requestId: string): Promise<Step> {
   const s = await r.login.status(requestId);
   const map: Record<string, StepState> = { PENDING: 'waiting', CONFIRMED: 'approved', REJECTED: 'rejected', EXPIRED: 'expired' };
   const state: StepState = s.status === 'PENDING' && s.requiresPasskey ? 'passkey_required' : map[s.status] || 'waiting';
-  return { state, requestId, ...(state === 'approved' && s.assurance ? { assurance: s.assurance } : {}) };
+  return {
+    state, requestId, ...(isIsoTime(s.expiresAt) && { expiresAt: s.expiresAt }),
+    ...(state === 'approved' && s.assurance ? { assurance: s.assurance } : {}),
+  };
 }
 
 export interface CompleteExpectations {
@@ -1757,7 +1773,8 @@ export interface GuardTokenClaims {
   n?: string; // matching number
   oc?: string; // offline challenge id
   cc?: string; // "Why?" case code, shown while waiting
-  ee?: number; // first-time QR: when it expires (ms); until then polls keep it on screen
+  ee?: number; // first-time QR: when it expires (ms); polls keep it on screen until 15 s before
+  rx?: number; // the request's expiry (ms): waiting / passkey_required polls answer it when Touchque's status has none
   exp: number; // ms
 }
 
@@ -2291,7 +2308,7 @@ import type { Router, Request, Response } from 'express';
 import { Touchque } from './index';
 import { TouchqueRejectedError, TouchqueTimeoutError, TouchquePasskeyRequiredError, TouchqueAPIError } from './errors';
 import {
-  runGuard, guardInputFromHeaders, isStatusPoll, silentInputFromHeaders, refusalHeaders, SilentSignInOptions, GuardBody,
+  runGuard, guardInputFromHeaders, isStatusPoll, silentInputFromHeaders, guardResponse, SilentSignInOptions, GuardBody,
 } from './guard';
 import type { LoginRequestDetails } from './types';
 
@@ -2413,7 +2430,9 @@ export interface GuardInput {
    * Issue a first-time linking QR (and recovery codes) when the user has no
    * phone yet (default true). Pass false whenever `user` is not proven by your
    * own sign-in, e.g. a typed username before the password step: the QR would
-   * let anyone link their own phone to that account.
+   * let anyone link their own phone to that account. Such a user then gets 202
+   * `{ state: 'enroll', reason: 'enrollment_off' }`, a final answer: no QR,
+   * nothing to poll.
    */
   enroll?: boolean;
   action: string;
@@ -2479,7 +2498,60 @@ const STATUS: Record<StepState, number> = {
   approved: 200, rejected: 403, blocked: 403, expired: 408, frozen: 423, rate_limited: 429,
 };
 
-export async function runGuard(tq: Touchque, input: GuardInput): Promise<GuardResult>;  // implementation omitted
+/** The HTTP answer for a guard result that is not an approval (`guardResponse`). */
+export interface GuardResponse {
+  status: number;
+  /**
+   * `Cache-Control: no-store`; `Retry-After` on 423 and 429; on status 400 or
+   * more `X-Touchque-State`, and `X-Touchque-Reason` when the step has a reason.
+   */
+  headers: Record<string, string>;
+  /** A JSON value: the guard's body, or your `errorBody` shape. Send it with your framework's JSON. */
+  body: unknown;
+}
+
+export interface GuardResponseOptions {
+  /**
+   * Your app's own error shape, as the adapters' `errorBody`: called for an
+   * answer of status 400 or more with a `GuardRefusal`. What encodes to a JSON
+   * object is sent with `touchque` set to the step; anything else as it is;
+   * `undefined`, a throw or a result JSON cannot encode keeps the default body.
+   */
+  errorBody?: (refusal: GuardRefusal) => unknown;
+  /** Gets `[Touchque] errorBody failed: …` when `errorBody` throws (`console`, pino …). Default: nothing is logged. */
+  logger?: TouchqueLogger;
+}
+
+/**
+ * The status, headers and JSON body for a `runGuard` result that is not an
+ * approval, exactly as `requireTouchque` and `withTouchque` send them (they use
+ * it too). Run the protected action instead when `result.approved` is set.
+ *
+ * @example
+ * const result = await runGuard(null, { user: req.user?.email, action: 'SEND_MONEY', token: req.get(GUARD_HEADERS.token) });
+ * if (!result.approved) {
+ *   const { status, headers, body } = await guardResponse(result);
+ *   return res.status(status).set(headers).json(body);
+ * }
+ */
+export async function guardResponse(result: { status: number; body: GuardBody }, options: GuardResponseOptions = {}): Promise<GuardResponse> {
+  return respond(result, options.errorBody, sdkLog({ logger: options.logger }));
+}
+
+/**
+ * Runs the guard for one request. `tq` null or undefined: the default client,
+ * built from TQ_API_KEY / TQ_API_SECRET and kept once built; until it can be
+ * built the answer is 401 `unauthenticated` without a `user`, else 500
+ * `misconfigured` (nothing is logged: there is no client to log through).
+ */
+
+/**
+ * Runs the guard for one request. `tq` null or undefined: the default client,
+ * built from TQ_API_KEY / TQ_API_SECRET and kept once built; until it can be
+ * built the answer is 401 `unauthenticated` without a `user`, else 500
+ * `misconfigured` (nothing is logged: there is no client to log through).
+ */
+export async function runGuard(tq: Touchque | null | undefined, input: GuardInput): Promise<GuardResult>;  // implementation omitted
 
 /** The guard input an adapter adds for silent sign-ins: the proof header, only when the option is on. */
 export function silentInputFromHeaders(option: boolean | SilentSignInOptions | undefined, get: (name: string) => string | undefined | null): Pick<GuardInput, 'silentSignIn' | 'browserProof'>;  // implementation omitted
@@ -2494,9 +2566,10 @@ export function silentInputFromHeaders(option: boolean | SilentSignInOptions | u
  * 15 s away): it reads whether the phone is linked and keeps the QR. When it
  * would start something instead (the phone is linked, or the QR is about to
  * expire), runGuard calls `beforeStart`, where the relay charges it like a new
- * attempt.
+ * attempt. `tq` null or undefined: the default client, as for runGuard; false
+ * while it cannot be built.
  */
-export function isStatusPoll(tq: Touchque, input: GuardInput): boolean;  // implementation omitted
+export function isStatusPoll(tq: Touchque | null | undefined, input: GuardInput): boolean;  // implementation omitted
 
 /** Reads the guard headers from any headers object (Node IncomingHttpHeaders or Fetch Headers). */
 export function guardInputFromHeaders(get: (name: string) => string | undefined | null);  // implementation omitted

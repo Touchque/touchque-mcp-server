@@ -349,11 +349,36 @@ jag = Touchque::CrossAppAccess.request_id_jag(issuer: "https://sso.touchque.com"
 tokens = Touchque::CrossAppAccess.redeem_id_jag(token_endpoint: "https://auth.files.example/token", client_id: "acme",
                                                 client_secret: files_secret, assertion: jag["assertion"])
 
-# Your own authorization server (jwt-bearer grant):
-claims = Touchque::IdJagVerifier.new(issuer: "https://sso.touchque.com", audience: "https://auth.files.example")
-                                .verify(params[:assertion], client_id: authenticated_client_id)
+# Your own authorization server (jwt-bearer grant). One verifier per process (an initializer): it
+# remembers the jtis it accepted (first_use: for a store several processes share) and caches the keys.
+ID_JAGS = Touchque::IdJagVerifier.new(issuer: "https://sso.touchque.com", audience: "https://auth.files.example")
+claims = ID_JAGS.verify(params[:assertion], client_id: authenticated_client_id)
 
 Touchque::AgentCard.verify(card_json, card_url: "https://agent.example/.well-known/agent-card.json")
+```
+
+A refused call raises `Touchque::IdJagError`. For any answer but 2xx (a redirect too: it is never followed), its `error` is the `error` of the token endpoint's JSON answer, or `server_error` when that names none, and `status` is the answer's status. `invalid_response` is a 2xx answer that is not a JSON object (or, from the identity provider, holds no ID-JAG). `temporarily_unavailable` means the token endpoint could not be reached or its answer read: no `status`, the `Touchque::NetworkError` (or the error of a body that does not decompress) as `cause`, worth another try later.
+
+Optional DPoP binding (RFC 9449): give one key to both calls and the ID-JAG is bound to it (`cnf.jkt`), useless to anyone who copies it without the key. A token endpoint that asks for a nonce (`use_dpop_nonce` with one valid `DPoP-Nonce` header) gets the same request once more, with a new proof that carries it; `Touchque::IdJagError#dpop_nonce` is the latest valid nonce the server sent during the call. When the access token comes back DPoP-bound (`"token_type" => "DPoP"`), send it as `Authorization: DPoP <token>` with a `DPoP` proof for that method and URL that carries the token: `id_jag_dpop_proof(dpop_key, url, method:, access_token:)`, plus `nonce:` when the service asks for one (put in the proof as given). A proof's `htu` is the URL with scheme and host in lower case, the default port dropped, `/` for an empty path, the path as given (dot segments are not removed) and no query or fragment.
+
+Another company's authorization server that accepts Touchque ID-JAGs must verify the DPoP proof itself (`typ` `dpop+jwt`, the signature with the `jwk` in it, `htm`, `htu`, `iat`, each `jti` once, and the nonce when it requires one) before it calls `IdJagVerifier#verify`, because the verifier uses up the ID-JAG's `jti`: checked the other way round, a proof refused with `use_dpop_nonce` would leave the client's retry with the same ID-JAG refused as already used. It must also check `cnf.jkt`, refusing a bound ID-JAG unless the proof key's thumbprint equals it; `IdJagVerifier#verify` does the `cnf.jkt` part when you pass that thumbprint as `dpop_jkt:`.
+
+```ruby
+dpop_key = Touchque::CrossAppAccess.create_id_jag_dpop_key   # keep it in this process
+jag = Touchque::CrossAppAccess.request_id_jag(issuer: "https://sso.touchque.com", client_id: client_id, client_secret: secret,
+                                              id_token: id_token, audience: "https://auth.files.example", dpop_key: dpop_key)
+jag["dpop_bound"]   # true when the returned ID-JAG carries dpop_key.thumbprint as cnf.jkt
+tokens = Touchque::CrossAppAccess.redeem_id_jag(token_endpoint: "https://auth.files.example/token", client_id: "acme",
+                                                client_secret: files_secret, assertion: jag["assertion"], dpop_key: dpop_key)
+
+# Each call with a DPoP-bound access token: a new proof for its method and URL.
+url = "https://api.files.example/v1/files"
+headers = { "Authorization" => "DPoP #{tokens["access_token"]}",
+            "DPoP" => Touchque::CrossAppAccess.id_jag_dpop_proof(dpop_key, url, method: "GET", access_token: tokens["access_token"]) }
+
+# Your authorization server, once the request's DPoP proof has checked out (proof_jwk: the jwk in its header):
+claims = ID_JAGS.verify(params[:assertion], client_id: authenticated_client_id, dpop_jkt: Touchque::AgentKeys.thumbprint(proof_jwk))
+claims["cnf_jkt"]   # the bound key's thumbprint; nil for an unbound ID-JAG
 ```
 
 ## Shared Signals (security events from Touchque SSO)

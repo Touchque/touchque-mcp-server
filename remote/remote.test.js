@@ -462,7 +462,7 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   ctx.enabledFeatures = ["core_2fa"];
   const gen = async (language, frontend) => (await callTool("touchque_generate_integration", { feature: "phone_approval", language, action: "SEND_MONEY", frontend }, ws, {}, loadConfig({}))).content[0].text;
   const py = await gen("python", "plain");
-  assert.match(py, /guard \(5\.2\.0\)\. The adapter \(require_touchque \/ RequireTouchque\): with TQ keys missing it never throws/);
+  assert.match(py, /guard \(5\.3\.0\)\. The adapter \(require_touchque \/ RequireTouchque\): with TQ keys missing it never throws/);
   assert.match(py, /run_guard\(None, \.\.\.\)/);
   assert.match(py, /guard_response\(result, error_body\)/);
   assert.match(py, /touchque\.testing\.FakeTouchque/);
@@ -495,7 +495,7 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   assert.match(java51, /touchque\.api-key=/);
   assert.match(await gen("php", "plain"), /new Config\('tq_test', 'test-secret'/);
   const php = await gen("php", "plain");
-  assert.match(php, /guard \(5\.2\.0\)\. The adapter \(the Laravel middleware/);
+  assert.match(php, /guard \(5\.3\.0\)\. The adapter \(the Laravel middleware/);
   assert.match(php, /Guard::run\(null, \.\.\.\)/);
   assert.match(php, /Guard::response\(\$result, \$errorBody\)/);
   assert.doesNotMatch(await gen("java", "web"), /every retry during a first-time QR makes a new QR/);
@@ -518,7 +518,7 @@ test("5.2: .NET is on NuGet; the plain page follows repeated expiresAt and enrol
   assert.doesNotMatch(HELP, /not on NuGet/);
   const pick = JSON.parse((await callTool("touchque_pick_sdk", { language: "dotnet" }, fakeWorkspace(), {}, loadConfig({}))).content[0].text);
   assert.equal(pick.published, true);
-  assert.equal(pick.version, "5.2.0");
+  assert.equal(pick.version, "5.3.0");
   assert.match(pick.install, /^dotnet add package Touchque\.AspNetCore/);
   assert.equal(pick.url, "https://www.nuget.org/packages/Touchque.AspNetCore");
   const ws = fakeWorkspace({ actionTypes: [{ type: "SEND_MONEY", name: "Send money", critical: true, active: true }] });
@@ -538,4 +538,18 @@ test("5.2: .NET is on NuGet; the plain page follows repeated expiresAt and enrol
   assert.match(await gen("python"), /whenever a page reads its answers \(@touchque\/web or a plain page\)/);
   assert.match(await gen("node"), /withTouchque\(action, handler, \{ user, details, errorBody \}\)/);
   assert.match(await gen("go"), /POST \/login\/\{requestId\}\/consume/);
+});
+
+test("5.3: get_sdk_types answers the Cross App Access (ID-JAG, DPoP) API in every SDK", () => {
+  const { typeBlock } = require("./tools");
+  const want = {
+    node: ["IdJagVerifier", "createIdJagDpopKey", "idJagDpopProof", "requestIdJag", "redeemIdJag"],
+    python: ["IdJagVerifier", "create_id_jag_dpop_key", "id_jag_dpop_proof", "request_id_jag", "redeem_id_jag"],
+    go: ["NewIDJAGDPoPKey", "IDJAGDPoPProofWith", "RequestIDJAG", "RedeemIDJAG"],
+    php: ["IdJagVerifier", "CrossAppAccess"],
+    ruby: ["IdJagVerifier"],
+    java: ["IdJagVerifier", "CrossAppAccess"],
+    dotnet: ["IdJagVerifier", "CrossAppAccess"],
+  };
+  for (const [lang, syms] of Object.entries(want)) for (const sym of syms) assert.ok(typeBlock(lang, sym), `${lang} ${sym}`);
 });

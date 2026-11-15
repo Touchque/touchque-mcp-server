@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.5.1 (2026-11-15)
+
+SDK 5.3.0 on every registry (@touchque/web 2.2.0 and @touchque/react 2.1.0 unchanged): Cross App Access with
+optional DPoP binding, and the README fixes from the 4.5.0 review.
+
+- Bundles from the 5.3.0 release (sdks d693de7, exported from origin/main: the shared checkout was behind).
+  The READMEs' AI agents section carries the ID-JAG DPoP binding, the one error rule for the token endpoint and
+  the partner note (verify the DPoP proof before the verifier uses up the jti; check cnf.jkt) in all seven SDKs.
+- get_sdk_types answers the Cross App Access API in every SDK (IdJagVerifier, createIdJagDpopKey /
+  create_id_jag_dpop_key / NewIDJAGDPoPKey ..., the DPoP proof helpers, requestIdJag / redeemIdJag): each types
+  bundle now includes the SDK's cross-app-access source.
+- pick_sdk and the install lines: 5.3.0 (npm ^5.3.0, pip >=5.3.0, go @v5.3.0, composer ^5.3, gem ~> 5.3, Maven
+  5.3.0, NuGet).
+
 ## 4.5.0 (2026-11-13)
 
 SDK 5.2 on every registry, .NET on NuGet for the first time since 4.2.0 (@touchque/web 2.2.0, @touchque/react

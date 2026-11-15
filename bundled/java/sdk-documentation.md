@@ -20,15 +20,15 @@ Maven:
 <dependency>
   <groupId>com.touchque</groupId>
   <artifactId>touchque-spring-boot-starter</artifactId>   <!-- Spring Boot (brings touchque-java) -->
-  <version>5.2.0</version>
+  <version>5.3.0</version>
 </dependency>
 ```
 
 Gradle:
 
 ```kotlin
-implementation("com.touchque:touchque-spring-boot-starter:5.2.0")   // Spring Boot
-implementation("com.touchque:touchque-java:5.2.0")                  // anything else
+implementation("com.touchque:touchque-spring-boot-starter:5.3.0")   // Spring Boot
+implementation("com.touchque:touchque-java:5.3.0")                  // anything else
 ```
 
 ## Setup
@@ -221,6 +221,11 @@ class Transfers {
   `TouchqueConfigException`, naming the problem. To give the path a logger, set a client built with
   one: `Guard.setDefaultClient(new TouchqueClient(new TouchqueOptions().logger(logger)))`.
   `Guard.setDefaultClient(null)` forgets it, and the next call builds one from the environment again.
+  The starter never uses this default client: `@RequireTouchque`, the relay routes and the webhook
+  endpoint use the `TouchqueClient` bean. In Spring tests, point that bean at your fake API
+  (`touchque.base-url`, `touchque.api-key`, `touchque.api-secret` through `@DynamicPropertySource`
+  or test properties) or `@Import` a `@TestConfiguration` with your own `TouchqueClient` bean,
+  which replaces the starter's.
 - Run it after your own checks (ownership, balance), with the details the phone shows, built on
   your server.
 - Not approved: send `Guard.response(r, errorBody, objectMapper, logger)` as it is. Its headers
@@ -413,12 +418,82 @@ var jag = CrossAppAccess.requestIdJag(new CrossAppAccess.RequestOptions(clientId
 JsonNode tokens = CrossAppAccess.redeemIdJag(new CrossAppAccess.RedeemOptions("https://auth.files.example/token", "acme", jag.assertion())
     .clientSecret(filesSecret));
 
-// Your own authorization server (jwt-bearer grant):
-var verifier = new IdJagVerifier(new IdJagVerifier.Options("https://sso.touchque.com", "https://auth.files.example"));
-IdJagVerifier.Claims claims = verifier.verify(form.get("assertion"), authenticatedClientId);
-
 AgentCard.verify(cardJson, new AgentCard.VerifyOptions().cardUrl("https://agent.example/.well-known/agent-card.json"));
 ```
+
+Your own authorization server (jwt-bearer grant) builds the verifier once and keeps it in a field:
+its used-once jti store and key cache live in the instance.
+
+```java
+class TokenEndpoint {
+    private final IdJagVerifier verifier = new IdJagVerifier(new IdJagVerifier.Options("https://sso.touchque.com", "https://auth.files.example"));
+
+    // Each jwt-bearer token request, once the client is authenticated:
+    IdJagVerifier.Claims idJag(Map<String, String> form, String authenticatedClientId) {
+        return verifier.verify(form.get("assertion"), authenticatedClientId);
+    }
+}
+```
+
+DPoP binding (RFC 9449) is optional: give one key to both calls, and each sends a fresh proof. The
+identity provider binds the ID-JAG to the key (`cnf.jkt`), so a copy is useless without it;
+`jag.dpopBound()` says whether it did (null without a key).
+
+```java
+var dpopKey = CrossAppAccess.createIdJagDpopKey();   // P-256, kept in this process
+var jag = CrossAppAccess.requestIdJag(new CrossAppAccess.RequestOptions(clientId, secret, idToken, "https://auth.files.example")
+    .issuer("https://sso.touchque.com").dpopKey(dpopKey));   // jag.dpopBound()
+JsonNode tokens = CrossAppAccess.redeemIdJag(new CrossAppAccess.RedeemOptions("https://auth.files.example/token", "acme", jag.assertion())
+    .clientSecret(filesSecret).dpopKey(dpopKey));
+
+// The access token is DPoP-bound too (token_type DPoP): each call sends it with a new proof for its
+// method, URL and token.
+String at = tokens.get("access_token").asText();
+String url = "https://api.files.example/v1/files";
+HttpRequest call = HttpRequest.newBuilder(URI.create(url)).GET()
+    .header("Authorization", "DPoP " + at)
+    .header("DPoP", CrossAppAccess.idJagDpopProof(dpopKey, "GET", url, at, null))   // null: no server nonce
+    .build();
+
+// Your authorization server (TokenEndpoint above), once it has verified this request's DPoP proof
+// (and its nonce, if it asks for one):
+IdJagVerifier.Claims claims = verifier.verify(form.get("assertion"), authenticatedClientId, dpopJkt);   // claims.cnfJkt()
+```
+
+A proof names its request. `htm` is the method, trimmed of ASCII whitespace and uppercased (null
+or blank: POST; any other character outside an HTTP token, NUL and U+00A0 included, throws
+`TouchqueConfigException`). `htu` is the URL with the scheme and host lowercased, the default port
+dropped, "/" for an empty path, the path kept as given (raw non-ASCII characters percent-encoded,
+as the JDK's HttpClient sends them), and no query or fragment.
+
+`requestIdJag` and `redeemIdJag` retry once with a server nonce (RFC 9449 §8): on a 400 or 401
+`use_dpop_nonce` with a valid `DPoP-Nonce` header (printable ASCII without spaces, `"` or `\`, and
+the same value if the header comes more than once), they send the same request once more, with a
+new proof carrying that nonce, and no more. A 401 may ask in its `DPoP` challenge instead
+(`WWW-Authenticate: DPoP error="use_dpop_nonce"`; only that challenge's own `error` counts).
+A missing, empty, invalid or conflicting `DPoP-Nonce` means no retry.
+`TouchqueIdJagException.dpopNonce()` is the latest valid `DPoP-Nonce` the server sent during the
+call (the retry's answer's, else the first answer's), or null. A resource server can ask the same
+way (401 with `WWW-Authenticate: DPoP error="use_dpop_nonce"` and a `DPoP-Nonce` header): sign the
+call again with that nonce as the last argument.
+
+Only a 2xx answer with a JSON object is a token endpoint's answer. Any other status, a redirect
+included (it is never followed), throws `TouchqueIdJagException` with that `status()` and the
+answer's `error` when it is an RFC 6749 error code, else `server_error`. A 2xx without a JSON object
+throws `invalid_response`. A token endpoint that cannot be reached or read (refused, reset, timed
+out, headers the JDK's HttpClient refuses, a body cut off or over 10 MB) throws
+`temporarily_unavailable` with no `status()` and the failure as `getCause()`; an interrupted call
+keeps the thread's interrupt status. Each of them carries `dpopNonce()`.
+
+An authorization server that accepts Touchque ID-JAGs, yours or a partner company's, must verify the
+DPoP proof itself (`typ` dpop+jwt, the signature with the `jwk` it carries, `htm`, `htu`, `iat`, a
+`jti` used once, and the nonce if it requires one) before it calls `verify`, because `verify` uses
+up the ID-JAG's `jti`. The other way round, a proof refused for its nonce (`use_dpop_nonce`) would
+leave the client's retry, which sends the same ID-JAG, refused as already used. It must also check
+`cnf.jkt`: refuse a bound ID-JAG unless the proof key's thumbprint matches. This SDK's verifier
+does the `cnf.jkt` part when given that thumbprint (`AgentKeys.thumbprint(jwk)`, for a P-256 or
+Ed25519 key): the three-argument `verify` checks it before the jti is used up; the two-argument
+`verify` refuses bound ID-JAGs.
 
 ## Touchque Login (hosted sign-in)
 
@@ -593,11 +668,15 @@ A feature your organization cannot use here throws a `TouchqueFeatureException` 
 the user ("Tell your support team: K7P-2QX"). Your team opens the whole decision by that code in
 the dashboard.
 
-**Retries.** Every request is signed with a one-time nonce, so the SDK never replays a request.
-Don't wrap the client in a retry layer. Retry `TouchqueNetworkException` at the call site, and on
-429 or 423 wait `retryAfter()` seconds. The client never follows redirects and refuses plain
-`http://` except for localhost. If you pass your own `HttpClient`, build it with
-`HttpClient.Redirect.NEVER`.
+**Retries.** Every request to the Touchque API is signed with a one-time nonce, so the SDK never
+replays one. Don't wrap the client in a retry layer. Retry `TouchqueNetworkException` at the call
+site, and on 429 or 423 wait `retryAfter()` seconds. Cross App Access does resend once by itself:
+given a DPoP key, `CrossAppAccess.requestIdJag` and `redeemIdJag` send the same form to the token
+endpoint once more, with a new proof carrying the server's nonce, when it answers 400 or 401
+`use_dpop_nonce` with a valid `DPoP-Nonce` header (see
+[Cross App Access](#cross-app-access-id-jag-and-a2a-agent-cards)). The client never follows
+redirects and refuses plain `http://` except for localhost. If you pass your own `HttpClient`,
+build it with `HttpClient.Redirect.NEVER`.
 
 **Logging.** The SDK writes nothing to any log on its own. To see its own problems (a misconfigured
 guard or missing keys behind one, an `errorBody` or `onChallenge` that threw, a relay error or a

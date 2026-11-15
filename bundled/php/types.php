@@ -2321,3 +2321,726 @@ class TouchqueRelay
         return $user->email ?? (method_exists($user, 'getAuthIdentifier') ? (string)$user->getAuthIdentifier() : null) ?? $user->username ?? null;
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// From src/CrossAppAccess.php, src/IdJagVerifier.php — Cross App Access: ID-JAG, DPoP binding
+// ─────────────────────────────────────────────────────────────
+
+
+namespace Touchque;
+
+use Touchque\Exceptions\TouchqueConfigException;
+use Touchque\Exceptions\TouchqueIdJagException;
+use Touchque\Exceptions\TouchqueNetworkException;
+
+/**
+ * Cross App Access: Identity Assertion JWT Authorization Grants (ID-JAG,
+ * draft-ietf-oauth-identity-assertion-authz-grant, an open standard). An
+ * organization's identity provider (Touchque SSO) decides which of its apps
+ * may reach which other service for its members; the app trades a member's ID
+ * token for an ID-JAG there, then the ID-JAG for an access token at the other
+ * service's authorization server, with no consent screen per member.
+ *
+ *   $jag = CrossAppAccess::requestIdJag(['issuer' => 'https://sso.touchque.com', 'clientId' => $id, 'clientSecret' => $secret,
+ *                                        'idToken' => $idToken, 'audience' => 'https://auth.files.example']);
+ *   $tokens = CrossAppAccess::redeemIdJag(['tokenEndpoint' => 'https://auth.files.example/token', 'clientId' => 'acme',
+ *                                          'clientSecret' => $filesSecret, 'assertion' => $jag['assertion']]);
+ *
+ * Sender-constrained with DPoP (RFC 9449), optional: give the same key to both calls. The ID-JAG is
+ * then bound to it (cnf.jkt) and is useless to anyone who copies it without the key.
+ *
+ *   $dpopKey = CrossAppAccess::createIdJagDpopKey();
+ *   $jag = CrossAppAccess::requestIdJag([... , 'dpopKey' => $dpopKey]);      // $jag['dpopBound']
+ *   $tokens = CrossAppAccess::redeemIdJag([... , 'assertion' => $jag['assertion'], 'dpopKey' => $dpopKey]);
+ *
+ * A token endpoint that asks for a DPoP nonce (use_dpop_nonce, with one valid DPoP-Nonce header) gets
+ * the same request once more with it. Each call with a DPoP-bound access token ($tokens['token_type']
+ * 'DPoP') sends `Authorization: DPoP <access token>` and a new proof for that request:
+ *
+ *   $proof = CrossAppAccess::idJagDpopProof($dpopKey, $url, ['method' => 'GET', 'accessToken' => $tokens['access_token']]);
+ *
+ * Your own authorization server takes them with IdJagVerifier (pass the DPoP proof key's
+ * thumbprint as its third argument: a bound ID-JAG without it is refused).
+ */
+final class CrossAppAccess
+{
+    public const ID_JAG_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id-jag';
+    public const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token';
+    public const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
+    public const JWT_BEARER_GRANT = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
+
+    /** The options idJagDpopProof() takes. */
+    private const PROOF_OPTIONS = ['method', 'accessToken', 'nonce'];
+
+    /** RFC 9110 tchar: the characters of a token (an HTTP method, an auth-scheme, an auth-param name). */
+    private const TCHAR = '!#$%&\'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+    /** ASCII case mapping with strtr: strtolower()/strtoupper() follow the locale before PHP 8.2. */
+    private const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    private const LOWER = 'abcdefghijklmnopqrstuvwxyz';
+
+    /** @internal https, or http on this machine (tests). */
+    public static function safeUrl(string $url): bool
+    {
+        $u = parse_url($url);
+        $host = $u['host'] ?? '';
+        return ($u['scheme'] ?? '') === 'https' || (($u['scheme'] ?? '') === 'http' && in_array($host, ['localhost', '127.0.0.1', '[::1]'], true));
+    }
+
+    /**
+     * A fresh DPoP key (RFC 9449, P-256) for requestIdJag and redeemIdJag; keep it in this process.
+     * `['privateKey' => OpenSSLAsymmetricKey, 'publicJwk' => array, 'thumbprint' => string]`, the
+     * thumbprint (RFC 7638) being the ID-JAG's cnf.jkt.
+     */
+    public static function createIdJagDpopKey(): array
+    {
+        $jwk = AgentKeys::generate('ES256')['privateJwk'];
+        $public = ['kty' => 'EC', 'crv' => 'P-256', 'x' => $jwk['x'], 'y' => $jwk['y']];
+        $key = openssl_pkey_get_private(AgentKeys::ecPem(AgentKeys::b64urlDecode($jwk['d']), AgentKeys::b64urlDecode($jwk['x']), AgentKeys::b64urlDecode($jwk['y'])));
+        if ($key === false) {
+            throw new TouchqueConfigException('Could not make a DPoP key');
+        }
+        return ['privateKey' => $key, 'publicJwk' => $public, 'thumbprint' => AgentKeys::thumbprint($public)];
+    }
+
+    /**
+     * A DPoP proof (RFC 9449) with a key from createIdJagDpopKey(), for one request to $url. Options (a
+     * string or null each; an option name not listed here, such as 'access_token', or a value of another
+     * type throws TouchqueConfigException naming it):
+     *  - method: the request's HTTP method, trimmed and uppercased (htm); empty or left out: POST. A method
+     *    with a character that is not an RFC 9110 token character throws TouchqueConfigException.
+     *  - accessToken: for a call with a DPoP-bound access token (sent as `Authorization: DPoP <access token>`):
+     *    adds ath, the token's SHA-256 hash.
+     *  - nonce: the server's DPoP-Nonce: adds the nonce claim (as given: not checked for nonce syntax).
+     * htu is $url with its scheme and host lowercased, the default port (80 for http, 443 for https) dropped,
+     * "/" for an empty path, the path kept as given (no dot-segment removal, no percent-encoding changes), and
+     * no user info, query or fragment; a URL that is not an absolute http or https URL, or that has a control
+     * character, throws TouchqueConfigException. The header's jwk is rebuilt from the key as exactly kty, crv,
+     * x and y.
+     */
+    public static function idJagDpopProof(array $key, string $url, array $options = []): string
+    {
+        $unknown = array_diff(array_map('strval', array_keys($options)), self::PROOF_OPTIONS);
+        if ($unknown) {
+            throw new TouchqueConfigException('CrossAppAccess::idJagDpopProof(): unknown option(s) ' . implode(', ', $unknown)
+                . ' (options are camelCase: ' . implode(', ', self::PROOF_OPTIONS) . ')');
+        }
+        foreach (self::PROOF_OPTIONS as $name) {
+            if (isset($options[$name]) && !is_string($options[$name])) {
+                throw new TouchqueConfigException("CrossAppAccess::idJagDpopProof(): {$name} must be a string");
+            }
+        }
+        $jwk = self::dpopPublicJwk($key);
+        $claims = ['htm' => self::htm($options['method'] ?? ''), 'htu' => self::htu($url), 'iat' => time(), 'jti' => bin2hex(random_bytes(16))];
+        if (($options['accessToken'] ?? '') !== '') {
+            $claims['ath'] = AgentKeys::b64url(hash('sha256', $options['accessToken'], true));
+        }
+        if (($options['nonce'] ?? '') !== '') {
+            $claims['nonce'] = $options['nonce'];
+        }
+        $header = json_encode(['typ' => 'dpop+jwt', 'alg' => 'ES256', 'jwk' => $jwk], JSON_UNESCAPED_SLASHES);
+        $payload = json_encode($claims, JSON_UNESCAPED_SLASHES);
+        if ($header === false || $payload === false) {
+            throw new TouchqueConfigException('Could not encode the DPoP proof: ' . json_last_error_msg());
+        }
+        $input = AgentKeys::b64url($header) . '.' . AgentKeys::b64url($payload);
+        if (!openssl_sign($input, $der, $key['privateKey'], OPENSSL_ALGO_SHA256)) {
+            throw new TouchqueConfigException('Could not sign with the DPoP key');
+        }
+        return $input . '.' . AgentKeys::b64url(AgentKeys::derToRaw($der));
+    }
+
+    /**
+     * The public part of a key from createIdJagDpopKey(), rebuilt from its private key as exactly kty, crv,
+     * x and y, whatever else the key array carries. Anything else throws TouchqueConfigException: a private
+     * key that is not P-256, or a publicJwk that is not its public part.
+     */
+    private static function dpopPublicJwk(array $key): array
+    {
+        $private = $key['privateKey'] ?? null;
+        $given = $key['publicJwk'] ?? null;
+        $ec = null;
+        if ($private instanceof \OpenSSLAsymmetricKey || (is_resource($private) && get_resource_type($private) === 'OpenSSL key')) {
+            $ec = openssl_pkey_get_details($private)['ec'] ?? null;
+        }
+        if (!is_array($ec) || ($ec['curve_name'] ?? null) !== 'prime256v1' || !isset($ec['d'], $ec['x'], $ec['y']) || !is_array($given)) {
+            throw new TouchqueConfigException('the DPoP key must be one from createIdJagDpopKey()');
+        }
+        $jwk = ['kty' => 'EC', 'crv' => 'P-256', 'x' => AgentKeys::b64url(str_pad($ec['x'], 32, "\0", STR_PAD_LEFT)), 'y' => AgentKeys::b64url(str_pad($ec['y'], 32, "\0", STR_PAD_LEFT))];
+        if (($given['x'] ?? null) !== $jwk['x'] || ($given['y'] ?? null) !== $jwk['y']) {
+            throw new TouchqueConfigException('the DPoP key must be one from createIdJagDpopKey()');
+        }
+        return $jwk;
+    }
+
+    /**
+     * RFC 9449 htm: $method with ASCII whitespace (space, \t, \n, \r, \v, \f; not NUL, not U+00A0) trimmed and
+     * uppercased, POST when that leaves nothing; only RFC 9110 token characters.
+     */
+    private static function htm(string $method): string
+    {
+        $htm = strtr(trim($method, " \t\n\r\x0B\x0C"), self::LOWER, self::UPPER);
+        if ($htm === '') {
+            return 'POST';
+        }
+        if (strspn($htm, self::TCHAR) !== strlen($htm)) {
+            throw new TouchqueConfigException('CrossAppAccess::idJagDpopProof(): method ' . json_encode($method, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE)
+                . ' is not an HTTP method (RFC 9110 token characters only)');
+        }
+        return $htm;
+    }
+
+    /**
+     * RFC 9449 htu of $url, an absolute http or https URL: scheme and host lowercased, the default port (80 for
+     * http, 443 for https) dropped, "/" for an empty path, the path kept as given, and no user info, query or
+     * fragment.
+     */
+    private static function htu(string $url): string
+    {
+        if (preg_match('/[\x00-\x1F\x7F]/', $url)) {
+            // parse_url() would turn it into "_": the htu would not be the URL the request goes to.
+            throw new TouchqueConfigException('the URL ' . addcslashes($url, "\0..\37\177") . ' has a control character');
+        }
+        $u = parse_url($url);
+        $scheme = is_array($u) ? strtr($u['scheme'] ?? '', self::UPPER, self::LOWER) : '';
+        if (($scheme !== 'http' && $scheme !== 'https') || ($u['host'] ?? '') === '') {
+            throw new TouchqueConfigException("{$url} is not an absolute http or https URL");
+        }
+        $defaultPort = ['http' => 80, 'https' => 443][$scheme];
+        $port = isset($u['port']) && $u['port'] !== $defaultPort ? ':' . $u['port'] : '';
+        $path = $u['path'] ?? '';
+        return $scheme . '://' . strtr($u['host'], self::UPPER, self::LOWER) . $port . ($path === '' ? '/' : $path);
+    }
+
+    /** @internal The identity provider's OpenID configuration, checked against its issuer. */
+    public static function discover(string $issuer): array
+    {
+        $meta = McpAuth::getJson(rtrim($issuer, '/') . '/.well-known/openid-configuration');
+        if (($meta['issuer'] ?? null) !== $issuer) {
+            throw new TouchqueConfigException("the identity provider's metadata does not match its issuer");
+        }
+        return $meta;
+    }
+
+    /**
+     * One token request: [the answer, a JSON object; the latest valid DPoP-Nonce the server sent (else null)].
+     * Only a 2xx answer that is a JSON object is one: any other status (a redirect is not followed) throws
+     * TouchqueIdJagException with the answer's error (server_error when it is not an RFC 6749 error code), a
+     * 2xx that is not a JSON object invalid_response, and a request that gets no answer curl can read
+     * temporarily_unavailable; each with that nonce.
+     */
+    private static function postForm(string $url, array $form, ?array $basic, ?array $dpopKey = null): array
+    {
+        if (!self::safeUrl($url)) {
+            throw new TouchqueConfigException("{$url} must be an https URL");
+        }
+        $target = self::wireUrl($url);
+        $body = http_build_query(array_filter($form, static fn ($v) => $v !== null), '', '&', PHP_QUERY_RFC3986);
+        $headers = ['Accept: application/json', 'Content-Type: application/x-www-form-urlencoded'];
+        if ($basic !== null) {
+            $headers[] = 'Authorization: Basic ' . base64_encode(rawurlencode($basic[0]) . ':' . rawurlencode($basic[1]));
+        }
+        $answer = self::send($url, $target, $body, $headers, $dpopKey, null);
+        $nonce = $answer['nonce'];
+        // RFC 9449 section 8: the server wants its nonce in the proof. When its DPoP-Nonce header is one valid
+        // value, the same request (body, client authentication) goes once more with a new proof carrying it;
+        // never more than once.
+        if ($dpopKey !== null && $nonce !== null && self::asksForNonce($answer)) {
+            $answer = self::send($url, $target, $body, $headers, $dpopKey, $nonce);
+            $nonce = $answer['nonce'] ?? $nonce; // the retry's answer's, when it has one
+        }
+        $status = $answer['status'];
+        $data = $answer['data'];
+        if ($status < 200 || $status > 299) {
+            // The code comes from the body only (never from WWW-Authenticate, which only decides the retry).
+            $description = $data['error_description'] ?? null;
+            throw new TouchqueIdJagException(self::errorCode($data['error'] ?? null),
+                is_string($description) && $description !== '' ? $description : "{$url} answered {$status}", $status ?: null, $nonce);
+        }
+        if ($data === null) {
+            throw new TouchqueIdJagException('invalid_response', "{$url} answered {$status} without a JSON object", $status, $nonce);
+        }
+        return [$data, $nonce];
+    }
+
+    /**
+     * The OAuth error code of a refusal (RFC 6749 section 5.2): the answer's error when it is a string of 1 to 128
+     * error characters (%x20-21 / %x23-5B / %x5D-7E: printable ASCII but " and \), else server_error.
+     */
+    private static function errorCode($error): string
+    {
+        return is_string($error) && strlen($error) <= 128 && preg_match('/^[\x20\x21\x23-\x5B\x5D-\x7E]+$/D', $error) === 1 ? $error : 'server_error';
+    }
+
+    /**
+     * $url as curl sends it, so that the proof's htu is the path on the wire: in its path each byte from 0x80 up
+     * percent-encoded and the hex digits of each percent-encoding uppercased (what libcurl does to the path,
+     * the case in its recent versions only), everything else as given. With CURLOPT_PATH_AS_IS, curl then sends
+     * that path unchanged, dot segments included.
+     */
+    private static function wireUrl(string $url): string
+    {
+        if (!preg_match('~^([^:/?#]+://[^/?#]*)([^?#]*)(.*)$~sD', $url, $m)) {
+            return $url;
+        }
+        $path = preg_replace_callback('/%[0-9A-Fa-f]{2}|[\x80-\xFF]/', static function (array $c): string {
+            return $c[0][0] === '%' ? strtr($c[0], 'abcdef', 'ABCDEF') : sprintf('%%%02X', ord($c[0]));
+        }, $m[2]);
+        return $path === null ? $url : $m[1] . $path . $m[3];
+    }
+
+    /**
+     * One POST to $target ($url as curl sends it), with a new DPoP proof when there is a key: ['status', 'data'
+     * (the answer when it is a JSON object, else null), 'nonce' (the DPoP-Nonce header when it is one value of
+     * valid nonce syntax, else null), 'challenge' (WWW-Authenticate)]. No answer curl can read (refused, reset,
+     * DNS, timeout, a malformed or oversized answer, a body cut short) throws TouchqueIdJagException
+     * temporarily_unavailable with no status, $nonce (the latest valid DPoP-Nonce of the call so far: the one
+     * this request's proof carries) and curl's error as its previous exception; a URL curl refuses to send
+     * throws TouchqueConfigException.
+     */
+    private static function send(string $url, string $target, string $body, array $headers, ?array $dpopKey, ?string $nonce): array
+    {
+        if ($dpopKey !== null) {
+            $headers[] = 'DPoP: ' . self::idJagDpopProof($dpopKey, $target, ['nonce' => $nonce]);
+        }
+        $received = [];
+        $ch = curl_init($target);
+        $options = [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_FOLLOWLOCATION => false, CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body, CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$received): int {
+                if (strncasecmp($line, 'HTTP/', 5) === 0) {
+                    $received = []; // a new response: only the last one's headers count (not a 100 Continue's)
+                } elseif (($colon = strpos($line, ':')) !== false) {
+                    $name = strtr(trim(substr($line, 0, $colon), " \t"), self::UPPER, self::LOWER);
+                    $received[$name][] = trim(substr($line, $colon + 1), " \t\r\n");
+                }
+                return strlen($line);
+            },
+        ];
+        if (defined('CURLOPT_PATH_AS_IS')) { // libcurl 7.42 and later
+            $options[CURLOPT_PATH_AS_IS] = true; // no dot-segment removal: the path the proof's htu has
+        }
+        curl_setopt_array($ch, $options);
+        $raw = curl_exec($ch);
+        if (!is_string($raw)) {
+            $errno = curl_errno($ch);
+            $why = curl_error($ch) ?: curl_strerror($errno);
+            if ($errno === CURLE_URL_MALFORMAT) {
+                throw new TouchqueConfigException("{$url} is not a URL curl can send: {$why}");
+            }
+            throw new TouchqueIdJagException('temporarily_unavailable', "{$url} could not be read: {$why}", null, $nonce,
+                new TouchqueNetworkException($why, $errno));
+        }
+        $nonces = array_values(array_unique($received['dpop-nonce'] ?? []));
+        return [
+            'status' => (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE), 'data' => self::jsonObject($raw),
+            'nonce' => count($nonces) === 1 && self::isNonce($nonces[0]) ? $nonces[0] : null,
+            'challenge' => implode(', ', $received['www-authenticate'] ?? []),
+        ];
+    }
+
+    /** $raw decoded when it is a JSON object, else null (not JSON, or a JSON string, number, boolean, null or list). */
+    private static function jsonObject(string $raw): ?array
+    {
+        if (($raw[strspn($raw, " \t\n\r")] ?? '') !== '{') {
+            return null;
+        }
+        $data = json_decode($raw, true);
+        return is_array($data) ? $data : null;
+    }
+
+    /** RFC 9449 section 8.1: nonce = 1*NQCHAR, NQCHAR = %x21 / %x23-5B / %x5D-7E (printable ASCII but space, " and \). */
+    private static function isNonce(string $value): bool
+    {
+        return preg_match('/^[\x21\x23-\x5B\x5D-\x7E]++$/D', $value) === 1;
+    }
+
+    /** RFC 9449 section 8: a 400 or 401 use_dpop_nonce, in the JSON body or a 401's WWW-Authenticate DPoP challenge. */
+    private static function asksForNonce(array $answer): bool
+    {
+        if ($answer['status'] !== 400 && $answer['status'] !== 401) {
+            return false;
+        }
+        return ($answer['data']['error'] ?? null) === 'use_dpop_nonce'
+            || ($answer['status'] === 401 && self::dpopChallengeAsksForNonce($answer['challenge']));
+    }
+
+    /**
+     * Whether a WWW-Authenticate value (RFC 9110 section 11.6.1; several fields joined with commas) has a
+     * DPoP challenge with error="use_dpop_nonce" (RFC 9449 section 9). Scheme and parameter names match
+     * in any case; a quoted value counts with its quoted-pairs undone. One pass from left to right with
+     * strspn()/strcspn(), never backing up: linear in the header's length, whatever it holds.
+     */
+    private static function dpopChallengeAsksForNonce(string $header): bool
+    {
+        $n = strlen($header);
+        $scheme = '';
+        $i = 0;
+        while ($i < $n) {
+            $i += strspn($header, " \t,", $i);
+            if ($i >= $n) {
+                break;
+            }
+            $len = strspn($header, self::TCHAR, $i);
+            if ($len === 0) {
+                $i = self::elementEnd($header, $i); // not a token (a stray character): skip this list element
+                continue;
+            }
+            $name = strtr(substr($header, $i, $len), self::UPPER, self::LOWER);
+            $i += $len;
+            $j = $i + strspn($header, " \t", $i);
+            if ($j < $n && $header[$j] === '=') {
+                // auth-param = token BWS "=" BWS ( token / quoted-string )
+                $k = $j + 1 + strspn($header, " \t", $j + 1);
+                $value = null;
+                if ($k < $n && $header[$k] === '"') {
+                    [$value, $i] = self::quotedString($header, $k);
+                } elseif (($valueLength = strspn($header, self::TCHAR, $k)) > 0) {
+                    $value = substr($header, $k, $valueLength);
+                    $i = $k + $valueLength;
+                } else {
+                    $i = self::elementEnd($header, $j); // a token68's "=" padding, or nothing after "="
+                }
+                if ($scheme === 'dpop' && $name === 'error' && $value === 'use_dpop_nonce') {
+                    return true;
+                }
+            } elseif ($j === $n || $header[$j] === ',' || $j > $i) {
+                $scheme = $name; // an auth-scheme: a new challenge
+                $i = $j;
+            } else {
+                $i = self::elementEnd($header, $i); // a token68 such as abc/def
+            }
+        }
+        return false;
+    }
+
+    /** The offset of the comma that ends the list element at $i (quoted strings skipped whole), or the end. */
+    private static function elementEnd(string $s, int $i): int
+    {
+        $n = strlen($s);
+        while ($i < $n) {
+            $i += strcspn($s, ',"', $i);
+            if ($i >= $n || $s[$i] === ',') {
+                break;
+            }
+            $i = self::quotedString($s, $i)[1];
+        }
+        return $i;
+    }
+
+    /**
+     * The quoted-string at $start (its opening quote): [its value with the quoted-pairs undone, or null when
+     * it never closes; the offset after it].
+     */
+    private static function quotedString(string $s, int $start): array
+    {
+        $n = strlen($s);
+        $value = '';
+        $i = $start + 1;
+        while ($i < $n) {
+            $run = strcspn($s, '"\\', $i);
+            $value .= substr($s, $i, $run);
+            $i += $run;
+            if ($i >= $n) {
+                break;
+            }
+            if ($s[$i] === '"') {
+                return [$value, $i + 1];
+            }
+            $value .= substr($s, $i + 1, 1); // a quoted-pair: the character after the backslash
+            $i += 2;
+        }
+        return [null, $n];
+    }
+
+    private static function scopeText($scope): ?string
+    {
+        return is_array($scope) ? implode(' ', $scope) : $scope;
+    }
+
+    /** The dpopKey option: null or an array (checked in full when its first proof is made). */
+    private static function dpopKeyOption(array $o): ?array
+    {
+        $key = $o['dpopKey'] ?? null;
+        if ($key !== null && !is_array($key)) {
+            throw new TouchqueConfigException('the DPoP key must be one from createIdJagDpopKey()');
+        }
+        return $key;
+    }
+
+    /**
+     * Trades a member's ID token for an ID-JAG at the identity provider (token exchange, client_secret_basic).
+     * Options: issuer or tokenEndpoint, clientId, clientSecret, idToken, audience, resource?, scope?,
+     * dpopKey? (binds the ID-JAG to that key; redeem it with the same key).
+     * Returns ['assertion' => …, 'expiresIn' => …, 'scope' => …], plus with dpopKey 'dpopBound': whether
+     * the returned ID-JAG carries that key's thumbprint (cnf.jkt). Throws TouchqueIdJagException as
+     * redeemIdJag does, and invalid_response for a JSON object that is not an ID-JAG.
+     */
+    public static function requestIdJag(array $o): array
+    {
+        $dpopKey = self::dpopKeyOption($o);
+        $endpoint = $o['tokenEndpoint'] ?? null;
+        if (!$endpoint) {
+            if (empty($o['issuer'])) {
+                throw new TouchqueConfigException('requestIdJag needs issuer or tokenEndpoint');
+            }
+            $endpoint = self::discover($o['issuer'])['token_endpoint'] ?? null;
+            if (!is_string($endpoint)) {
+                throw new TouchqueConfigException('the identity provider names no token_endpoint');
+            }
+        }
+        [$data, $nonce] = self::postForm($endpoint, [
+            'grant_type' => self::TOKEN_EXCHANGE_GRANT, 'requested_token_type' => self::ID_JAG_TOKEN_TYPE,
+            'subject_token' => $o['idToken'] ?? '', 'subject_token_type' => self::ID_TOKEN_TYPE, 'audience' => $o['audience'] ?? '',
+            'resource' => $o['resource'] ?? null, 'scope' => self::scopeText($o['scope'] ?? null),
+        ], [$o['clientId'] ?? '', $o['clientSecret'] ?? ''], $dpopKey);
+        if (($data['issued_token_type'] ?? null) !== self::ID_JAG_TOKEN_TYPE || !is_string($data['access_token'] ?? null)) {
+            throw new TouchqueIdJagException('invalid_response', 'the identity provider did not answer with an ID-JAG', null, $nonce);
+        }
+        $out = ['assertion' => $data['access_token'], 'expiresIn' => $data['expires_in'] ?? null, 'scope' => $data['scope'] ?? null];
+        if ($dpopKey !== null) {
+            // An identity provider without DPoP support ignores the proof: say so instead of guessing.
+            $parts = explode('.', $data['access_token']);
+            $claims = count($parts) === 3 ? json_decode(AgentKeys::b64urlDecode($parts[1]), true) : null;
+            $jkt = is_array($claims) && is_array($claims['cnf'] ?? null) ? ($claims['cnf']['jkt'] ?? null) : null;
+            $out['dpopBound'] = is_string($jkt) && $jkt === AgentKeys::thumbprint(self::dpopPublicJwk($dpopKey));
+        }
+        return $out;
+    }
+
+    /**
+     * Trades an ID-JAG for an access token at the other service's authorization server (jwt-bearer).
+     * Options: tokenEndpoint, clientId, clientSecret?, assertion, resource?, scope?, dpopKey? (the key the
+     * ID-JAG is bound to: a DPoP proof goes along, and the access token is then DPoP-bound too: each
+     * call with it carries idJagDpopProof($dpopKey, $url, ['method' => …, 'accessToken' => …])).
+     * Returns the token endpoint's answer, a JSON object. Anything else throws TouchqueIdJagException (here
+     * and in requestIdJag): an answer that is not 2xx (a redirect is not followed), with that status and the
+     * answer's error when it is an RFC 6749 error code (1 to 128 printable ASCII characters but " and \), else
+     * server_error; a 2xx that is not a JSON object, invalid_response with that status; no answer curl can read
+     * (refused, reset, DNS, timeout, a malformed or oversized answer, a body cut short), temporarily_unavailable
+     * with no status, curl's error being its getPrevious() (a TouchqueNetworkException with curl's message and
+     * CURLE_* number). A URL curl refuses to send throws TouchqueConfigException.
+     * With dpopKey, a 400 or 401 use_dpop_nonce whose DPoP-Nonce header is one value of valid nonce syntax
+     * (RFC 9449: printable ASCII but space, " and \) gets the same request once more with a proof carrying
+     * that nonce (here and in requestIdJag); a missing or empty one, one repeated with different values, or
+     * an invalid one gets no retry. A TouchqueIdJagException carries in $dpopNonce the latest valid
+     * DPoP-Nonce the server sent in the call: the retry's answer's when it has one, else the first answer's
+     * (null when there is none; an invalid value is never put there).
+     */
+    public static function redeemIdJag(array $o): array
+    {
+        $dpopKey = self::dpopKeyOption($o);
+        $secret = $o['clientSecret'] ?? null;
+        return self::postForm($o['tokenEndpoint'] ?? '', [
+            'grant_type' => self::JWT_BEARER_GRANT, 'assertion' => $o['assertion'] ?? '',
+            'resource' => $o['resource'] ?? null, 'scope' => self::scopeText($o['scope'] ?? null),
+            'client_id' => $secret ? null : ($o['clientId'] ?? ''),
+        ], $secret ? [$o['clientId'] ?? '', $secret] : null, $dpopKey)[0];
+    }
+}
+
+
+namespace Touchque;
+
+use Touchque\Exceptions\TouchqueConfigException;
+use Touchque\Exceptions\TouchqueIdJagException;
+
+/**
+ * Your authorization server, taking ID-JAGs (Cross App Access) from an
+ * organization's identity provider: checks the one an authenticated client
+ * presents with the jwt-bearer grant and uses it once.
+ *
+ *   $v = new IdJagVerifier(['issuer' => 'https://sso.touchque.com', 'audience' => 'https://auth.files.example']);
+ *   $claims = $v->verify($_POST['assertion'], $authenticatedClientId);
+ *   // $claims['sub'] (the member at that identity provider), 'email', 'scopes', 'resource', 'tenant'
+ *
+ * An authorization server that checks DPoP proofs passes the proof key's thumbprint:
+ *   $claims = $v->verify($_POST['assertion'], $authenticatedClientId, $dpopJkt);   // $claims['cnfJkt']
+ *
+ * Options: issuer, audience, jwksUri?, clockSkew? (60), firstUse? (callable(string $jti, int $exp): bool,
+ * a shared store such as Redis SET NX; memory in this process by default). Needs ext-openssl
+ * (EdDSA: ext-sodium).
+ */
+class IdJagVerifier
+{
+    private string $issuer;
+    private string $audience;
+    private ?string $jwksUri;
+    private int $skew;
+    /** @var callable */
+    private $firstUse;
+    /** @var callable */
+    private $fetch;
+    private array $keys = [];
+    private int $keysAt = 0;
+    private int $triedAt = 0;
+    private array $seen = [];
+
+    public function __construct(array $options)
+    {
+        if (empty($options['issuer']) || empty($options['audience'])) {
+            throw new TouchqueConfigException("IdJagVerifier needs issuer (the identity provider) and audience (your authorization server's issuer)");
+        }
+        $this->issuer = $options['issuer'];
+        $this->audience = $options['audience'];
+        $this->jwksUri = $options['jwksUri'] ?? null;
+        $this->skew = (int)($options['clockSkew'] ?? 60);
+        $this->firstUse = $options['firstUse'] ?? [$this, 'rememberOnce'];
+        $this->fetch = $options['fetch'] ?? [McpAuth::class, 'getJson'];
+    }
+
+    /** @internal */
+    public function rememberOnce(string $jti, int $exp): bool
+    {
+        $now = time();
+        foreach ($this->seen as $k => $until) {
+            if ($until < $now) {
+                unset($this->seen[$k]);
+            }
+        }
+        if (isset($this->seen[$jti])) {
+            return false;
+        }
+        $this->seen[$jti] = $exp + $this->skew;
+        return true;
+    }
+
+    private function loadKeys(): void
+    {
+        if (!$this->jwksUri) {
+            $uri = CrossAppAccess::discover($this->issuer)['jwks_uri'] ?? null;
+            if (!is_string($uri)) {
+                throw new \UnexpectedValueException('the identity provider names no jwks_uri');
+            }
+            $this->jwksUri = $uri;
+        }
+        $keys = [];
+        foreach ((($this->fetch)($this->jwksUri)['keys'] ?? []) as $jwk) {
+            if (!empty($jwk['kid'])) {
+                $keys[$jwk['kid']] = $jwk;
+            }
+        }
+        $this->keys = $keys;
+        $this->keysAt = time();
+    }
+
+    private function keyFor(string $kid): ?array
+    {
+        if (!$this->keysAt || time() - $this->keysAt > 600) {
+            $this->loadKeys();
+        }
+        if (!isset($this->keys[$kid]) && time() - $this->triedAt > 60) {
+            $this->triedAt = time();
+            $this->loadKeys();
+        }
+        return $this->keys[$kid] ?? null;
+    }
+
+    /**
+     * The ID-JAG, checked and used once: its claims, or TouchqueIdJagException (error invalid_grant).
+     * $dpopJkt: the thumbprint of the DPoP proof you verified on this request, if any; an ID-JAG bound
+     * to a key (cnf.jkt) is refused without a matching one.
+     */
+    public function verify(string $assertion, string $clientId, ?string $dpopJkt = null): array
+    {
+        $bad = static fn (string $m) => new TouchqueIdJagException('invalid_grant', $m);
+        $parts = explode('.', $assertion);
+        if (count($parts) !== 3) {
+            throw $bad('assertion is not a JWT');
+        }
+        $head = json_decode(AgentKeys::b64urlDecode($parts[0]), true);
+        $c = json_decode(AgentKeys::b64urlDecode($parts[1]), true);
+        if (!is_array($head) || !is_array($c)) {
+            throw $bad('assertion is not a JWT');
+        }
+        if (($head['typ'] ?? null) !== 'oauth-id-jag+jwt') {
+            throw $bad('not an ID-JAG (typ oauth-id-jag+jwt)');
+        }
+        $alg = $head['alg'] ?? '';
+        if (!in_array($alg, ['RS256', 'ES256', 'EdDSA'], true) || !is_string($head['kid'] ?? null)) {
+            throw $bad('unsupported signature');
+        }
+        try {
+            $jwk = $this->keyFor($head['kid']);
+        } catch (\Throwable $e) {
+            throw new TouchqueIdJagException('temporarily_unavailable', "the identity provider's keys could not be read: " . $e->getMessage());
+        }
+        if ($jwk === null || !McpAuth::verifySignature($parts[0] . '.' . $parts[1], AgentKeys::b64urlDecode($parts[2]), $alg, $jwk)) {
+            throw $bad('signature does not verify');
+        }
+        $now = time();
+        $auds = is_array($c['aud'] ?? null) ? $c['aud'] : [$c['aud'] ?? null];
+        if (($c['iss'] ?? null) !== $this->issuer) {
+            throw $bad('another issuer');
+        }
+        if (count($auds) !== 1 || $auds[0] !== $this->audience) {
+            throw $bad('not for this authorization server');
+        }
+        if (!is_string($c['client_id'] ?? null) || $c['client_id'] !== $clientId) {
+            throw $bad('issued to another client');
+        }
+        if (!is_numeric($c['exp'] ?? null) || $c['exp'] + $this->skew < $now) {
+            throw $bad('expired');
+        }
+        if (!is_numeric($c['iat'] ?? null) || $c['iat'] - $this->skew > $now) {
+            throw $bad('issued in the future');
+        }
+        if (!is_string($c['sub'] ?? null) || !is_string($c['jti'] ?? null)) {
+            throw $bad('sub and jti are required');
+        }
+        // Before the jti is spent: a copy without the key cannot use the ID-JAG up.
+        $cnfJkt = null;
+        if (array_key_exists('cnf', $c)) {
+            if (!is_array($c['cnf']) || !is_string($c['cnf']['jkt'] ?? null)) {
+                throw $bad('unsupported confirmation method (only DPoP cnf.jkt)');
+            }
+            if ($dpopJkt === null || $dpopJkt === '') {
+                throw $bad('bound to a DPoP key: a DPoP proof with that key is required');
+            }
+            if (!hash_equals($c['cnf']['jkt'], $dpopJkt)) {
+                throw $bad('the DPoP proof was made with another key');
+            }
+            $cnfJkt = $c['cnf']['jkt'];
+        }
+        if (!($this->firstUse)($c['jti'], (int)$c['exp'])) {
+            throw $bad('already used');
+        }
+        return [
+            'iss' => $c['iss'], 'sub' => $c['sub'], 'aud' => $auds[0], 'clientId' => $c['client_id'], 'jti' => $c['jti'],
+            'issuedAt' => (int)$c['iat'], 'expiresAt' => (int)$c['exp'],
+            'scopes' => is_string($c['scope'] ?? null) && $c['scope'] !== '' ? explode(' ', $c['scope']) : [],
+            'resource' => $c['resource'] ?? null, 'tenant' => $c['tenant'] ?? null, 'email' => $c['email'] ?? null,
+            'authTime' => $c['auth_time'] ?? null, 'amr' => $c['amr'] ?? null, 'cnfJkt' => $cnfJkt, 'claims' => $c,
+        ];
+    }
+}
+
+
+namespace Touchque\Exceptions;
+
+/**
+ * A refused ID-JAG or exchange (Cross App Access). $error is the OAuth error:
+ * invalid_grant for a bad ID-JAG, temporarily_unavailable when a token endpoint
+ * could not be reached or its answer read (getPrevious(): the
+ * TouchqueNetworkException with curl's error), else what the server answered.
+ * $dpopNonce is the latest valid DPoP-Nonce (RFC 9449 section 8) the token
+ * endpoint sent in that call: the retry's answer's when it has one, else the
+ * first answer's; null when there is none (a missing or empty header, one
+ * repeated with different values, or one that is not nonce syntax). A proof
+ * for another try carries it (CrossAppAccess::idJagDpopProof's 'nonce').
+ */
+class TouchqueIdJagException extends TouchqueException
+{
+    public string $error;
+    public ?int $status;
+    public ?string $dpopNonce;
+
+    public function __construct(string $error, string $message, ?int $status = null, ?string $dpopNonce = null, ?\Throwable $previous = null)
+    {
+        parent::__construct($message, $status ?? 0, null, $previous);
+        $this->error = $error;
+        $this->status = $status;
+        $this->dpopNonce = $dpopNonce;
+    }
+}

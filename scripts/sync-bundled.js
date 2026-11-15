@@ -177,6 +177,9 @@ write("node", "types.ts", [
   excerpt("node hostedLogin.ts", nodeHosted, /^export class HostedLoginError/m, /^export class HostedLogin \{/m),
   "",
   classPublic("node hostedLogin.ts", nodeHosted, "HostedLogin"),
+  "",
+  sep("//", "From src/crossAppAccess.ts — Cross App Access: ID-JAG request/redeem/verify, DPoP binding"),
+  read("touchque-node", "src", "crossAppAccess.ts").trimEnd(),
 ].join("\n"));
 
 // python
@@ -225,6 +228,9 @@ write("python", "types.py", [
   "",
   sep("#", "From touchque/contrib/django.py — @require_touchque + touchque_relay_view / touchque_relay_urls"),
   read("touchque-python", "touchque", "contrib", "django.py").trimEnd(),
+  "",
+  sep("#", "From touchque/cross_app_access.py — Cross App Access: ID-JAG request/redeem/verify, DPoP binding"),
+  read("touchque-python", "touchque", "cross_app_access.py").trimEnd(),
 ].join("\n"));
 
 // php
@@ -275,6 +281,13 @@ write("php", "types.php", [
   "",
   sep("//", "From src/Laravel/TouchqueRelay.php — TouchqueRelay::routes($router, 'touchque')"),
   stripPhpOpen(read("touchque-php", "src", "Laravel", "TouchqueRelay.php")).trimEnd(),
+  "",
+  sep("//", "From src/CrossAppAccess.php, src/IdJagVerifier.php — Cross App Access: ID-JAG, DPoP binding"),
+  stripPhpOpen(read("touchque-php", "src", "CrossAppAccess.php")).trimEnd(),
+  "",
+  stripPhpOpen(read("touchque-php", "src", "IdJagVerifier.php")).trimEnd(),
+  "",
+  stripPhpOpen(read("touchque-php", "src", "Exceptions", "TouchqueIdJagException.php")).trimEnd(),
 ].join("\n"));
 
 // go
@@ -312,6 +325,9 @@ write("go", "types.go", [
   excerpt("go relay.go", goRelay, null, /^type relayHandler struct/m),
   "",
   "// ... private route handlers omitted",
+  "",
+  sep("//", "From touchque/cross_app_access.go — Cross App Access: ID-JAG request/redeem/verify, DPoP binding"),
+  read("touchque-go", "touchque", "cross_app_access.go").trimEnd(),
 ].join("\n"));
 
 // dotnet
@@ -355,6 +371,9 @@ write("dotnet", "types.cs", [
   "",
   sep("//", "From Touchque.AspNetCore/TouchqueRelayEndpoints.cs — app.MapTouchqueRelay(\"/touchque\", options)"),
   read("touchque-dotnet", "src", "Touchque.AspNetCore", "TouchqueRelayEndpoints.cs").trimEnd(),
+  "",
+  sep("//", "From src/Touchque/Agents/CrossAppAccess.cs — Cross App Access: ID-JAG, DPoP binding"),
+  read("touchque-dotnet", "src", "Touchque", "Agents", "CrossAppAccess.cs").trimEnd(),
 ].join("\n"));
 
 // ruby
@@ -392,6 +411,9 @@ write("ruby", "types.rb", [
   "",
   sep("#", "From lib/touchque/rack/relay.rb — mount Touchque::Rack::Relay.new(...) => \"/touchque\""),
   read("touchque-ruby", "lib", "touchque", "rack", "relay.rb").trimEnd(),
+  "",
+  sep("#", "From lib/touchque/cross_app_access.rb — Cross App Access: ID-JAG, DPoP binding"),
+  read("touchque-ruby", "lib", "touchque", "cross_app_access.rb").trimEnd(),
 ].join("\n"));
 
 // java
@@ -457,6 +479,13 @@ write("java", "types.java", [
   noImports(read(...S, "TouchqueWebhookListener.java")).trimEnd(),
   "",
   noImports(read(...S, "TouchqueSpring.java")).trimEnd(),
+  "",
+  sep("//", "From touchque-java .../agents/CrossAppAccess.java, IdJagVerifier.java — Cross App Access: ID-JAG, DPoP binding"),
+  read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "agents", "CrossAppAccess.java").trimEnd(),
+  "",
+  read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "agents", "IdJagVerifier.java").trimEnd(),
+  "",
+  read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "TouchqueIdJagException.java").trimEnd(),
 ].join("\n"));
 
 // The browser SDKs (remote server: get_touchque_docs language "web" / "react", and the docs search).

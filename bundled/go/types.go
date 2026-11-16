@@ -414,6 +414,56 @@ type ValidateSecretResponse struct {
 	Reason           string `json:"reason,omitempty"`
 	UsedAt           string `json:"usedAt,omitempty"`
 	ExpiredAt        string `json:"expiredAt,omitempty"`
+	// SetupContext is where the QR was asked for, as Touchque recorded it
+	// from the request that made the QR (GenerateSecretOptions, or
+	// ResetSecretOptions for a reset; it is never in the QR). nil when that
+	// request named no browser (no usable IP address or User-Agent), after a
+	// reset without them, and for older QRs and servers.
+	SetupContext *SetupContext `json:"setupContext,omitempty"`
+}
+
+// SetupContext is where a first-time linking QR was asked for: the address
+// and User-Agent your server sent with the request for it
+// (GenerateSecretOptions, or ResetSecretOptions for a reset) and when. The
+// phone shows it before it links, so someone tricked into scanning another
+// person's QR sees a place and device that are not theirs. What Touchque
+// does not know is empty (nil for Location, Device and FarFromPhone).
+type SetupContext struct {
+	// IP is the public address the QR was asked from; "" when none was
+	// given or it is not public (a private or carrier-grade NAT address).
+	IP string `json:"ip,omitempty"`
+	// Location is that address's place, by GeoIP.
+	Location *SetupLocation `json:"location,omitempty"`
+	// Device is the browser and device, from the User-Agent.
+	Device *SetupDevice `json:"device,omitempty"`
+	// RequestedAt is when the QR was asked for (ISO 8601).
+	RequestedAt string `json:"requestedAt,omitempty"`
+	// FarFromPhone says whether that place is far from whoever called POST
+	// /auth/secret/validate. That is the phone's public call, so when the
+	// Touchque app makes it, it is about the phone; called from your server
+	// (ValidateSecret), it compares with your server's address and says
+	// nothing about the phone. nil when Touchque cannot tell (an address
+	// missing or not public, a place unknown).
+	FarFromPhone *bool `json:"farFromPhone,omitempty"`
+}
+
+// SetupLocation is the place of a SetupContext's address, by GeoIP.
+type SetupLocation struct {
+	City    string `json:"city,omitempty"`
+	Country string `json:"country,omitempty"`
+	// CountryCode is the ISO 3166-1 alpha-2 code, e.g. "DE".
+	CountryCode string `json:"countryCode,omitempty"`
+}
+
+// SetupDevice is the browser and device of a SetupContext, read from its
+// User-Agent, e.g. "Safari", "iOS", "iPhone".
+type SetupDevice struct {
+	Browser string `json:"browser,omitempty"`
+	OS      string `json:"os,omitempty"`
+	// Model is the device model, when the User-Agent names one: e.g.
+	// "iPhone", "iPad", "Mac" or an Android model such as "Pixel 8". It may
+	// be "" (null in the API's answer), as may Browser and OS.
+	Model string `json:"model,omitempty"`
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -628,7 +678,8 @@ type StartOptions struct {
 	Details []LoginDetail
 	// ReferenceID: your own transaction id, bound to the approval.
 	ReferenceID string
-	// IP / UserAgent: the end user's — shown on the phone.
+	// IP / UserAgent: the end user's — shown on the phone, with the push or
+	// as where a first-time QR was asked for.
 	IP        string
 	UserAgent string
 	// NoEnroll: set true to get Step{State: StepEnroll, Reason:
@@ -706,7 +757,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 			// No phone, and this guard may not show a QR: say so, so the page stops polling.
 			return &Step{State: StepEnroll, Reason: "enrollment_off"}, nil
 		}
-		return enrollStep(c, user)
+		return enrollStep(c, user, opts.IP, opts.UserAgent)
 	case apiErr.StatusCode == 423:
 		return &Step{State: StepFrozen, RetryAfter: apiErr.RetryAfter, CaseCode: apiErr.CaseCode}, nil
 	case apiErr.StatusCode == 429:
@@ -742,10 +793,12 @@ func dataError(err *APIError) string {
 	return ""
 }
 
-// enrollStep issues a first-time-linking QR. Never unlinks a phone: a secret
-// is only re-issued when the account is confirmed NOT linked.
-func enrollStep(c *Client, user string) (*Step, error) {
-	gen, err := c.Auth.GenerateSecret(user)
+// enrollStep issues a first-time-linking QR, with the end user's ip and
+// userAgent (as on the push) for the setup context the phone shows. Never
+// unlinks a phone: a secret is only re-issued when the account is confirmed
+// NOT linked.
+func enrollStep(c *Client, user, ip, userAgent string) (*Step, error) {
+	gen, err := c.Auth.GenerateSecretWithOptions(GenerateSecretOptions{ExternalUsername: user, ClientIP: ip, UserAgent: userAgent})
 	if err == nil {
 		return enrollQR(gen.QRCodeDataURL, gen.RecoveryCodes, gen.ExpiresAt, gen.TTLMs), nil
 	}
@@ -757,7 +810,7 @@ func enrollStep(c *Client, user string) (*Step, error) {
 	if cerr == nil && (current.Used || current.DeviceID != "") {
 		return &Step{State: StepEnroll, Reason: "already_linked"}, nil
 	}
-	reset, err := c.Auth.ResetSecret(user)
+	reset, err := c.Auth.ResetSecretWithOptions(ResetSecretOptions{ExternalUsername: user, ClientIP: ip, UserAgent: userAgent})
 	if err != nil {
 		return nil, err
 	}
@@ -1789,9 +1842,10 @@ type RequireOptions struct {
 	Details func(*http.Request) []LoginDetail
 	// ReferenceID: your own transaction id, bound to the approval.
 	ReferenceID func(*http.Request) string
-	// IP: end user's address (default: the host part of r.RemoteAddr — set
-	// this explicitly behind a reverse proxy, from your trusted
-	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
+	// IP: end user's address, sent with the push and with a first-time QR
+	// (default: the host part of r.RemoteAddr — set this explicitly behind a
+	// reverse proxy, from your trusted X-Forwarded-For hop; never the
+	// leftmost hop, which the client controls).
 	IP func(*http.Request) string
 	// SilentSignIn (default off): a new attempt whose browser sent its
 	// device-bound key proof (X-Touchque-Browser, added by @touchque/web with
@@ -2315,7 +2369,8 @@ import (
 //
 // Routes (relative to the mount point):
 //
-//	POST   /enroll/start                  (auth required) -> GenerateSecretResponse
+//	POST   /enroll/start                  (auth required) -> GenerateSecretResponse; sends the browser's IP (RelayOptions.IP)
+//	                                      and User-Agent, as POST /login does, so the phone shows where the QR was asked for
 //	GET    /enroll/status                 (auth required) -> {"linked", "used", "deviceId"}
 //	POST   /login                         (pre-auth) -> 202 {"touchque": step, "token"} until approved (same contract as Require;
 //	                                      with SilentSignIn, a known browser is approved at once)
@@ -2456,9 +2511,9 @@ type RelayOptions struct {
 	OnAuthenticated func(w http.ResponseWriter, r *http.Request, info AuthenticatedInfo) error
 
 	// IP is the end user's address, used for the per-IP rate limit and shown
-	// on the phone (default: the host part of r.RemoteAddr — set this
-	// explicitly behind a reverse proxy, from your trusted X-Forwarded-For
-	// hop).
+	// on the phone, with the push or as where a first-time QR was asked for
+	// (default: the host part of r.RemoteAddr — set this explicitly behind a
+	// reverse proxy, from your trusted X-Forwarded-For hop).
 	IP func(*http.Request) string
 
 	// SilentSignIn for POST /login (default off): a new sign-in whose browser
@@ -3452,4 +3507,268 @@ func RedeemIDJAG(ctx context.Context, p RedeemIDJAGParams) (map[string]interface
 		return nil, err
 	}
 	return data, nil
+}
+
+// ─────────────────────────────────────────────────────────────
+// From touchque/auth.go — client.Auth: first-time QR with the browser's IP and User-Agent, setup context
+// ─────────────────────────────────────────────────────────────
+
+package touchque
+
+import "net/url"
+
+// AuthResource handles authentication setup and secret management.
+type AuthResource struct {
+	http *httpClient
+}
+
+func newAuthResource(http *httpClient) *AuthResource {
+	return &AuthResource{http: http}
+}
+
+// GenerateSecretOptions holds every POST /auth/generate-secret field. Use it
+// with GenerateSecretWithOptions; GenerateSecret keeps its original signature.
+type GenerateSecretOptions struct {
+	// ExternalUsername is the user's id in your system.
+	ExternalUsername string
+	// ClientIP and UserAgent are the end user's, from the request that asks
+	// for the QR, as you send them on sign-in (LoginRequestOptions); "" leaves
+	// each out. Touchque records them with the secret, never in the QR, and
+	// the phone shows where the setup was started before it links
+	// (ValidateSecretResponse.SetupContext). Touchque cleans them itself (a
+	// port is dropped, a loopback or non-IP address is ignored, the
+	// User-Agent loses control characters and is cut at 512 characters) and
+	// never refuses the request over them; with neither usable, the QR has
+	// no setup context.
+	ClientIP  string
+	UserAgent string
+}
+
+// ResetSecretOptions holds every POST /auth/secret/reset field. Use it with
+// ResetSecretWithOptions; ResetSecret keeps its original signature.
+type ResetSecretOptions struct {
+	// ExternalUsername is the user's id in your system.
+	ExternalUsername string
+	// ClientIP and UserAgent are the end user's, from the request that asks
+	// for the new QR, as in GenerateSecretOptions; "" leaves each out.
+	// Touchque records them with the new secret too, as on generate. A reset
+	// without them clears the old secret's, so the new QR has no setup
+	// context.
+	ClientIP  string
+	UserAgent string
+}
+
+// secretBody is the body of POST /auth/generate-secret and POST
+// /auth/secret/reset: clientIp and userAgent by the rules of POST
+// /login/request (RequestWithOptions), each only when it is not "".
+func secretBody(externalUsername, clientIP, userAgent string) map[string]interface{} {
+	body := map[string]interface{}{"externalUsername": externalUsername}
+	if clientIP != "" {
+		body["clientIp"] = clientIP
+	}
+	if userAgent != "" {
+		body["userAgent"] = userAgent
+	}
+	return body
+}
+
+// GenerateSecret creates a new setup secret for a user. It sends no client
+// IP or User-Agent, so its QR has no setup context: use
+// GenerateSecretWithOptions from a browser request.
+func (a *AuthResource) GenerateSecret(externalUsername string) (*GenerateSecretResponse, error) {
+	return a.GenerateSecretWithOptions(GenerateSecretOptions{ExternalUsername: externalUsername})
+}
+
+// GenerateSecretWithOptions creates a new setup secret for a user, with the
+// end user's ClientIP and UserAgent: the phone shows where the QR was asked
+// for before it links.
+func (a *AuthResource) GenerateSecretWithOptions(opts GenerateSecretOptions) (*GenerateSecretResponse, error) {
+	res, err := a.http.post("/auth/generate-secret", secretBody(opts.ExternalUsername, opts.ClientIP, opts.UserAgent))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &GenerateSecretResponse{}
+	if secret, ok := res["secret"].(string); ok {
+		resp.Secret = secret
+	}
+	if extUser, ok := res["externalUsername"].(string); ok {
+		resp.ExternalUsername = extUser
+	}
+	if expAt, ok := res["expiresAt"].(string); ok {
+		resp.ExpiresAt = expAt
+	}
+	if ttlMs, ok := res["ttlMs"].(float64); ok {
+		resp.TTLMs = int(ttlMs)
+	}
+	if qr, ok := res["qrCodeDataUrl"].(string); ok {
+		resp.QRCodeDataURL = qr
+	}
+	if codes, ok := res["recoveryCodes"].([]interface{}); ok {
+		resp.RecoveryCodes = make([]string, len(codes))
+		for i, c := range codes {
+			if str, ok := c.(string); ok {
+				resp.RecoveryCodes[i] = str
+			}
+		}
+	}
+
+	return resp, nil
+}
+
+// ResetSecret regenerates a user's secret. It sends no client IP or
+// User-Agent, so the new QR has no setup context (the old one's is cleared):
+// use ResetSecretWithOptions from a browser request.
+func (a *AuthResource) ResetSecret(externalUsername string) (*ResetSecretResponse, error) {
+	return a.ResetSecretWithOptions(ResetSecretOptions{ExternalUsername: externalUsername})
+}
+
+// ResetSecretWithOptions regenerates a user's secret, with the end user's
+// ClientIP and UserAgent from the request that asks for the new QR: Touchque
+// records them for it, as GenerateSecretWithOptions does, and the phone shows
+// where the QR was asked for before it links.
+func (a *AuthResource) ResetSecretWithOptions(opts ResetSecretOptions) (*ResetSecretResponse, error) {
+	res, err := a.http.post("/auth/secret/reset", secretBody(opts.ExternalUsername, opts.ClientIP, opts.UserAgent))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ResetSecretResponse{}
+	if msg, ok := res["message"].(string); ok {
+		resp.Message = msg
+	}
+	if uid, ok := res["userId"].(string); ok {
+		resp.UserID = uid
+	}
+	if sec, ok := res["secret"].(string); ok {
+		resp.Secret = sec
+	}
+	if ext, ok := res["externalUsername"].(string); ok {
+		resp.ExternalUsername = ext
+	}
+	if expAt, ok := res["expiresAt"].(string); ok {
+		resp.ExpiresAt = expAt
+	}
+	if ttlMs, ok := res["ttlMs"].(float64); ok {
+		resp.TTLMs = int(ttlMs)
+	}
+	if qr, ok := res["qrCodeDataUrl"].(string); ok {
+		resp.QRCodeDataURL = qr
+	}
+	if codes, ok := res["recoveryCodes"].([]interface{}); ok {
+		resp.RecoveryCodes = make([]string, len(codes))
+		for i, c := range codes {
+			if str, ok := c.(string); ok {
+				resp.RecoveryCodes[i] = str
+			}
+		}
+	}
+
+	return resp, nil
+}
+
+// ValidateSecret validates a setup secret code with POST
+// /auth/secret/validate, the phone's public call: the Touchque app makes it
+// after it scans the QR, before it links. Its SetupContext is where the QR was
+// asked for, what the phone shows; nil when the request for the QR named no
+// browser (no usable IP address or User-Agent), after a reset without them,
+// and for older QRs and servers. Its FarFromPhone compares that place with the
+// address of whoever calls validate: called from your server, it compares with
+// your server, not the phone.
+func (a *AuthResource) ValidateSecret(secret string) (*ValidateSecretResponse, error) {
+	res, err := a.http.post("/auth/secret/validate", map[string]interface{}{
+		"secret": secret,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ValidateSecretResponse{}
+	if valid, ok := res["valid"].(bool); ok {
+		resp.Valid = valid
+	}
+	if ext, ok := res["externalUsername"].(string); ok {
+		resp.ExternalUsername = ext
+	}
+	if msg, ok := res["message"].(string); ok {
+		resp.Message = msg
+	}
+	if rsn, ok := res["reason"].(string); ok {
+		resp.Reason = rsn
+	}
+	resp.SetupContext = parseSetupContext(res["setupContext"])
+
+	return resp, nil
+}
+
+// parseSetupContext reads the validate answer's setupContext leniently: nil
+// when it is missing, null or not an object (no browser named for the QR, a
+// reset without one, older QRs and servers); a field that is missing, null or
+// of another type stays empty (nil for Location, Device and FarFromPhone), and
+// unknown fields are ignored.
+func parseSetupContext(v interface{}) *SetupContext {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	sc := &SetupContext{}
+	sc.IP, _ = m["ip"].(string)
+	if loc, ok := m["location"].(map[string]interface{}); ok {
+		l := &SetupLocation{}
+		l.City, _ = loc["city"].(string)
+		l.Country, _ = loc["country"].(string)
+		l.CountryCode, _ = loc["countryCode"].(string)
+		sc.Location = l
+	}
+	if dev, ok := m["device"].(map[string]interface{}); ok {
+		d := &SetupDevice{}
+		d.Browser, _ = dev["browser"].(string)
+		d.OS, _ = dev["os"].(string)
+		d.Model, _ = dev["model"].(string)
+		sc.Device = d
+	}
+	sc.RequestedAt, _ = m["requestedAt"].(string)
+	if far, ok := m["farFromPhone"].(bool); ok {
+		sc.FarFromPhone = &far
+	}
+	return sc
+}
+
+// GetUser looks up a user's link status without sending a push. Useful while
+// polling during enrollment: Used flips true and DeviceID is set once the
+// mobile app scans the setup secret. Returns an *APIError with StatusCode 404
+// if the user is unknown.
+func (a *AuthResource) GetUser(externalUsername string) (*GetUserResponse, error) {
+	res, err := a.http.get("/users/" + url.PathEscape(externalUsername))
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &GetUserResponse{}
+	if ext, ok := res["externalUsername"].(string); ok {
+		resp.ExternalUsername = ext
+	}
+	if dev, ok := res["deviceId"].(string); ok {
+		resp.DeviceID = dev
+	}
+	if used, ok := res["used"].(bool); ok {
+		resp.Used = used
+	}
+	if frozen, ok := res["frozen"].(bool); ok {
+		resp.Frozen = frozen
+	}
+	if c, ok := res["createdAt"].(string); ok {
+		resp.CreatedAt = c
+	}
+	if e, ok := res["expireAt"].(string); ok {
+		resp.ExpireAt = e
+	}
+	if dev, ok := res["device"].(map[string]interface{}); ok {
+		posture := &DevicePosture{}
+		if err := decodeInto(dev, posture); err == nil {
+			resp.Device = posture
+		}
+	}
+
+	return resp, nil
 }

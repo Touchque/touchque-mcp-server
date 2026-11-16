@@ -42,6 +42,7 @@ from .guard import (
     silent_input_from_headers, BeforeStart, ErrorBody, BROWSER_HEADER,
 )
 from .resources.risk import parse_risk_check
+from .resources.auth import SetupContext, SetupDevice, SetupLocation, parse_setup_context
 from .resources.recovery import is_recovery_open
 from .resources.mobile import is_mobile_push_expired, mobile_push_from_webhook
 from .resources.assist import is_assist_check_passed
@@ -114,6 +115,10 @@ __all__ = [
     'silent_input_from_headers',
     'BROWSER_HEADER',
     'parse_risk_check',
+    'SetupContext',
+    'SetupLocation',
+    'SetupDevice',
+    'parse_setup_context',
     'is_recovery_open',
     'is_mobile_push_expired',
     'mobile_push_from_webhook',
@@ -319,7 +324,9 @@ class Touchque:
         """Starts an approval and returns immediately — show the step in your
         UI. ``waiting`` + ``number``: show the number, the user picks it on
         the phone. ``enroll``: show ``enroll['qrCodeDataUrl']`` so the user
-        links the Touchque app first. ``browser_proof``: the browser's
+        links the Touchque app first. ``ip`` / ``user_agent``: the browser's,
+        sent with the push and with each first-time QR request, a reset too
+        (the phone shows where the QR was asked for). ``browser_proof``: the browser's
         ``X-Touchque-Browser`` proof, so the approval makes the browser known
         (silent sign-ins, see ``risk.check``)."""
         return _start(self, action, user, details=details, reference_id=reference_id, ip=ip, user_agent=user_agent,
@@ -496,7 +503,7 @@ def start(client: 'Touchque', action: str, user: str, details: Optional[LoginDet
             if not enroll:
                 # No phone, and this guard may not show a QR: say so, so the page stops polling.
                 return {'state': 'enroll', 'reason': 'enrollment_off'}
-            return _enroll_step(client, user)
+            return _enroll_step(client, user, ip=ip, user_agent=user_agent)
         if err.status == 423:
             return {'state': 'frozen', 'retryAfter': err.retry_after, **why}
         if err.status == 429:
@@ -565,11 +572,15 @@ def _enroll_qr(res: Dict[str, Any]) -> Dict[str, Any]:
     return {'state': 'enroll', 'enroll': enroll}
 
 
-def _enroll_step(client: 'Touchque', user: str) -> Dict[str, Any]:
+def _enroll_step(client: 'Touchque', user: str, ip: Optional[str] = None,
+                 user_agent: Optional[str] = None) -> Dict[str, Any]:
     """First-time linking. Never unlinks a phone: a secret is only re-issued
-    when the account is confirmed NOT linked."""
+    when the account is confirmed NOT linked. ``ip`` / ``user_agent``: the
+    browser's, as the push gets them, sent with the new secret and with its
+    reset alike (each records its own QR's), so the phone shows where the QR
+    was asked for before it links (2FA setup context)."""
     try:
-        return _enroll_qr(client.auth.generate_secret(user))
+        return _enroll_qr(client.auth.generate_secret(user, client_ip=ip, user_agent=user_agent))
     except TouchqueAPIException as err:
         if err.status != 409:
             raise
@@ -579,7 +590,7 @@ def _enroll_step(client: 'Touchque', user: str) -> Dict[str, Any]:
             current = None
         if current and (current.get('used') or current.get('deviceId')):
             return {'state': 'enroll', 'reason': 'already_linked'}
-        return _enroll_qr(client.auth.reset_secret(user))
+        return _enroll_qr(client.auth.reset_secret(user, client_ip=ip, user_agent=user_agent))
 
 
 _STATE_MAP = {'PENDING': 'waiting', 'CONFIRMED': 'approved', 'REJECTED': 'rejected', 'EXPIRED': 'expired'}
@@ -1240,7 +1251,9 @@ FastAPI and Django adapters in ``touchque.contrib`` are thin wrappers over
 
 Routes (relative to wherever you mount the relay):
 
-  POST   /enroll/start                    (auth required) -> generate_secret response
+  POST   /enroll/start                    (auth required) -> generate_secret response, or reset_secret's
+                                          for a QR not scanned yet (both with the browser's IP and
+                                          User-Agent, as for POST /login)
   GET    /enroll/status                   (auth required) -> {linked, used, deviceId}
   POST   /login                           (pre-auth) -> 202 {touchque: step, token} until approved
   POST   /offline/challenge               (pre-auth, body.externalUsername) -> QR for a phone with no internet
@@ -1348,7 +1361,8 @@ class RelayHandler:
     minute). A dict with ``window_ms`` / ``per_ip`` / ``per_user`` overrides
     them; ``False`` turns the limiter off (if you already limit in front).
     The adapters use the framework's client address - make sure it is the
-    real client behind a proxy (e.g. werkzeug ``ProxyFix``).
+    real client behind a proxy (e.g. werkzeug ``ProxyFix``). Touchque gets
+    the same address, with the User-Agent, for each push and first-time QR.
 
     ``allow_offline_without_first_factor``: the offline routes answer 403
     ``OFFLINE_REQUIRES_FIRST_FACTOR`` unless ``get_login_user`` is set. Set
@@ -2675,3 +2689,202 @@ def redeem_id_jag(*, token_endpoint: str, client_id: str, assertion: str, client
     if not client_secret:
         form['client_id'] = client_id
     return _post_form(token_endpoint, form, (client_id, client_secret) if client_secret else None, dpop_key)[0]
+
+# ─────────────────────────────────────────────────────────────
+# From touchque/resources/auth.py — tq.auth: first-time QR with the browser's IP and User-Agent, setup context
+# ─────────────────────────────────────────────────────────────
+
+import sys
+from typing import Dict, Any, Optional
+from urllib.parse import quote
+from ..http_client import HttpClient
+
+if sys.version_info >= (3, 8):
+    from typing import TypedDict
+else:  # pragma: no cover - Python 3.7 has no typing.TypedDict: the same names, as dict subclasses
+    TypedDict = dict
+
+
+class SetupLocation(TypedDict):
+    """Where a first-time linking QR was asked for, from its IP address
+    (GeoIP). Each is ``None`` when unknown."""
+    city: Optional[str]
+    country: Optional[str]
+    #: ISO 3166-1 alpha-2, e.g. ``'DE'``.
+    countryCode: Optional[str]
+
+
+class SetupDevice(TypedDict):
+    """The browser that asked for a first-time linking QR, from its
+    User-Agent. Each is ``None`` when unknown."""
+    browser: Optional[str]  # e.g. 'Safari', 'Chrome'
+    os: Optional[str]  # e.g. 'iOS', 'Windows'
+    model: Optional[str]  # e.g. 'iPhone'
+
+
+class SetupContext(TypedDict):
+    """2FA setup context: where a first-time linking QR was asked for, as the
+    phone shows it before it links (``validate_secret``'s ``setupContext``).
+    The Touchque API records it from the request that made the QR
+    (``generate_secret``, or ``reset_secret`` for a new one), never in the
+    QR. Every key is there; any value may be ``None``."""
+    #: The browser's IP address as the phone shows it.
+    ip: Optional[str]
+    location: Optional[SetupLocation]
+    device: Optional[SetupDevice]
+    #: When the QR was asked for: ISO 8601, as the API sent it (not parsed).
+    requestedAt: Optional[str]
+    #: Whether that place is far from the address that checks the QR (``POST /auth/secret/validate``): the
+    #: phone's when the phone checks it, your server's when your server calls ``validate_secret``. ``None``
+    #: when Touchque cannot tell.
+    farFromPhone: Optional[bool]
+
+
+def _text(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) else None
+
+
+def parse_setup_context(raw: Any) -> Optional[SetupContext]:
+    """Reads the ``setupContext`` of a ``POST /auth/secret/validate`` answer,
+    leniently, never raising: ``None`` when it is missing, ``None`` or not a
+    JSON object. Otherwise all five keys, each ``None`` when it is missing,
+    ``None`` or of the wrong type: ``ip`` and ``requestedAt`` only strings,
+    ``farFromPhone`` only a boolean, ``location`` and ``device`` only objects
+    (with their three keys, strings or ``None``, the same way). Unknown keys
+    are dropped."""
+    if not isinstance(raw, dict):
+        return None
+    location, device, far = raw.get('location'), raw.get('device'), raw.get('farFromPhone')
+    return {
+        'ip': _text(raw.get('ip')),
+        'location': {
+            'city': _text(location.get('city')),
+            'country': _text(location.get('country')),
+            'countryCode': _text(location.get('countryCode')),
+        } if isinstance(location, dict) else None,
+        'device': {
+            'browser': _text(device.get('browser')),
+            'os': _text(device.get('os')),
+            'model': _text(device.get('model')),
+        } if isinstance(device, dict) else None,
+        'requestedAt': _text(raw.get('requestedAt')),
+        'farFromPhone': far if isinstance(far, bool) else None,
+    }
+
+
+def _with_browser(body: Dict[str, Any], client_ip: Optional[str], user_agent: Optional[str]) -> Dict[str, Any]:
+    """Adds the browser's IP address and User-Agent, each only when given (not None or empty), as it is."""
+    if client_ip:
+        body['clientIp'] = client_ip
+    if user_agent:
+        body['userAgent'] = user_agent
+    return body
+
+
+class Auth:
+    def __init__(self, http: HttpClient):
+        self._http = http
+
+    def generate_secret(self, external_username: str, *, client_ip: Optional[str] = None,
+                        user_agent: Optional[str] = None) -> Dict[str, Any]:
+        """Generate a new setup secret for a user: the first-time linking QR
+        (``qrCodeDataUrl``) and its recovery codes.
+
+        ``client_ip`` / ``user_agent``: the IP address and User-Agent of the
+        browser asking for the QR, as you pass them to ``login.request``; each
+        is sent only when given (not ``None`` or empty), as it is. The
+        Touchque API records where the QR was asked for (never in the QR) and
+        the phone shows it before it links (``validate_secret``'s
+        ``setupContext``), so a person tricked into scanning someone else's QR
+        sees that place and device. The API keeps what it can use (a port is
+        dropped, a loopback address or one that is not an IP address is
+        ignored, the User-Agent loses its control characters and is cut at 512
+        characters) and never refuses the request for them; with neither kept,
+        the QR has no setup context. ``reset_secret`` records its new QR's the
+        same way. The relay and the guard send them for you::
+
+            tq.auth.generate_secret(user, client_ip=request.remote_addr,
+                                    user_agent=request.headers.get('User-Agent'))
+        """
+        return self._http.post('/auth/generate-secret', _with_browser(
+            {'externalUsername': external_username}, client_ip, user_agent))
+
+    def reset_secret(self, external_username: str, *, client_ip: Optional[str] = None,
+                     user_agent: Optional[str] = None) -> Dict[str, Any]:
+        """Reset (regenerate) a user's secret.
+
+        ``client_ip`` / ``user_agent``: the browser asking for the new QR,
+        sent like ``generate_secret``'s (each only when given). The Touchque
+        API records them with the new QR as ``generate_secret`` does; a reset
+        without them leaves the new QR with no setup context
+        (``validate_secret``'s ``setupContext`` is ``None``), not the old
+        QR's."""
+        return self._http.post('/auth/secret/reset', _with_browser(
+            {'externalUsername': external_username}, client_ip, user_agent))
+
+    def validate_secret(self, secret: str) -> Dict[str, Any]:
+        """Validate a setup secret code: ``POST /auth/secret/validate``, the
+        phone's public call after scanning the QR. The phone makes it itself;
+        your server does not need it for the phone to show where the QR was
+        asked for.
+
+        The answer's ``setupContext`` (a ``SetupContext``) is where the QR was
+        asked for, as the phone shows it before it links, or ``None``: the
+        request that made the QR (``generate_secret``, or ``reset_secret`` for
+        a new one) named neither a usable IP address nor a User-Agent, the QR
+        is older, or the API predates it. As the phone gets it::
+
+            {'ip': '203.0.113.7',
+             'location': {'city': 'Berlin', 'country': 'Germany', 'countryCode': 'DE'},
+             'device': {'browser': 'Safari', 'os': 'iOS', 'model': 'iPhone'},
+             'requestedAt': '2026-11-16T09:30:00.000Z',
+             'farFromPhone': True}
+
+        ``farFromPhone`` compares that place with the address that makes this
+        call: called from your server, it compares with your server, not the
+        phone. Any value in ``setupContext`` may be ``None`` (``location`` and
+        ``device`` too); one of the wrong type is read as ``None``
+        (``parse_setup_context``), never an error. The rest of the answer is
+        as the API sent it."""
+        res = self._http.post('/auth/secret/validate', {
+            'secret': secret
+        })
+        if not isinstance(res, dict):
+            return res
+        return {**res, 'setupContext': parse_setup_context(res.get('setupContext'))}
+
+    def get_user(self, external_username: str) -> Dict[str, Any]:
+        """
+        Look up a user's link status without sending a push. Useful while
+        polling during enrollment: ``used`` flips true and ``deviceId`` is set
+        once the mobile app scans the setup secret.
+
+        Returns ``{ externalUsername, deviceId, used, frozen, createdAt, expireAt, device }``.
+        Raises ``TouchqueAPIException`` (404) if the user is unknown.
+
+        ``device`` is the linked phone's posture for device trust, or ``None`` before a
+        phone is linked. It is self-reported by the Touchque app::
+
+            {
+              "platform": "ios" | "android" | None,
+              "model": str | None,             # e.g. "iPhone15,3"
+              "osVersion": str | None,         # e.g. "18.1"
+              "securityPatch": str | None,     # Android "YYYY-MM-DD", None on iOS
+              "appVersion": str | None,
+              "screenLock": bool | None,
+              "biometrics": "face" | "touch" | "fingerprint" | "iris" | "none" | None,
+              "jailbroken": bool,              # jailbroken or rooted, by the app's checks
+              "compromised": bool,             # jailbroken/rooted or tampered (sticky for a cool-down)
+              "hardwareKey": bool,             # approvals are signed by a Secure Enclave / Keystore key
+              "attestation": "apple-appattest" | "android-key" | None,
+              "signed": bool,                  # the latest report was signed by the hardware key
+              "reportedAt": str | None,        # ISO date-time of the latest report
+              "lastSeenAt": str | None,
+              "linkedAt": str | None,
+              "state": "healthy" | "at_risk" | "compromised" | "unknown",
+              "issues": [str],                 # jailbroken, tampered, integrity_failed, no_report,
+                                               # stale_report, no_screen_lock, keys_lost,
+                                               # no_hardware_key, debugger, developer_mode
+            }
+        """
+        return self._http.get(f"/users/{quote(external_username, safe='')}")

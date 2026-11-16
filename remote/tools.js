@@ -12,7 +12,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { SDKS, FRONTEND, languageFromFiles, sectionsFor, sections: readmeSections, readme } = require("./sdks");
+const { SDKS, FRONTEND, MATERIAL_BUDGET, languageFromFiles, sectionsFor, sections: readmeSections, readme } = require("./sdks");
 const docs = require("./docsSearch");
 const { WorkspaceError } = require("./workspace");
 
@@ -726,7 +726,7 @@ async function call(name, args, ws, core, config) {
       const part = readmeSections(readme(lang)).filter((x) => /^(install|quick start|drop-in)/i.test(x.title)).map((x) => x.text).join("\n\n");
       if (part) frontend += `\n\n## From the ${packageOf(lang)} README\n${cap(part, 3500)}`;
     }
-    const sectionsText = sectionsFor(args.language, args.feature, fe && fe !== "none" ? 14500 : 16000, args.framework);
+    const sectionsText = sectionsFor(args.language, args.feature, fe && fe !== "none" ? MATERIAL_BUDGET.withFrontend : MATERIAL_BUDGET.plain, args.framework);
     return text(`# ${spec.label}, ${sdk.label}${args.framework ? ` (${args.framework})` : ""}\n${before.length ? `\nBefore this works:\n${before.map((b) => `- ${b}`).join("\n")}\n` : ""}\nWorkspace: ${json(facts)}\n\n${CONTRACT}${login ? "\nTouchque Login: keep the existing sign-in; link a Touchque account to an existing user by verified email (ask the person what to do with new ones); regenerate the existing session after the callback; keep the client secret in an env var; show the callback's error to the user." : ""}${guardNote}${frontend}\nDocs: ${config.docsUrl}${spec.docs}\n\n## From the ${sdk.package} README\n${sectionsText}`);
   }
 

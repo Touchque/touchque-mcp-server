@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.5.2 (2026-11-16)
+
+SDK 5.4.0 on every registry (@touchque/web 2.2.0 and @touchque/react 2.1.0 unchanged): the 2FA setup context.
+
+- Bundles from sdks 6c18705: the READMEs describe generateSecret / resetSecret with the browser's IP and
+  User-Agent, validateSecret's setupContext (ip, location, device, requestedAt, farFromPhone) and the fakes'
+  setups.
+- get_sdk_types answers the setup context in every SDK (SetupContext, parseSetupContext / parse_setup_context /
+  SetupContext.parse ...): each types bundle now includes the SDK's Auth resource (Ruby: setup_context.rb).
+- Install lines: 5.4.0.
+- README material budget in one place (MATERIAL_BUDGET: 17,500 / 16,000 with a frontend): Python's quick start grew
+  to 8.6k and pushed its handler section out; the test now checks every SDK's guard parts at the real budget.
+
 ## 4.5.1 (2026-11-15)
 
 SDK 5.3.0 on every registry (@touchque/web 2.2.0 and @touchque/react 2.1.0 unchanged): Cross App Access with

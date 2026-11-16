@@ -47,6 +47,15 @@ export interface TouchqueLogger {
 export interface GenerateSecretOptions {
   /** The user's unique identifier in YOUR system (email, userId, etc.) */
   externalUsername: string;
+  /**
+   * The IP address of the browser asking for the QR, as for a login request.
+   * Touchque records it with the new secret (never in the QR), and the phone
+   * shows where the QR was asked for before it links: see {@link SetupContext}.
+   * Sent only when given (not empty).
+   */
+  clientIp?: string;
+  /** The User-Agent of that browser (the phone shows its browser and device). Sent only when given (not empty). */
+  userAgent?: string;
 }
 
 export interface GenerateSecretResponse {
@@ -96,9 +105,59 @@ export interface ValidateSecretResponse {
   reason?: string;
   usedAt?: string;
   expiredAt?: string;
+  /**
+   * Where the QR was asked for, as the phone shows it before linking; null when
+   * Touchque has none (an older QR, a server before setup context, or no IP
+   * address or User-Agent named). `validateSecret` always sets it, read leniently
+   * (see `parseSetupContext`).
+   */
+  setupContext?: SetupContext | null;
 }
+
+/**
+ * 2FA setup context: where a first-time linking QR was asked for, recorded by
+ * Touchque from the request that asked for it (`clientIp`, `userAgent` on
+ * `generateSecret`), never put in the QR. The phone shows it before linking, so
+ * someone tricked into scanning another person's QR sees that person's city and
+ * device. Any field may be null.
+ */
+export interface SetupContext {
+  /** The IP address the QR was asked from, or null (none named, or one the phone does not show). */
+  ip: string | null;
+  /** Where that IP address is, or null when unknown. */
+  location: SetupLocation | null;
+  /** The browser and device from the User-Agent, or null. */
+  device: SetupDevice | null;
+  /** When the QR was asked for: ISO 8601, as Touchque sent it (null only if the answer had no such string). */
+  requestedAt: string | null;
+  /** True when that place is far from the phone, false when it is not, null when unknown. */
+  farFromPhone: boolean | null;
+}
+
+/** The place of a {@link SetupContext}'s IP address (GeoIP). */
+export interface SetupLocation {
+  city: string | null;
+  country: string | null;
+  /** ISO 3166-1 alpha-2, e.g. `DE`. */
+  countryCode: string | null;
+}
+
+/** The browser and device of a {@link SetupContext}, from the User-Agent. */
+export interface SetupDevice {
+  /** e.g. `Chrome`, `Safari`. */
+  browser: string | null;
+  /** e.g. `macOS`, `iOS`. */
+  os: string | null;
+  /** e.g. `iPhone`; null when the User-Agent does not say. */
+  model: string | null;
+}
+
 export interface ResetSecretOptions {
   externalUsername: string;
+  /** The IP address of the browser asking for the new QR, sent as `generateSecret` sends it: only when given (not empty). */
+  clientIp?: string;
+  /** The User-Agent of that browser, sent as `generateSecret` sends it: only when given (not empty). */
+  userAgent?: string;
 }
 
 export interface ResetSecretResponse {
@@ -1189,8 +1248,10 @@ export interface DeviceRiskSignal {
    * `device_tampered`, `device_virtual`, `device_geo_mismatch`, `device_many_accounts`,
    * `device_signup_burst`, `device_id_resets`, `device_many_countries`, `device_wrong_site`,
    * `device_report_replayed`, `device_private_window` (context only), `device_step_up_by_admin`,
-   * `device_identification_missing` (the page sent no identification, or one that does not verify).
-   * New codes are added in minor versions.
+   * `device_identification_missing` (the page sent no identification, or one that does not verify),
+   * `device_pointer_synthetic` (the pointer or a finger moved like software), `device_new_storage_burst`
+   * and `device_network_signup_burst` (many new browsers, or sign-ups, in a day from phones like this
+   * one on this network). New codes are added in minor versions.
    */
   code: string;
   text: string;
@@ -1539,7 +1600,10 @@ export interface StartOptions {
   details?: LoginRequestDetails;
   /** Your own transaction id, bound to the approval. */
   referenceId?: string;
-  /** End user's IP / user agent (location and device shown on the phone). */
+  /**
+   * End user's IP / user agent (location and device shown on the phone): sent
+   * with the approval, and with a first-time QR as its setup context.
+   */
   ip?: string;
   userAgent?: string;
   /**
@@ -1635,7 +1699,8 @@ export async function start(r: Resources, action: string, opts: StartOptions): P
     if (err.status === 404 && (code === 'device_not_linked' || /linked device/i.test(err.message))) {
       // No QR may be shown here: say why, so a page stops instead of polling a step it cannot finish.
       if (opts.enroll === false) return { state: 'enroll', reason: 'enrollment_off' };
-      return enrollStep(r, opts.user);
+      // Setup context: the QR carries the same browser as the login request above.
+      return enrollStep(r, opts.user, { clientIp: opts.ip, userAgent: opts.userAgent });
     }
     if (err.status === 423) return { state: 'frozen', retryAfter: data.retryAfter, ...why };
     if (err.status === 429) return { state: 'rate_limited', retryAfter: data.retryAfter, ...why };
@@ -1669,11 +1734,13 @@ function whyOf(res: { caseCode?: unknown; reasons?: unknown }): Pick<Step, 'case
 
 /**
  * First-time linking: a fresh QR for a user with no phone. Never unlinks a phone:
- * a secret is only re-issued when the account is confirmed NOT linked.
+ * a secret is only re-issued when the account is confirmed NOT linked. `browser`
+ * (the request's IP address and User-Agent) goes with the new QR and with its
+ * renewal: the phone shows it before linking.
  */
-async function enrollStep(r: Resources, user: string): Promise<Step> {
+async function enrollStep(r: Resources, user: string, browser: { clientIp?: string; userAgent?: string }): Promise<Step> {
   try {
-    const gen = await r.auth.generateSecret({ externalUsername: user });
+    const gen = await r.auth.generateSecret({ externalUsername: user, ...browser });
     return { state: 'enroll', enroll: { qrCodeDataUrl: gen.qrCodeDataUrl, recoveryCodes: gen.recoveryCodes, ...qrExpiry(gen) } };
   } catch (err) {
     if (!(err instanceof TouchqueAPIError) || err.status !== 409) throw err;
@@ -1683,7 +1750,7 @@ async function enrollStep(r: Resources, user: string): Promise<Step> {
       return { state: 'enroll', reason: 'already_linked' };
     }
     // A QR was issued earlier and not scanned yet: issue a new one (no device to lose).
-    const reset = await r.auth.resetSecret({ externalUsername: user });
+    const reset = await r.auth.resetSecret({ externalUsername: user, ...browser });
     return { state: 'enroll', enroll: { qrCodeDataUrl: reset.qrCodeDataUrl as string, recoveryCodes: reset.recoveryCodes, ...qrExpiry(reset) } };
   }
 }
@@ -2276,7 +2343,7 @@ export interface ReportFraudResponse {
 //   }));
 //
 // Endpoints mounted (relative to wherever you app.use() this router):
-//   POST   /enroll/start                    (auth required) -> GenerateSecretResponse
+//   POST   /enroll/start                    (auth required) -> GenerateSecretResponse (with the browser's IP / User-Agent, as /login sends them)
 //   GET    /enroll/status                   (auth required) -> { linked, used, deviceId }
 //   POST   /login                           (pre-auth) -> 202 { touchque: step, token } until approved (same contract as requireTouchque)
 //   POST   /offline/challenge               (pre-auth, body.externalUsername) -> QR for a phone with no internet
@@ -3403,4 +3470,153 @@ export async function redeemIdJag(o: { tokenEndpoint: string; clientId: string; 
     ...(!o.clientSecret && { client_id: o.clientId }),
   }, o.clientSecret ? { id: o.clientId, secret: o.clientSecret } : undefined, o.dpopKey);
   return data;
+}
+
+// ─────────────────────────────────────────────────────────────
+// From src/resources/Auth.ts — tq.auth: first-time QR (generateSecret/resetSecret with the browser's IP and User-Agent), setup context
+// ─────────────────────────────────────────────────────────────
+
+// Secret management — generate, reset
+
+import { HttpClient } from '../core/HttpClient';
+import {
+  GenerateSecretOptions,
+  GenerateSecretResponse,
+  GetUserResponse,
+  ResetSecretOptions,
+  ResetSecretResponse,
+  SetupContext,
+  ValidateSecretOptions,
+  ValidateSecretResponse,
+} from '../types';
+
+/** A JSON object (not an array), or null. */
+const objectOf = (v: unknown): Record<string, unknown> | null =>
+  (v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null);
+/** A string, or null for anything else (a number, an object, null…). */
+const textOf = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/**
+ * Reads the `setupContext` of a `POST /auth/secret/validate` answer, leniently:
+ * a missing or null one, or one that is not an object, is null; inside it a
+ * field that is missing, null or of another type is null (a `location` or
+ * `device` that is not an object too), and unknown fields are dropped.
+ * `requestedAt` stays the string Touchque sent. Never throws.
+ */
+export function parseSetupContext(raw: unknown): SetupContext | null {
+  const c = objectOf(raw);
+  if (!c) return null;
+  const location = objectOf(c.location);
+  const device = objectOf(c.device);
+  return {
+    ip: textOf(c.ip),
+    location: location ? { city: textOf(location.city), country: textOf(location.country), countryCode: textOf(location.countryCode) } : null,
+    device: device ? { browser: textOf(device.browser), os: textOf(device.os), model: textOf(device.model) } : null,
+    requestedAt: textOf(c.requestedAt),
+    farFromPhone: typeof c.farFromPhone === 'boolean' ? c.farFromPhone : null,
+  };
+}
+
+export class Auth {
+  constructor(private readonly http: HttpClient) {}
+
+  /**
+   * Generate a new setup secret for a user.
+   * Show this secret to the user ONCE (e.g. as a QR code) so they can
+   * link their Touchque app.
+   *
+   * The secret expires after 60 seconds if not used (scanned by the mobile app).
+   * After expiry, calling this method again will automatically rotate the secret.
+   *
+   * Pass `clientIp` and `userAgent` from the browser's request, as for a login
+   * request: Touchque records them with the secret (never in the QR), and the
+   * phone shows where the QR was asked for before it links (`setupContext` on
+   * `validateSecret`).
+   *
+   * @example
+   * const { secret, expiresAt } = await tq.auth.generateSecret({
+   *   externalUsername: 'user@company.com',
+   *   clientIp: req.ip,
+   *   userAgent: req.get('user-agent'),
+   * });
+   * // Show `secret` to user as QR code
+   * // Secret expires at `expiresAt` if not scanned
+   */
+  async generateSecret(options: GenerateSecretOptions): Promise<GenerateSecretResponse> {
+    return this.http.post<GenerateSecretResponse>('/auth/generate-secret', {
+      externalUsername: options.externalUsername,
+      // The same rule as login.request: only a value that is given (not empty), as given.
+      ...(options.clientIp && { clientIp: options.clientIp }),
+      ...(options.userAgent && { userAgent: options.userAgent }),
+    });
+  }
+
+
+  /**
+   * Reset (regenerate) a user's secret.
+   * This invalidates the old secret and generates a new one.
+   * Show the new secret to the user.
+   *
+   * `clientIp` and `userAgent`: the browser asking for the new QR, sent as
+   * `generateSecret` sends them.
+   *
+   * @example
+   * const { secret } = await tq.auth.resetSecret({
+   *   externalUsername: 'user@company.com',
+   *   clientIp: req.ip,
+   *   userAgent: req.get('user-agent'),
+   * });
+   * // Show new secret to user
+   */
+  async resetSecret(options: ResetSecretOptions): Promise<ResetSecretResponse> {
+    return this.http.post<ResetSecretResponse>('/auth/secret/reset', {
+      externalUsername: options.externalUsername,
+      ...(options.clientIp && { clientIp: options.clientIp }),
+      ...(options.userAgent && { userAgent: options.userAgent }),
+    });
+  }
+
+  /**
+   * Validate a secret code.
+   * Useful if you want to verify the user entered the correct setup secret.
+   * Note: The backend allows this without an API key, but the SDK sends it for consistency.
+   *
+   * The answer's `setupContext` is where the QR was asked for (IP address,
+   * place, browser and device, time), as the phone shows it before linking, or
+   * null; see {@link parseSetupContext} for how it is read.
+   */
+  async validateSecret(options: ValidateSecretOptions): Promise<ValidateSecretResponse> {
+    const res = await this.http.post<ValidateSecretResponse>('/auth/secret/validate', {
+      secret: options.secret,
+    });
+    // Anything but a JSON object (never from the API) comes back as it came.
+    if (!objectOf(res)) return res;
+    return { ...res, setupContext: parseSetupContext(res.setupContext) };
+  }
+
+  /**
+   * Look up a user's current link status — no push notification is sent.
+   * Useful for detecting "the mobile app just linked this secret" (`used`
+   * flips true, `deviceId` gets set) without sending a LOGIN challenge to
+   * their device, e.g. while polling during enrollment.
+   *
+   * `device` is the linked phone's posture for device trust (`DevicePosture`:
+   * OS version, screen lock, jailbreak/root, hardware key, `state`, `issues`),
+   * or `null` before a phone is linked.
+   *
+   * @example
+   * const { used, deviceId, device } = await tq.auth.getUser({
+   *   externalUsername: 'user@company.com'
+   * });
+   * if (used && deviceId) {
+   *   // Device has linked — no approval push needed to confirm this.
+   * }
+   * if (device?.state === 'compromised') {
+   *   // The phone is jailbroken/rooted or tampered with.
+   * }
+   */
+  async getUser(options: { externalUsername: string }): Promise<GetUserResponse> {
+    return this.http.get<GetUserResponse>(`/users/${encodeURIComponent(options.externalUsername)}`);
+  }
+
 }

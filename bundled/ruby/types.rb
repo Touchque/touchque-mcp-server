@@ -60,7 +60,9 @@ module Touchque
     # Starts an approval and returns at once: show the step in your UI. "waiting" with
     # "number": show the number, the user picks it on the phone. "enroll": show
     # step["enroll"]["qrCodeDataUrl"] so the user links the Touchque app first.
-    # +browser_proof+ (silent sign-ins): the X-Touchque-Browser header, passed through.
+    # +ip+, +user_agent+: the browser's, for the push and for a linking QR (the phone shows
+    # where the QR was asked for). +browser_proof+ (silent sign-ins): the X-Touchque-Browser
+    # header, passed through.
     def start(action, user, details: nil, reference_id: nil, ip: nil, user_agent: nil, browser_proof: nil, context: nil)
       Steps.start(self, action, user, details: details, reference_id: reference_id, ip: ip, user_agent: user_agent,
                                       browser_proof: browser_proof, context: context)
@@ -363,6 +365,7 @@ module Touchque
 
     # Starts an approval for +action+; never waits. A user with no phone linked gets the
     # linking QR ("enroll"); with enroll: false, {"state" => "enroll", "reason" => "enrollment_off"}.
+    # +ip+ and +user_agent+ (the browser's) go with the push and with a linking QR.
     def start(client, action, user, details: nil, reference_id: nil, ip: nil, user_agent: nil, enroll: true, browser_proof: nil, context: nil)
       raise ConfigError, "start() needs the user id" if user.to_s.empty?
 
@@ -389,7 +392,7 @@ module Touchque
         why = e.case_code ? { "caseCode" => e.case_code } : {}
         if e.status == 404 && (code == "device_not_linked" || e.message.downcase.include?("linked device"))
           # No phone, and this guard may not show the linking QR: final, a page stops polling.
-          return enroll ? enroll_step(client, user) : { "state" => "enroll", "reason" => "enrollment_off" }
+          return enroll ? enroll_step(client, user, ip: ip, user_agent: user_agent) : { "state" => "enroll", "reason" => "enrollment_off" }
         end
         return { "state" => "frozen", "retryAfter" => e.retry_after }.merge(why) if e.status == 423
         return { "state" => "rate_limited", "retryAfter" => e.retry_after }.merge(why) if e.status == 429
@@ -407,9 +410,12 @@ module Touchque
     end
 
     # First-time linking. Never unlinks a phone: a secret is only re-issued when the
-    # account is confirmed NOT linked.
-    def enroll_step(client, user)
-      enroll_qr(client.auth.generate_secret(user))
+    # account is confirmed NOT linked. +ip+ and +user_agent+: the browser asking for the QR,
+    # as the login request sends them (the phone shows where the QR was asked for).
+    def enroll_step(client, user, ip: nil, user_agent: nil)
+      # Only what there is, so an auth stub taking the user alone still works without them.
+      browser = { client_ip: ip, user_agent: user_agent }.compact
+      enroll_qr(client.auth.generate_secret(user, **browser))
     rescue APIError => e
       raise unless e.status == 409
 
@@ -420,7 +426,7 @@ module Touchque
       end
       return { "state" => "enroll", "reason" => "already_linked" } if current && (current["used"] || current["deviceId"])
 
-      enroll_qr(client.auth.reset_secret(user))
+      enroll_qr(client.auth.reset_secret(user, **browser))
     end
 
     # The enroll step for a new linking QR. "expiresAt" is when the QR stops working: the
@@ -759,6 +765,8 @@ module Touchque
     # misconfigured, 401 unauthenticated without a user, logged once).
     # +enroll+: false for a guard that may not show the linking QR: a user with no phone gets
     # 202 {"state" => "enroll", "reason" => "enrollment_off"}.
+    # +ip+, +user_agent+: the browser's, for the push and for a linking QR or its renewal (the
+    # phone shows where the QR was asked for).
     # Silent sign-ins: with +silent_sign_in+ on, a new attempt that carries a browser
     # proof first asks Touchque (risk.check); only an answer of exactly prompt: false
     # approves at once with no push. Otherwise, and on any error, the usual push starts.
@@ -1206,16 +1214,30 @@ module Touchque
 
       # A new setup secret: show +qrCodeDataUrl+ so the Touchque app links the phone.
       # 409 when an unscanned or used secret exists (reset_secret issues a new one).
-      def generate_secret(external_username)
-        @http.post("/auth/generate-secret", { "externalUsername" => external_username })
+      # client_ip:, user_agent: the browser asking for the QR, from its request as for
+      # login.request (and sent the same way). Touchque keeps where a QR was asked for on its
+      # servers, never in the QR, and the phone shows it before it links (validate_secret's
+      # "setupContext"); with neither, the QR has none.
+      def generate_secret(external_username, client_ip: nil, user_agent: nil)
+        @http.post("/auth/generate-secret", secret_body(external_username, client_ip, user_agent))
       end
 
-      def reset_secret(external_username)
-        @http.post("/auth/secret/reset", { "externalUsername" => external_username })
+      # A new setup secret in place of the user's current one. Takes client_ip: and
+      # user_agent: as generate_secret does, and Touchque records where the new QR was asked for
+      # the same way: with neither, it has none (the last QR's is not carried over).
+      def reset_secret(external_username, client_ip: nil, user_agent: nil)
+        @http.post("/auth/secret/reset", secret_body(external_username, client_ip, user_agent))
       end
 
+      # The phone's call: what the Touchque app asks after scanning a first-time QR. "valid",
+      # "externalUsername", the workspace's brand ("integration") and "setupContext", where the
+      # QR was asked for: a Touchque::SetupContext, or nil when none was recorded (a QR asked for
+      # without a browser, an older QR or Touchque). Its "farFromPhone" is measured from whoever
+      # calls this: called from your server, from your server's address, not the phone's.
+      # APIError 404 for an unknown or replaced secret, 409 when it was used, 410 when it expired.
       def validate_secret(secret)
-        @http.post("/auth/secret/validate", { "secret" => secret })
+        res = @http.post("/auth/secret/validate", { "secret" => secret })
+        res.is_a?(Hash) ? res.merge("setupContext" => SetupContext.parse(res["setupContext"])) : res
       end
 
       # A user's link status without sending a push: +used+ flips true and +deviceId+ is
@@ -1223,6 +1245,16 @@ module Touchque
       # posture (device trust), nil before a phone is linked. APIError 404 for an unknown user.
       def get_user(external_username)
         @http.get("/users/#{Util.seg(external_username)}")
+      end
+
+      private
+
+      # The browser fields go out as Login#request sends them: each unless nil, as given.
+      def secret_body(external_username, client_ip, user_agent)
+        body = { "externalUsername" => external_username }
+        body["clientIp"] = client_ip unless client_ip.nil?
+        body["userAgent"] = user_agent unless user_agent.nil?
+        body
       end
     end
 
@@ -2360,6 +2392,123 @@ module Touchque
         end
         @keys[kid]
       end
+    end
+  end
+end
+
+# ─────────────────────────────────────────────────────────────
+# From lib/touchque/setup_context.rb — the setup context the phone shows before linking
+# ─────────────────────────────────────────────────────────────
+
+# frozen_string_literal: true
+
+module Touchque
+  # 2FA setup context: where a first-time linking QR was asked for, as auth.validate_secret
+  # answers it in "setupContext". Touchque records it from the request that made the QR,
+  # generate_secret or reset_secret (the browser's address and its place, the browser and
+  # device, the time), and keeps it on its servers, never in the QR. The phone shows it before
+  # it links, so a person tricked into scanning someone else's QR sees that person's city and
+  # device.
+  #
+  # A Hash with the API's keys ("ip", "location", "device", "requestedAt", "farFromPhone"),
+  # each nil when Touchque does not know it, with a reader for each:
+  #
+  #   # validate_secret is the phone's call, with the secret it scanned (here: from a server)
+  #   ctx = tq.auth.validate_secret(secret)["setupContext"] # nil: none recorded
+  #   ctx.ip              # "203.0.113.7", or nil when Touchque has none to show
+  #   ctx.location&.city  # "Berlin"
+  #   ctx.device&.browser # "Safari"
+  #   ctx.requested_at    # "2026-11-16T09:30:00.000Z", ISO 8601 text as Touchque sent it
+  #   ctx.far_from_phone  # measured from the caller: this server's address here, not the phone's
+  class SetupContext < Hash
+    # The "setupContext" of a validate answer (the decoded JSON), or nil when it is missing,
+    # null or not an object. Lenient: a field that is missing, null or of the wrong type is nil,
+    # and fields Touchque adds later are left out.
+    def self.parse(raw)
+      return nil unless raw.is_a?(Hash)
+
+      new.update("ip" => text(raw, "ip"), "location" => SetupLocation.parse(raw["location"]),
+                 "device" => SetupDevice.parse(raw["device"]), "requestedAt" => text(raw, "requestedAt"),
+                 "farFromPhone" => [true, false].include?(raw["farFromPhone"]) ? raw["farFromPhone"] : nil)
+    end
+
+    # @api private: raw[key] when it is a String, else nil.
+    def self.text(raw, key)
+      raw[key].is_a?(String) ? raw[key] : nil
+    end
+
+    # The address the QR was asked from, or nil.
+    def ip
+      self["ip"]
+    end
+
+    # Its place (a SetupLocation), or nil.
+    def location
+      self["location"]
+    end
+
+    # The browser that asked (a SetupDevice), or nil.
+    def device
+      self["device"]
+    end
+
+    # When the QR was asked for: ISO 8601 text, or nil.
+    def requested_at
+      self["requestedAt"]
+    end
+
+    # Whether that place is far from whoever called validate_secret (the phone, when the
+    # Touchque app asks; your server, when it does): true, false, or nil when Touchque cannot tell.
+    def far_from_phone
+      self["farFromPhone"]
+    end
+  end
+
+  # Where a first-time QR was asked from: "city" ("Berlin"), "country" ("Germany") and
+  # "countryCode" ("DE"), each a String or nil.
+  class SetupLocation < Hash
+    # A SetupLocation, or nil when +raw+ is not an object (fields as SetupContext.parse reads them).
+    def self.parse(raw)
+      return nil unless raw.is_a?(Hash)
+
+      new.update("city" => SetupContext.text(raw, "city"), "country" => SetupContext.text(raw, "country"),
+                 "countryCode" => SetupContext.text(raw, "countryCode"))
+    end
+
+    def city
+      self["city"]
+    end
+
+    def country
+      self["country"]
+    end
+
+    def country_code
+      self["countryCode"]
+    end
+  end
+
+  # The browser that asked for a first-time QR, from its User-Agent: "browser" ("Safari"),
+  # "os" ("iOS") and "model" ("iPhone"), each a String or nil.
+  class SetupDevice < Hash
+    # A SetupDevice, or nil when +raw+ is not an object (fields as SetupContext.parse reads them).
+    def self.parse(raw)
+      return nil unless raw.is_a?(Hash)
+
+      new.update("browser" => SetupContext.text(raw, "browser"), "os" => SetupContext.text(raw, "os"),
+                 "model" => SetupContext.text(raw, "model"))
+    end
+
+    def browser
+      self["browser"]
+    end
+
+    def os
+      self["os"]
+    end
+
+    def model
+      self["model"]
     end
   end
 end

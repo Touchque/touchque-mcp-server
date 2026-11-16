@@ -180,6 +180,9 @@ write("node", "types.ts", [
   "",
   sep("//", "From src/crossAppAccess.ts — Cross App Access: ID-JAG request/redeem/verify, DPoP binding"),
   read("touchque-node", "src", "crossAppAccess.ts").trimEnd(),
+  "",
+  sep("//", "From src/resources/Auth.ts — tq.auth: first-time QR (generateSecret/resetSecret with the browser's IP and User-Agent), setup context"),
+  read("touchque-node", "src", "resources", "Auth.ts").trimEnd(),
 ].join("\n"));
 
 // python
@@ -231,6 +234,9 @@ write("python", "types.py", [
   "",
   sep("#", "From touchque/cross_app_access.py — Cross App Access: ID-JAG request/redeem/verify, DPoP binding"),
   read("touchque-python", "touchque", "cross_app_access.py").trimEnd(),
+  "",
+  sep("#", "From touchque/resources/auth.py — tq.auth: first-time QR with the browser's IP and User-Agent, setup context"),
+  read("touchque-python", "touchque", "resources", "auth.py").trimEnd(),
 ].join("\n"));
 
 // php
@@ -288,6 +294,9 @@ write("php", "types.php", [
   stripPhpOpen(read("touchque-php", "src", "IdJagVerifier.php")).trimEnd(),
   "",
   stripPhpOpen(read("touchque-php", "src", "Exceptions", "TouchqueIdJagException.php")).trimEnd(),
+  "",
+  sep("//", "From src/Resources/Auth.php — $tq->auth: first-time QR with the browser's IP and User-Agent, setup context"),
+  stripPhpOpen(read("touchque-php", "src", "Resources", "Auth.php")).trimEnd(),
 ].join("\n"));
 
 // go
@@ -328,6 +337,9 @@ write("go", "types.go", [
   "",
   sep("//", "From touchque/cross_app_access.go — Cross App Access: ID-JAG request/redeem/verify, DPoP binding"),
   read("touchque-go", "touchque", "cross_app_access.go").trimEnd(),
+  "",
+  sep("//", "From touchque/auth.go — client.Auth: first-time QR with the browser's IP and User-Agent, setup context"),
+  read("touchque-go", "touchque", "auth.go").trimEnd(),
 ].join("\n"));
 
 // dotnet
@@ -374,6 +386,9 @@ write("dotnet", "types.cs", [
   "",
   sep("//", "From src/Touchque/Agents/CrossAppAccess.cs — Cross App Access: ID-JAG, DPoP binding"),
   read("touchque-dotnet", "src", "Touchque", "Agents", "CrossAppAccess.cs").trimEnd(),
+  "",
+  sep("//", "From src/Touchque/Resources/Auth.cs — client.Auth: first-time QR with the browser's IP and User-Agent, setup context"),
+  read("touchque-dotnet", "src", "Touchque", "Resources", "Auth.cs").trimEnd(),
 ].join("\n"));
 
 // ruby
@@ -414,6 +429,9 @@ write("ruby", "types.rb", [
   "",
   sep("#", "From lib/touchque/cross_app_access.rb — Cross App Access: ID-JAG, DPoP binding"),
   read("touchque-ruby", "lib", "touchque", "cross_app_access.rb").trimEnd(),
+  "",
+  sep("#", "From lib/touchque/setup_context.rb — the setup context the phone shows before linking"),
+  read("touchque-ruby", "lib", "touchque", "setup_context.rb").trimEnd(),
 ].join("\n"));
 
 // java
@@ -486,6 +504,9 @@ write("java", "types.java", [
   read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "agents", "IdJagVerifier.java").trimEnd(),
   "",
   read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "TouchqueIdJagException.java").trimEnd(),
+  "",
+  sep("//", "From touchque-java .../resources/Auth.java — tq.auth(): first-time QR with the browser's IP and User-Agent, setup context"),
+  read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "resources", "Auth.java").trimEnd(),
 ].join("\n"));
 
 // The browser SDKs (remote server: get_touchque_docs language "web" / "react", and the docs search).

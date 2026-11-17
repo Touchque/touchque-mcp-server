@@ -183,6 +183,9 @@ write("node", "types.ts", [
   "",
   sep("//", "From src/resources/Auth.ts — tq.auth: first-time QR (generateSecret/resetSecret with the browser's IP and User-Agent), setup context"),
   read("touchque-node", "src", "resources", "Auth.ts").trimEnd(),
+  "",
+  sep("//", "From src/resources/Identity.ts — tq.identity: Touchque Login admin: passkey domain, user store, custom domains"),
+  read("touchque-node", "src", "resources", "Identity.ts").trimEnd(),
 ].join("\n"));
 
 // python
@@ -237,6 +240,9 @@ write("python", "types.py", [
   "",
   sep("#", "From touchque/resources/auth.py — tq.auth: first-time QR with the browser's IP and User-Agent, setup context"),
   read("touchque-python", "touchque", "resources", "auth.py").trimEnd(),
+  "",
+  sep("#", "From touchque/resources/identity.py — tq.identity: Touchque Login admin: passkey domain, user store, custom domains"),
+  read("touchque-python", "touchque", "resources", "identity.py").trimEnd(),
 ].join("\n"));
 
 // php
@@ -297,6 +303,11 @@ write("php", "types.php", [
   "",
   sep("//", "From src/Resources/Auth.php — $tq->auth: first-time QR with the browser's IP and User-Agent, setup context"),
   stripPhpOpen(read("touchque-php", "src", "Resources", "Auth.php")).trimEnd(),
+  "",
+  sep("//", "From src/Resources/Identity.php, Identity/IdentityCustomDomains.php — $tq->identity: Touchque Login admin: passkey domain, user store, custom domains"),
+  stripPhpOpen(read("touchque-php", "src", "Resources", "Identity.php")).trimEnd(),
+  "",
+  stripPhpOpen(read("touchque-php", "src", "Resources", "Identity", "IdentityCustomDomains.php")).trimEnd(),
 ].join("\n"));
 
 // go
@@ -340,6 +351,9 @@ write("go", "types.go", [
   "",
   sep("//", "From touchque/auth.go — client.Auth: first-time QR with the browser's IP and User-Agent, setup context"),
   read("touchque-go", "touchque", "auth.go").trimEnd(),
+  "",
+  sep("//", "From touchque/identity.go — client.Identity: Touchque Login admin: passkey domain, user store, custom domains"),
+  read("touchque-go", "touchque", "identity.go").trimEnd(),
 ].join("\n"));
 
 // dotnet
@@ -389,6 +403,9 @@ write("dotnet", "types.cs", [
   "",
   sep("//", "From src/Touchque/Resources/Auth.cs — client.Auth: first-time QR with the browser's IP and User-Agent, setup context"),
   read("touchque-dotnet", "src", "Touchque", "Resources", "Auth.cs").trimEnd(),
+  "",
+  sep("//", "From src/Touchque/Resources/Identity.cs — client.Identity: Touchque Login admin: passkey domain, user store, custom domains"),
+  read("touchque-dotnet", "src", "Touchque", "Resources", "Identity.cs").trimEnd(),
 ].join("\n"));
 
 // ruby
@@ -432,6 +449,9 @@ write("ruby", "types.rb", [
   "",
   sep("#", "From lib/touchque/setup_context.rb — the setup context the phone shows before linking"),
   read("touchque-ruby", "lib", "touchque", "setup_context.rb").trimEnd(),
+  "",
+  sep("#", "From lib/touchque/resources/identity.rb — client.identity: Touchque Login admin: passkey domain, user store, custom domains"),
+  read("touchque-ruby", "lib", "touchque", "resources", "identity.rb").trimEnd(),
 ].join("\n"));
 
 // java
@@ -507,6 +527,9 @@ write("java", "types.java", [
   "",
   sep("//", "From touchque-java .../resources/Auth.java — tq.auth(): first-time QR with the browser's IP and User-Agent, setup context"),
   read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "resources", "Auth.java").trimEnd(),
+  "",
+  sep("//", "From touchque-java .../resources/Identity.java — tq.identity(): Touchque Login admin: passkey domain, user store, custom domains"),
+  read("touchque-java", "touchque-java", "src", "main", "java", "com", "touchque", "resources", "Identity.java").trimEnd(),
 ].join("\n"));
 
 // The browser SDKs (remote server: get_touchque_docs language "web" / "react", and the docs search).

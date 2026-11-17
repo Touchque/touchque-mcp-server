@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.5.3 (2026-11-17)
+
+SDK 5.5.0 on every registry (@touchque/web 2.2.0 and @touchque/react 2.1.0 unchanged): the Touchque Login passkey
+domain and user store.
+
+- Bundles from sdks 9ef1b95: every README's Touchque Login section (custom domains, passkey domain, moving
+  customers in from the partner's user database) reaches the touchque_login integration material in full.
+- get_sdk_types knows the Touchque Login admin API in every SDK (setPasskeyDomain, get/set/test/removeUserStore,
+  customDomains): each types bundle now includes the SDK's Identity resource.
+- Install lines: 5.5.0.
+
 ## 4.5.2 (2026-11-16)
 
 SDK 5.4.0 on every registry (@touchque/web 2.2.0 and @touchque/react 2.1.0 unchanged): the 2FA setup context.

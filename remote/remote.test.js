@@ -570,7 +570,7 @@ test("5.5: get_sdk_types answers the Touchque Login admin API (passkey domain, u
   }
 });
 
-test("6.0: Device risk is its own SDK family in pick_sdk; Ruby says 6.0 is not on RubyGems yet", async () => {
+test("6.0: Device risk is its own SDK family in pick_sdk, every package on its registry", async () => {
   const ws = fakeWorkspace();
   const pick = async (args) => JSON.parse((await callTool("touchque_pick_sdk", args, ws, {}, loadConfig({}))).content[0].text);
   const go = await pick({ language: "go" });
@@ -579,8 +579,9 @@ test("6.0: Device risk is its own SDK family in pick_sdk; Ruby says 6.0 is not o
   assert.match(go.deviceRisk, /product device_risk/);
   assert.ok(go.frontend.some((f) => /@touchque\/web@\^3\.0\.0 \(3\.0\.0\)/.test(f)));
   const ruby = await pick({ language: "ruby" });
-  assert.equal(ruby.version, "5.5.0");
-  assert.match(ruby.next, /6\.0\.0 .* not on RubyGems yet/);
+  assert.equal(ruby.version, "6.0.0");
+  assert.equal(ruby.next, undefined);
+  assert.match(ruby.install, /~> 6\.0/);
   const dr = await pick({ language: "node", product: "device_risk" });
   assert.equal(dr.server.package, "@touchque/device-risk-node");
   assert.equal(dr.server.published, true);
@@ -590,10 +591,14 @@ test("6.0: Device risk is its own SDK family in pick_sdk; Ruby says 6.0 is not o
   assert.equal(java.version, "6.0.0");
   assert.equal(java.next, undefined);
   assert.match(java.install, /touchque-spring-boot-starter:6\.0\.0/);
-  for (const lang of ["dotnet", "java"]) assert.equal((await pick({ language: lang, product: "device_risk" })).server.published, true, lang);
-  const drRuby = await pick({ language: "ruby", product: "device_risk" });
-  assert.equal(drRuby.server.published, false);
-  assert.match(drRuby.server.install, /^Not on RubyGems yet/);
+  for (const lang of ["dotnet", "java", "ruby"]) assert.equal((await pick({ language: lang, product: "device_risk" })).server.published, true, lang);
+  // A package its registry does not serve yet says so (a stand-in: all seven are out today).
+  const { DEVICE_RISK } = require("./sdks");
+  const saved = DEVICE_RISK.server.ruby.published;
+  DEVICE_RISK.server.ruby.published = null;
+  try {
+    assert.match((await pick({ language: "ruby", product: "device_risk" })).server.install, /^Not on RubyGems yet/);
+  } finally { DEVICE_RISK.server.ruby.published = saved; }
   const all = await pick({ product: "device_risk" });
   assert.equal(all.server.length, 7);
 });

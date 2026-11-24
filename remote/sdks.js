@@ -8,10 +8,9 @@ const path = require("path");
 
 const BUNDLED = path.join(__dirname, "..", "bundled");
 
-// What is on the registries, 2026-11-24: 6.0.0 for Node, Python, Go (module /v6), PHP, .NET and Java (sdks fc7a8c8:
-// Device risk moved out into the Touchque Device Risk packages below, outage codes bound to a scope, offline sign-in
-// packs); Ruby still 5.5.0 (6.0.0 waits on RubyGems; its bundle stays on sdks 9ef1b95 until then: after
-// `node scripts/sync-bundled.js` run `git checkout -- bundled/ruby`). @touchque/web 3.0.0,
+// What is on the registries, 2026-11-24: 6.0.0 for every server SDK (sdks fc7a8c8: Device risk moved out into the
+// Touchque Device Risk packages below, outage codes bound to a scope, offline sign-in packs; Go module /v6). An SDK
+// whose registry lags a release gets `next` (pick_sdk shows it) and keeps its previous bundle until it is there. @touchque/web 3.0.0,
 // @touchque/react 2.2.0.
 // guard: what the integration material says about the step-up guard, per SDK. v51: the 5.1+ guard (its adapter never
 // throws without keys and answers 500 misconfigured; an option for the app's own error shape; one QR per
@@ -64,7 +63,7 @@ const SDKS = {
     },
   },
   ruby: {
-    label: "Ruby", package: "touchque", import: "require \"touchque\"  # Rails: require_touchque \"ACTION\"", published: "5.5.0", next: "6.0.0 (Device risk moved out into touchque-device-risk) is released but not on RubyGems yet", install: "bundle add touchque --version \"~> 5.5\" (Gemfile: gem \"touchque\", \"~> 5.5\")", registry: "RubyGems", manifests: ["Gemfile"],
+    label: "Ruby", package: "touchque", import: "require \"touchque\"  # Rails: require_touchque \"ACTION\"", published: "6.0.0", install: "bundle add touchque --version \"~> 6.0\" (Gemfile: gem \"touchque\", \"~> 6.0\")", registry: "RubyGems", manifests: ["Gemfile"],
     guard: {
       v51: true, v52: true, adapter: "require_touchque (Rails)", errorBody: "error_body:",
       inHandler: "Touchque::Guard.run(nil, ...) (nil: Touchque::Guard.default_client, built on a request; never pass Touchque.client, which raises without keys) and, when result[:approved] is not set, status, headers, body = Touchque::Guard.response(result, error_body: ...) (Rails: response.headers.merge!(headers); render json: body, status: status; Rack: [status, headers, [body]]).",
@@ -93,7 +92,7 @@ const FRONTEND = [
 // paid add-on, off until the workspace turns it on (dashboard → Device risk). The browser tag gives every visitor a
 // visitor ID and a request ID; the server package checks it (deviceRisk.check(requestId, { event, externalUsername })
 // → stepUp). Each server package has its own client and does not need the 2FA SDK. published: what the registry serves
-// (checked 2026-11-24; Maven and NuGet re-checked the same day), null while it is not there yet.
+// (checked 2026-11-24: all seven 1.0.0, the gem last), null while one is not there yet.
 const DEVICE_RISK = {
   browser: {
     package: "@touchque/device-risk", published: "3.0.0",
@@ -107,7 +106,7 @@ const DEVICE_RISK = {
     php: { package: "touchque/device-risk", published: "1.0.0", registry: "Packagist", install: "composer require touchque/device-risk", import: "use Touchque\\DeviceRisk\\TouchqueDeviceRisk;" },
     dotnet: { package: "Touchque.DeviceRisk", published: "1.0.0", registry: "NuGet", install: "dotnet add package Touchque.DeviceRisk" },
     java: { package: "com.touchque:touchque-device-risk", published: "1.0.0", registry: "Maven Central", install: "Gradle: implementation(\"com.touchque:touchque-device-risk:1.0.0\"); Maven: the same coordinates in a <dependency>" },
-    ruby: { package: "touchque-device-risk", published: null, registry: "RubyGems", install: "bundle add touchque-device-risk" },
+    ruby: { package: "touchque-device-risk", published: "1.0.0", registry: "RubyGems", install: "bundle add touchque-device-risk" },
   },
 };
 

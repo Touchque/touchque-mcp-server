@@ -327,12 +327,56 @@ lists a user's known browsers; `forget_browsers(user)` forgets them (after a pas
 ## Passkeys, offline codes, recovery, help desk
 
 - `tq.webauthn`: registration, second factor and passwordless sign-in options/verify, list and delete passkeys.
-- `tq.offline`: QR challenge and typed codes with the phone offline; `totp_verifiers` +
-  `Touchque::Resources::Offline.match_totp_verifier` check time-based codes while Touchque is unreachable.
+- `tq.offline`: QR challenge and typed codes with the phone offline; `totp_verifiers(usernames, scope: { "id" => ..., "name" => ... })` +
+  `Touchque::Resources::Offline.match_totp_verifier` check the scope's outage codes while Touchque is unreachable
+  (the scope is an organization or your own outage server; the phone shows its code under the normal one, and the
+  normal time-based code is never in the list). For a terminal or a small screen,
+  `challenge(user, qr_format: "compact", include_qr_terminal: true)` returns a smaller QR (`"qr"` starts with
+  `TQ3:`, same challenge and same 7-character code) and `"qrTerminal"`, the QR drawn with Unicode half blocks,
+  ready to print; the answer's `"qrFormat"` says which format `"qr"` is. The compact QR carries no location block,
+  so put what the phone should show in `details:`.
 - `tq.recovery` (Never Locked Out): vouchers, `start` (show `bindUri` as a QR), `status`, `veto`.
 - `tq.assist` (help desk): `open`, `verify` (a 2-digit code the agent reads to the person), `spend`, `unfreeze`, `end`.
 - `Touchque::ApprovalProof.verify(proof, request_id:, type:, details:, expected_public_key:)`: the
   phone's own signature over what it showed ("what you see is what you sign").
+
+## Offline sign-in packs (a device with no network)
+
+For your own device that must sign a person in for days without reaching Touchque (a laptop, a kiosk, a
+field tablet): your server asks for "the next N offline sign-ins" of that person on that device, and the
+device keeps them. Per slot it gets only a salt, a slow digest (PBKDF2-SHA256) and a QR sealed for the
+person's phone: nothing on the device can produce a code. Requires the workspace policies
+`offlineSignEnabled` and `offlineDevicePacksEnabled`.
+
+```ruby
+# Your server, right after a sign-in the person approved on the phone at that device itself:
+pack = tq.offline.issue_device_pack("jane@acme.com",
+                                    scope: { "id" => "pc-0f1e2d3c4b5a6978", "name" => "LAPTOP-JANE" }, # one id per device install
+                                    account: "ACME\\jane",                                           # shown on the phone
+                                    count: 10, valid_days: 14)                                      # the defaults
+# Send the pack to the device. Offline, it shows the lowest unused slot's QR (slot["qr"], or
+# slot["qrTerminal"] in a terminal); the person scans it with the Touchque app, approves and types
+# the 10-character code (XXXXX-XXXXX):
+if Touchque::Resources::Offline.verify_device_code(pack["kdf"], slot, typed)
+  # signed in: drop this slot and every lower one, keep { "index" => ..., "at" => Time.now } to report
+end
+
+# Back online:
+tq.offline.report_device_pack_use(pack["scope"]["id"], "jane@acme.com", used)
+# A lost, stolen or reinstalled device:
+tq.offline.revoke_device_scope(pack["scope"]["id"], reason: "lost")
+```
+
+- Issue a pack only after a sign-in the person approved on the phone **at that device itself**, never for a
+  remote session.
+- Show the QR of the **lowest unused slot** and accept a code only for that slot; then drop it and every
+  lower one.
+- Lock after **5 wrong codes in 15 minutes**, refuse when the device's **clock went back** (keep the latest
+  time you have seen), and drop a pack's slots at its own `validUntil` (their QRs carry it: a newer pack does not
+  extend older slots).
+- Report the slots used when the device is back online, and **revoke a lost device**; a reinstalled device
+  gets a new scope id. `Offline.normalize_device_code` and `Offline.format_device_code` ignore case, spaces
+  and dashes.
 
 ## Touchque Actions
 

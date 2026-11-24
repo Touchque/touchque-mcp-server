@@ -21,7 +21,7 @@ module Touchque
     MISSING_KEYS = "Set TQ_API_KEY and TQ_API_SECRET (or pass api_key: and api_secret:)."
 
     attr_reader :auth, :login, :webauthn, :webhook, :offline, :action_types, :actions, :risk, :recovery,
-                :assist, :agents, :identity, :mobile, :qr_pairings, :device_risk, :safe_guard
+                :assist, :agents, :identity, :mobile, :qr_pairings, :safe_guard
 
     # Anything left nil falls back to the environment: TQ_API_KEY, TQ_API_SECRET and
     # TQ_API_URL (default https://api.touchque.com). +timeout+ is seconds per request.
@@ -48,7 +48,6 @@ module Touchque
       @identity = Resources::Identity.new(@http)
       @mobile = Resources::Mobile.new(@http)
       @qr_pairings = Resources::QrPairings.new(@http)
-      @device_risk = Resources::DeviceRisk.new(@http)
       @safe_guard = Resources::SafeGuard.new(@http)
     end
 
@@ -1296,8 +1295,8 @@ module Touchque
         # status(id)["reply"]["ct"] holds only the ciphertext: Touchque::CodeReply.open opens it. Not with qr_pairing.
         body["reply"] = Util.stringify(reply) if reply
         body["clientSignals"] = client_signals if client_signals && !client_signals.empty?
-        # The page's device report from @touchque/web (deviceRisk.collect), when the workspace
-        # turned Device risk on: its signals only ever ask for more.
+        # device_risk: / device_risk_request_id: the Touchque Device Risk identification (from the
+        # Device Risk SDK's tag or identify call); optional. Its signals only ever ask for more.
         body["deviceRisk"] = device_risk unless device_risk.to_s.empty?
         body["deviceRiskRequestId"] = device_risk_request_id unless device_risk_request_id.to_s.empty?
         body["details"] = Util.stringify(details) if details && !details.empty?
@@ -1470,6 +1469,7 @@ module Touchque
     # Offline Sign: QR challenge and typed-code approvals that work with the phone offline.
     class Offline
       ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+      DEVICE_CODE_LENGTH = 10
 
       def initialize(http)
         @http = http
@@ -1477,8 +1477,16 @@ module Touchque
 
       # An offline QR challenge. Always pass +request_id+ when the QR follows a push: a
       # phone-side rejection then kills the QR, and number matching carries over.
+      #
+      # +qr_format: "compact"+ asks for a smaller QR ("qr" starts with "TQ3:") for terminals and
+      # small screens: the same challenge and the same 7-character code, without the location
+      # block, so put what the phone should show in +details+ (default "standard", "TQ2.").
+      # The answer's "qrFormat" says which format "qr" is. +include_qr_terminal: true+ adds
+      # "qrTerminal": the QR drawn with Unicode half blocks (lines separated by "\n"), ready to
+      # print in a terminal (nil when it could not be drawn).
       def challenge(external_username, type: "LOGIN", details: nil, client_ip: nil, user_agent: nil,
-                    ttl_seconds: nil, include_qr_image: true, request_id: nil, require_number_match: false)
+                    ttl_seconds: nil, include_qr_image: true, request_id: nil, require_number_match: false,
+                    qr_format: nil, include_qr_terminal: false)
         body = { "externalUsername" => external_username, "type" => type }
         body["details"] = Util.stringify(details) unless details.nil?
         body["clientIp"] = client_ip unless client_ip.nil?
@@ -1487,6 +1495,8 @@ module Touchque
         body["includeQrImage"] = false unless include_qr_image
         body["requestId"] = request_id unless request_id.nil?
         body["requireNumberMatch"] = true if require_number_match
+        body["qrFormat"] = qr_format unless qr_format.nil?
+        body["includeQrTerminal"] = true if include_qr_terminal
         @http.post("/offline/challenge", body)
       end
 
@@ -1505,10 +1515,22 @@ module Touchque
         not_approved_as_result { @http.post("/offline/totp/verify", body) }
       end
 
-      # Salted, slow digests of each user's next codes, for checking typed codes while your
-      # server cannot reach Touchque. Check a code with Offline.match_totp_verifier.
-      def totp_verifiers(external_usernames, from_step: nil, steps: nil)
-        body = { "externalUsernames" => external_usernames.to_a }
+      # Salted, slow digests of each user's next OUTAGE codes for one scope, for checking typed
+      # codes while your server cannot reach Touchque. Outage codes are not the normal time-based
+      # code: each scope (an organization, or your own outage server) has its own, the user's phone
+      # shows them under the normal code ("<name>: code for when Touchque can't be reached") once a
+      # call has named the scope for the user, and verify_totp never accepts them.
+      #
+      # +scope+ is required: { "id" => ..., "name" => ... } (or symbol keys), id 1-64 characters of
+      # a-z, 0-9, ".", "_", "-" (compared in lower case), name 1-80 characters shown on the phone.
+      # The answer carries "scope", "digestsPerStep" (1: one digest a step) and "kdf". Check a code
+      # with Offline.match_totp_verifier. Fetch again every few minutes from the step you have.
+      # A call without a scope is refused with 400 scope_required; quotas are per scope
+      # (429 scope_quota_exceeded) and per workspace.
+      def totp_verifiers(external_usernames, scope:, from_step: nil, steps: nil)
+        scope_id = scope["id"] || scope[:id]
+        scope_name = scope["name"] || scope[:name]
+        body = { "externalUsernames" => external_usernames.to_a, "scope" => { "id" => scope_id, "name" => scope_name } }
         body["fromStep"] = from_step unless from_step.nil?
         body["steps"] = steps unless steps.nil?
         @http.post("/offline/totp/verifiers", body)
@@ -1522,6 +1544,8 @@ module Touchque
 
         step_seconds = verifiers["stepSeconds"].to_i
         length = verifiers.dig("kdf", "length").to_i
+        per = verifiers["digestsPerStep"].to_i
+        per = 2 if per <= 0
         return nil if step_seconds <= 0 || length <= 0
 
         salt = Util.b64_decode(user["salt"])
@@ -1530,13 +1554,114 @@ module Touchque
         [now, now - 1, now + 1].each do |step|
           next if step < user["fromStep"].to_i || step > verifiers["notAfterStep"].to_i
 
-          i = (step - user["fromStep"].to_i) * 2 * length
-          next if i + 2 * length > digests.bytesize
+          i = (step - user["fromStep"].to_i) * per * length
+          next if i + per * length > digests.bytesize
 
           got = OpenSSL::KDF.pbkdf2_hmac(given, salt: salt + ":#{step}", iterations: verifiers.dig("kdf", "iterations").to_i, length: length, hash: "sha256")
-          return step if Util.secure_compare(digests.byteslice(i, length), got) || Util.secure_compare(digests.byteslice(i + length, length), got)
+          per.times { |k| return step if Util.secure_compare(digests.byteslice(i + k * length, length), got) }
         end
         nil
+      end
+
+      # The next offline sign-ins of a person on one device (a laptop, a kiosk, a field tablet) that
+      # must sign them in with no network. Ask only right after a sign-in the person approved on the
+      # phone at that device itself, never for a remote session.
+      #
+      # +scope+ is the device: { "id" => ..., "name" => ... } (or symbol keys), id 1-64 characters of
+      # a-z, 0-9, ".", "_", "-" starting with a letter or a digit (compared in lower case; one id per
+      # device install), name 1-80 characters shown on the phone. +account+ (1-255 characters, shown
+      # on the phone) is the account the person signs in to there. +count+ 1-20 slots (default 10),
+      # valid +valid_days+ 1-30 days (default 14). The answer has "scope" (id, name, epoch),
+      # "account", "validUntil", "codeLength", "kdf" (name, iterations, length) and "slots" (index,
+      # salt, digest, qr, qrTerminal): per slot the slow digest of a 10-character code and a QR
+      # ("TQ4:") only the person's phone opens; nothing in it can produce a code. Offline, the device
+      # shows the lowest unused slot's QR, the person scans it with the Touchque app, approves and
+      # types the code (XXXXX-XXXXX); check it with Offline.verify_device_code. Indexes continue
+      # from the device's last pack and are never issued twice.
+      #
+      # Requires the workspace policies offlineSignEnabled and offlineDevicePacksEnabled (403
+      # offline_device_packs_disabled); refused under a passkey-only policy (403
+      # phishing_resistant_required), for a phone not enrolled for offline sign (409
+      # device_not_enrolled_for_offline), for a revoked device (409 scope_revoked) and after 12
+      # packs an hour per person and device (429 too_many_packs).
+      def issue_device_pack(external_username, scope:, account:, count: nil, valid_days: nil)
+        scope_id = scope["id"] || scope[:id]
+        scope_name = scope["name"] || scope[:name]
+        body = { "externalUsername" => external_username, "scope" => { "id" => scope_id, "name" => scope_name }, "account" => account }
+        body["count"] = count unless count.nil?
+        body["validDays"] = valid_days unless valid_days.nil?
+        @http.post("/offline/device-packs", body)
+      end
+
+      # A device's offline sign-ins stop (lost, stolen, reinstalled): it gets no more packs, and the
+      # person's phone refuses its codes once it has the list. Without +external_username+, every
+      # person's packs on that device. +reason+: up to 64 characters (default "revoked"). The answer
+      # is { "revoked" => n }. A reinstalled device needs a new scope id.
+      def revoke_device_scope(scope_id, external_username: nil, reason: nil)
+        body = { "scopeId" => scope_id }
+        body["externalUsername"] = external_username unless external_username.nil?
+        body["reason"] = reason unless reason.nil?
+        @http.post("/offline/device-packs/revoke", body)
+      end
+
+      # The slots a device accepted while it had no network, sent once it is back online: +used+ is
+      # 1-100 { "index" => ..., "at" => ... } (or symbol keys; "at" a Time, sent in UTC, or an ISO
+      # 8601 string, within the last 60 days). Touchque writes one log row per slot with the time it
+      # happened. The answer is { "recorded", "ignored" } (an index never issued or repeated, or a
+      # time out of range, is ignored); 404 unknown_scope when the device has no pack for that person.
+      def report_device_pack_use(scope_id, external_username, used)
+        entries = used.map do |u|
+          at = u.key?("at") ? u["at"] : u[:at]
+          at = at.getutc.strftime("%Y-%m-%dT%H:%M:%S.%LZ") if at.is_a?(Time)
+          { "index" => u["index"] || u[:index], "at" => at }
+        end
+        @http.post("/offline/device-packs/report", { "scopeId" => scope_id, "externalUsername" => external_username, "used" => entries })
+      end
+
+      # A typed offline sign-in code in its canonical form: upper case, without spaces or dashes;
+      # nil unless it is exactly 10 characters of the codes' alphabet (A-Z and 2-9 without I and O).
+      def self.normalize_device_code(code)
+        return nil unless code.is_a?(String)
+
+        given = code.b.delete(" \t\n\r\f\v-").tr("a-z", "A-Z")
+        return nil unless given.bytesize == DEVICE_CODE_LENGTH && given.each_char.all? { |c| ALPHABET.include?(c) }
+
+        given.force_encoding(Encoding::UTF_8)
+      end
+
+      # An offline sign-in code the way the phone shows it, "XXXXX-XXXXX"; nil unless
+      # normalize_device_code accepts it.
+      def self.format_device_code(code)
+        given = normalize_device_code(code)
+        given && "#{given[0, 5]}-#{given[5..]}"
+      end
+
+      # Checks the code a person typed against one slot of an offline sign-in pack (the pack's "kdf"
+      # and one of its "slots"), on the device and with no network: PBKDF2-SHA256(code, salt || ":"
+      # || index, kdf iterations, kdf length) compared in constant time with the slot's digest.
+      # Case, spaces and dashes are ignored; anything that is not 10 characters of the codes'
+      # alphabet is false without computing the digest, and so is a KDF other than pbkdf2-sha256.
+      # Check the lowest unused slot only. The digest takes a moment by design (600,000 iterations).
+      def self.verify_device_code(kdf, slot, code)
+        given = normalize_device_code(code)
+        return false if given.nil? || !kdf.is_a?(Hash) || !slot.is_a?(Hash)
+
+        name = kdf.key?("name") ? kdf["name"] : kdf[:name]
+        return false unless name.to_s.empty? || name == "pbkdf2-sha256"
+
+        iterations = kdf["iterations"] || kdf[:iterations]
+        length = kdf["length"] || kdf[:length]
+        index = slot["index"] || slot[:index]
+        return false unless [iterations, length, index].all? { |v| v.is_a?(Integer) && v >= 1 } && iterations <= 0x7fffffff
+
+        salt = (slot["salt"] || slot[:salt]).to_s.unpack1("m0")
+        digest = (slot["digest"] || slot[:digest]).to_s.unpack1("m0")
+        return false unless digest.bytesize == length
+
+        got = OpenSSL::KDF.pbkdf2_hmac(given, salt: salt + ":#{index}", iterations: iterations, length: length, hash: "sha256")
+        Util.secure_compare(got, digest)
+      rescue ArgumentError
+        false
       end
 
       private

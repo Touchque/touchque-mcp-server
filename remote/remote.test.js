@@ -158,7 +158,7 @@ test("the checklist takes the 4.x (TouchQue) and the 5.0 (Touchque) names alike"
   assert.match(await run(dotnet5, "aspnetcore", "dotnet"), /✅ Route protection applied/);
   const php5 = "use Touchque\\Touchque;\nRoute::post('/pay', $h)->middleware('touchque:SEND_MONEY'); getenv('TQ_API_KEY'); try { } catch (\\Exception $e) { }";
   assert.match(await run(php5, "laravel", "php"), /✅ Route protection applied/);
-  const go5 = 'import "github.com/Touchque/touchque-go/v5/touchque"\nmux.Handle("/pay", touchque.Require(tq, "SEND_MONEY", h, touchque.RequireOptions{User: u}))\nos.Getenv("TQ_API_KEY")\nif err != nil {}';
+  const go5 = 'import "github.com/Touchque/touchque-go/v6/touchque"\nmux.Handle("/pay", touchque.Require(tq, "SEND_MONEY", h, touchque.RequireOptions{User: u}))\nos.Getenv("TQ_API_KEY")\nif err != nil {}';
   const goReport = await run(go5, "net-http", "go");
   assert.match(goReport, /✅ Route protection applied/);
   assert.doesNotMatch(goReport, /the current SDK is/);
@@ -462,7 +462,7 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   ctx.enabledFeatures = ["core_2fa"];
   const gen = async (language, frontend) => (await callTool("touchque_generate_integration", { feature: "phone_approval", language, action: "SEND_MONEY", frontend }, ws, {}, loadConfig({}))).content[0].text;
   const py = await gen("python", "plain");
-  assert.match(py, /guard \(5\.5\.0\)\. The adapter \(require_touchque \/ RequireTouchque\): with TQ keys missing it never throws/);
+  assert.match(py, /guard \(6\.0\.0\)\. The adapter \(require_touchque \/ RequireTouchque\): with TQ keys missing it never throws/);
   assert.match(py, /run_guard\(None, \.\.\.\)/);
   assert.match(py, /guard_response\(result, error_body\)/);
   assert.match(py, /touchque\.testing\.FakeTouchque/);
@@ -470,7 +470,7 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   assert.match(py, /without enroll: keep what you show/);
   assert.match(py, /Any other 202 \(passkey_required/);
   const node = await gen("node", "web");
-  assert.match(node, /@touchque\/web@\^2\.2\.0/);
+  assert.match(node, /@touchque\/web@\^3\.0\.0/);
   assert.match(node, /runGuard\(null, input\) per request/);
   assert.match(node, /guardResponse\(result, \{ errorBody \}\)/);
   assert.match(node, /@touchque\/node\/testing/);
@@ -495,7 +495,7 @@ test("5.1: generate_integration points 5.1 SDKs at their own options and keeps t
   assert.match(java51, /touchque\.api-key=/);
   assert.match(await gen("php", "plain"), /new Config\('tq_test', 'test-secret'/);
   const php = await gen("php", "plain");
-  assert.match(php, /guard \(5\.5\.0\)\. The adapter \(the Laravel middleware/);
+  assert.match(php, /guard \(6\.0\.0\)\. The adapter \(the Laravel middleware/);
   assert.match(php, /Guard::run\(null, \.\.\.\)/);
   assert.match(php, /Guard::response\(\$result, \$errorBody\)/);
   assert.doesNotMatch(await gen("java", "web"), /every retry during a first-time QR makes a new QR/);
@@ -518,7 +518,7 @@ test("5.2: .NET is on NuGet; the plain page follows repeated expiresAt and enrol
   assert.doesNotMatch(HELP, /not on NuGet/);
   const pick = JSON.parse((await callTool("touchque_pick_sdk", { language: "dotnet" }, fakeWorkspace(), {}, loadConfig({}))).content[0].text);
   assert.equal(pick.published, true);
-  assert.equal(pick.version, "5.5.0");
+  assert.equal(pick.version, "6.0.0");
   assert.match(pick.install, /^dotnet add package Touchque\.AspNetCore/);
   assert.equal(pick.url, "https://www.nuget.org/packages/Touchque.AspNetCore");
   const ws = fakeWorkspace({ actionTypes: [{ type: "SEND_MONEY", name: "Send money", critical: true, active: true }] });
@@ -568,4 +568,27 @@ test("5.5: get_sdk_types answers the Touchque Login admin API (passkey domain, u
     const text = require("fs").readFileSync(require("path").join(__dirname, "..", "bundled", lang, files[lang]), "utf8");
     for (const sym of syms) assert.ok(text.includes(sym), `${lang} ${sym}`);
   }
+});
+
+test("6.0: Device risk is its own SDK family in pick_sdk; Ruby and Java say 6.0 is not on their registry yet", async () => {
+  const ws = fakeWorkspace();
+  const pick = async (args) => JSON.parse((await callTool("touchque_pick_sdk", args, ws, {}, loadConfig({}))).content[0].text);
+  const go = await pick({ language: "go" });
+  assert.equal(go.package, "github.com/Touchque/touchque-go/v6");
+  assert.match(go.install, /touchque-go\/v6@v6\.0\.0/);
+  assert.match(go.deviceRisk, /product device_risk/);
+  assert.ok(go.frontend.some((f) => /@touchque\/web@\^3\.0\.0 \(3\.0\.0\)/.test(f)));
+  const ruby = await pick({ language: "ruby" });
+  assert.equal(ruby.version, "5.5.0");
+  assert.match(ruby.next, /6\.0\.0 .* not on RubyGems yet/);
+  const dr = await pick({ language: "node", product: "device_risk" });
+  assert.equal(dr.server.package, "@touchque/device-risk-node");
+  assert.equal(dr.server.published, true);
+  assert.match(dr.browser.tag, /cdn\.touchque\.com\/device\/v3\.0\.0\/script\.js/);
+  assert.match(dr.browser.tag, /integrity="sha384-w1C1e4WtBYv45iTHf\/\/fjz6\/X0vsAhUvArlvDe\/LecDmewsZxD4zOOBByRxvV\+aA"/);
+  const drNet = await pick({ language: "dotnet", product: "device_risk" });
+  assert.equal(drNet.server.published, false);
+  assert.match(drNet.server.install, /^Not on NuGet yet/);
+  const all = await pick({ product: "device_risk" });
+  assert.equal(all.server.length, 7);
 });

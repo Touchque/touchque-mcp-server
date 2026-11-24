@@ -12,7 +12,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { SDKS, FRONTEND, MATERIAL_BUDGET, languageFromFiles, sectionsFor, sections: readmeSections, readme } = require("./sdks");
+const { SDKS, FRONTEND, DEVICE_RISK, MATERIAL_BUDGET, languageFromFiles, sectionsFor, sections: readmeSections, readme } = require("./sdks");
 const docs = require("./docsSearch");
 const { WorkspaceError } = require("./workspace");
 
@@ -99,8 +99,8 @@ const TOOLS = [
   },
   {
     name: "touchque_pick_sdk",
-    description: "Which Touchque SDK fits a project, whether it is published, the install command, import line and requirements. Pass language, or the project's manifest file names.",
-    inputSchema: { type: "object", properties: { language: { type: "string", enum: LANGS }, files: { type: "array", items: STR } } },
+    description: "Which Touchque SDK fits a project, whether it is published, the install command, import line and requirements. Pass language, or the project's manifest file names. product device_risk: the Touchque Device Risk packages (the browser tag and the server package) instead of the 2FA SDK.",
+    inputSchema: { type: "object", properties: { language: { type: "string", enum: LANGS }, files: { type: "array", items: STR }, product: { type: "string", enum: ["2fa", "device_risk"], description: "2fa (default): the Touchque SDK for the 2FA API, passkeys and Touchque Login; device_risk: Touchque Device Risk, its own SDK family" } } },
     annotations: { readOnlyHint: true, title: "Pick an SDK" },
   },
   {
@@ -360,11 +360,11 @@ function typeBlock(language, symbol) {
 
 const HELP = `Touchque is an identity platform with two halves.
 - Workforce (a company's own people): Workforce SSO for work apps, Directory & lifecycle, VPN & servers (RADIUS), Shared accounts, Device trust, Threat protection, AI agents & MCP.
-- Customer & developer identity (a company's own app and customers): the 2FA API (phone approval with number matching, passkeys, offline sign; SDKs for Node, PHP, Go, Python, Java, Ruby, .NET), Touchque Login (hosted sign-up and sign-in for the company's customers, OpenID Connect; not employee SSO), Device risk (recognises browsers on sign-in pages), Safe Guard (Safe multisig wallet transactions run only after approvals signed on the approvers' phones), Mobile SDK (the company's own app approves).
+- Customer & developer identity (a company's own app and customers): the 2FA API (phone approval with number matching, passkeys, offline sign; SDKs for Node, PHP, Go, Python, Java, Ruby, .NET), Touchque Login (hosted sign-up and sign-in for the company's customers, OpenID Connect; not employee SSO), Device risk (recognises browsers on sign-in pages; its own SDK family, Touchque Device Risk), Safe Guard (Safe multisig wallet transactions run only after approvals signed on the approvers' phones), Mobile SDK (the company's own app approves).
 Which tool:
 - The person's own facts (organization, role, features, keys, webhook, action types, Login tenant and apps): the server instructions already say; touchque_whoami if they are missing.
 - How-to or concept: touchque_search_docs (one call; Turkish questions work).
-- SDK published or how to install: touchque_pick_sdk.
+- SDK published or how to install: touchque_pick_sdk (product device_risk for Touchque Device Risk).
 - Writing an integration: touchque_generate_integration, then touchque_check_integration.
 - A refused sign-in with a case code: touchque_explain_case.
 - Changes (action type, API key, redirect URI, test approval): only when asked; without confirm first, then confirm: true.
@@ -662,8 +662,21 @@ async function call(name, args, ws, core, config) {
         env: "TQ_API_KEY=tq_… and TQ_API_SECRET=… in the server's .env",
       };
     };
-    const out = language ? describe(language) : { note: "Language not known: pass language or the manifest file names.", sdks: LANGS.map((l) => ({ language: l, published: Boolean(SDKS[l].published), version: SDKS[l].published || null })) };
-    return text(json({ ...out, frontend: FRONTEND.map((f) => `${f.install} (${f.published}): ${f.what}`) }));
+    if (args.product === "device_risk") {
+      const server = (lang) => {
+        const p = DEVICE_RISK.server[lang];
+        return { language: lang, package: p.package, published: Boolean(p.published), version: p.published, registry: p.registry, install: p.published ? p.install : `Not on ${p.registry} yet (${p.install} once it is); or a published Device Risk package, or the REST API.`, ...(p.import && { import: p.import }) };
+      };
+      return text(json({
+        product: "Touchque Device Risk: its own SDK family (the 2FA SDKs 6.0.0 no longer have it). A paid add-on, off until the workspace turns it on (dashboard → Device risk). The server package has its own client: it does not need the 2FA SDK.",
+        browser: { package: DEVICE_RISK.browser.package, version: DEVICE_RISK.browser.published, tag: DEVICE_RISK.browser.tag, install: DEVICE_RISK.browser.install },
+        server: language ? server(language) : LANGS.map(server),
+        flow: "The page's tag (data-site-key: the workspace's public site key tqpk_…) sends a request ID with the form; the server calls deviceRisk.check(requestId, { event, externalUsername }) and asks for more when stepUp is set (never refuses on it alone).",
+      }));
+    }
+    const describe2fa = (lang) => ({ ...describe(lang), ...(SDKS[lang].next && { next: SDKS[lang].next }) });
+    const out = language ? describe2fa(language) : { note: "Language not known: pass language or the manifest file names.", sdks: LANGS.map((l) => ({ language: l, published: Boolean(SDKS[l].published), version: SDKS[l].published || null })) };
+    return text(json({ ...out, frontend: FRONTEND.map((f) => `${f.install} (${f.published}): ${f.what}`), deviceRisk: "Touchque Device Risk is its own SDK family: touchque_pick_sdk with product device_risk" }));
   }
 
   if (name === "touchque_generate_integration") {
@@ -715,7 +728,7 @@ async function call(name, args, ws, core, config) {
     let frontend = stepUp && fe === "plain"
       ? `\nFrontend (plain pages, no bundler): the guarded route answers 202 { touchque: step, token } until the phone approves. Send the same request again every 2 s with the header X-Touchque-Token set to the token of the LATEST answer (it changes each time). State waiting: show touchque.number when it is there (polls repeat it); ${g.v52 ? "every waiting answer carries the request's touchque.expiresAt: stop once the latest one has passed" : "keep the touchque.expiresAt of the first waiting answer (polls leave it out) and stop when it has passed"} or when the answer is not 202 (an expired push answers 408). State enroll with touchque.enroll.qrCodeDataUrl (the first time): show it and touchque.enroll.recoveryCodes, and keep polling. ${enrollPlain} State enroll with reason already_linked (linked in the meantime): keep polling with the new token; the next answer is waiting. ${g.v52 ? "State enroll with reason enrollment_off (a route that may not show a QR, the person has no phone linked): final; stop and ask them to link the Touchque app first. " : ""}Any other 202 (passkey_required, offline, or an enroll answer with no QR while you show none${g.v52 ? "" : ", as a route with enrollment turned off answers"}): a plain page cannot finish it; stop and show a message, or use @touchque/web. Or load @touchque/web through the project's bundler if it has one.`
       : stepUp
-        ? `\nFrontend: the guarded route answers 202 { touchque: step, token } until the phone approves; show the step's number (or the first-time QR) and retry with that answer's token in X-Touchque-Token. @touchque/web (npm install @touchque/web@^${g.v52 ? "2.2.0" : "2.1.0"}) does this loop; @touchque/react adds components (npm install @touchque/react@^${g.v52 ? "2.1.0" : "2.0.0"} @touchque/web@^${g.v52 ? "2.2.0" : "2.1.0"}).${g.v51 ? "" : " With this SDK's guard, every retry during a first-time QR makes a new QR and new recovery codes: in onStep, on state enroll with enroll.qrCodeDataUrl, show it once and call controls.cancel(); the call then rejects with an error named AbortError (no request is sent after it): catch that one and keep the QR on screen, then call again after the person scanned it. With @touchque/react's useTouchqueAction, call a.cancel() when a.step is enroll with enroll.qrCodeDataUrl and treat its error status with an AbortError as \"QR shown\", not a failure."}`
+        ? `\nFrontend: the guarded route answers 202 { touchque: step, token } until the phone approves; show the step's number (or the first-time QR) and retry with that answer's token in X-Touchque-Token. @touchque/web (npm install @touchque/web@^${g.v52 ? "3.0.0" : "2.1.0"}) does this loop; @touchque/react adds components (npm install @touchque/react@^${g.v52 ? "2.2.0" : "2.0.0"} @touchque/web@^${g.v52 ? "3.0.0" : "2.1.0"}).${g.v51 ? "" : " With this SDK's guard, every retry during a first-time QR makes a new QR and new recovery codes: in onStep, on state enroll with enroll.qrCodeDataUrl, show it once and call controls.cancel(); the call then rejects with an error named AbortError (no request is sent after it): catch that one and keep the QR on screen, then call again after the person scanned it. With @touchque/react's useTouchqueAction, call a.cancel() when a.step is enroll with enroll.qrCodeDataUrl and treat its error status with an AbortError as \"QR shown\", not a failure."}`
         : "";
     const guardNote = !(needsAction || stepUp) ? ""
       : g.v51

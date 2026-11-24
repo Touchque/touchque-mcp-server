@@ -424,7 +424,7 @@ test("validate_integration warns (unscored) when an offline QR is issued without
   });
 });
 
-test("validate_integration recognizes the versioned Go module path (…/touchque-go/v5/touchque)", async () => {
+test("validate_integration recognizes the versioned Go module path (…/touchque-go/v6/touchque)", async () => {
   await withClient(async (client) => {
     const code = (major) => `package main
 import (
@@ -436,13 +436,16 @@ func main() {
   h := touchque.Require(tq, "SEND_MONEY", handler, opts)
   if err := serve(h); err != nil { panic(err) }
 }`;
-    const v5 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v5"), framework: "net-http", language: "go" } })).content[0].text;
-    assert.match(v5, /✅ github\.com\/Touchque\/touchque-go\/v5 SDK is imported/);
-    assert.doesNotMatch(v5, /the current SDK is/);
-    // An older major still counts as the SDK, with an unscored hint to move to /v5.
-    const v4 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v4"), framework: "net-http", language: "go" } })).content[0].text;
-    assert.match(v4, /✅ github\.com\/Touchque\/touchque-go\/v5 SDK is imported/);
-    assert.match(v4, /the current SDK is github\.com\/Touchque\/touchque-go\/v5\/touchque/);
+    const v6 = (await client.callTool({ name: "validate_integration", arguments: { code: code("v6"), framework: "net-http", language: "go" } })).content[0].text;
+    assert.match(v6, /✅ github\.com\/Touchque\/touchque-go\/v6 SDK is imported/);
+    assert.doesNotMatch(v6, /the current SDK is/);
+    // An older major still counts as the SDK, with an unscored hint to move to /v6.
+    for (const old of ["v5", "v4"]) {
+      const r = (await client.callTool({ name: "validate_integration", arguments: { code: code(old), framework: "net-http", language: "go" } })).content[0].text;
+      assert.match(r, /✅ github\.com\/Touchque\/touchque-go\/v6 SDK is imported/);
+      assert.match(r, /the current SDK is github\.com\/Touchque\/touchque-go\/v6\/touchque/);
+      assert.match(r, /touchque-device-risk-go/);
+    }
   });
 });
 
@@ -685,7 +688,7 @@ test("touchque_help mentions the 3.2.0 features", async () => {
 test("server reports the package version", async () => {
   await withClient(async (client) => {
     assert.equal(client.getServerVersion().version, require("./package.json").version);
-    assert.equal(require("./package.json").version, "4.5.3");
+    assert.equal(require("./package.json").version, "4.6.0");
   });
 });
 

@@ -121,7 +121,7 @@ than assuming Node.
 | Node | `@touchque/node` | `requireTouchque('ACTION', opts)` | `touchqueRouter(tq, { getUserId, getLoginUser })` |
 | Python | `touchque-authenticator` | `@require_touchque('ACTION', ...)` | `touchque_relay_blueprint` (Flask), `touchque_relay_router` (FastAPI), `touchque_relay_view` / `touchque_relay_urls` (Django), `RelayHandler` |
 | PHP | `touchque-authenticator/php-sdk` | `->middleware('touchque:ACTION')` | `TouchqueRelay::routes($router, 'touchque')` (Laravel), `Touchque\Relay\RelayHandler` |
-| Go | `github.com/Touchque/touchque-go/v5` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
+| Go | `github.com/Touchque/touchque-go/v6` | `touchque.Require(tq, "ACTION", handler, touchque.RequireOptions{User: ...})` | `touchque.NewRelayHandler(tq, touchque.RelayOptions{UserID: ..., LoginUser: ...})` |
 | .NET | `Touchque.AspNetCore` | `.RequireTouchque("ACTION")`, `[RequireTouchque("ACTION")]` | `app.MapTouchqueRelay("/touchque", new RelayOptions<HttpContext> { GetUserId, GetLoginUser })` |
 | Ruby | `touchque` | `require_touchque "ACTION"` (Rails), `Touchque::Guard.run` | `Touchque::Rack::Relay.new(get_user_id:, get_login_user:)` |
 | Java | `com.touchque:touchque-spring-boot-starter` | `@RequireTouchque("ACTION")` (Spring Boot), `Guard.run` | a `RelayOptions<HttpServletRequest>` bean, or `new RelayHandler<>(tq, options)` |

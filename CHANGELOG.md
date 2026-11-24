@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.6.0 (2026-11-24)
+
+SDK 6.0.0: Touchque Device Risk is its own SDK family (sdks fc7a8c8). Registries checked 2026-11-24.
+
+- Bundles from sdks fc7a8c8 for Node, Python, Go, PHP, .NET, @touchque/web 3.0.0 and @touchque/react 2.2.0. Ruby
+  and Java stay on their 5.5.0 bundles (sdks 9ef1b95): 6.0.0 is not on RubyGems or Maven Central yet, and pick_sdk
+  says so (next).
+- pick_sdk: 6.0.0 for Node (^6.0.0), Python (>=6.0.0), Go github.com/Touchque/touchque-go/v6 (@v6.0.0), PHP (^6.0),
+  .NET; @touchque/web ^3.0.0, @touchque/react ^2.2.0 (also in the integration text). Every 2FA answer points to
+  Touchque Device Risk.
+- New: touchque_pick_sdk product device_risk: the browser tag (@touchque/device-risk 3.0.0, cdn.touchque.com/device/
+  v3.0.0 with its SRI integrity) and the server package per language, published as the registry serves it today:
+  @touchque/device-risk-node, touchque-device-risk (PyPI), touchque-device-risk-go and touchque/device-risk
+  (Packagist) 1.0.0; Touchque.DeviceRisk (NuGet), com.touchque:touchque-device-risk and the touchque-device-risk gem
+  not yet. The instructions and help name it.
+- validate_integration: the current Go module is /v6; /v5 and older still count as the SDK, with a hint that names
+  the 6.0 changes (Device risk moved to touchque-device-risk-go, outage codes bound to a scope).
+
 ## 4.5.3 (2026-11-17)
 
 SDK 5.5.0 on every registry (@touchque/web 2.2.0 and @touchque/react 2.1.0 unchanged): the Touchque Login passkey

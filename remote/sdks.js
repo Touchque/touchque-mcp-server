@@ -8,9 +8,11 @@ const path = require("path");
 
 const BUNDLED = path.join(__dirname, "..", "bundled");
 
-// What is on the registries, 2026-11-17: 5.5.0 for every server SDK (npm, PyPI, Go modules, Packagist, RubyGems,
-// Maven Central, NuGet), @touchque/web 2.2.0, @touchque/react 2.1.0. The bundled READMEs and types are that release
-// (sdks 9ef1b95).
+// What is on the registries, 2026-11-24: 6.0.0 for Node, Python, Go (module /v6), PHP and .NET (sdks fc7a8c8: Device
+// risk moved out into the Touchque Device Risk packages below, outage codes bound to a scope, offline sign-in packs);
+// Ruby and Java still 5.5.0 (6.0.0 waits on RubyGems and Maven Central; their bundles stay on sdks 9ef1b95 until then:
+// after `node scripts/sync-bundled.js` run `git checkout -- bundled/ruby bundled/java`). @touchque/web 3.0.0,
+// @touchque/react 2.2.0.
 // guard: what the integration material says about the step-up guard, per SDK. v51: the 5.1+ guard (its adapter never
 // throws without keys and answers 500 misconfigured; an option for the app's own error shape; one QR per
 // enrollment). v52: the 5.2 guard (a null client is the default client also inside the handler, a response helper,
@@ -19,7 +21,7 @@ const BUNDLED = path.join(__dirname, "..", "bundled");
 // Checked against the SDK sources (sdks 7dbba7d) on 2026-11-13.
 const SDKS = {
   node: {
-    label: "Node.js", package: "@touchque/node", import: "const { Touchque, requireTouchque } = require('@touchque/node');", published: "5.5.0", install: "npm install @touchque/node@^5.5.0", registry: "npm", manifests: ["package.json"],
+    label: "Node.js", package: "@touchque/node", import: "const { Touchque, requireTouchque } = require('@touchque/node');", published: "6.0.0", install: "npm install @touchque/node@^6.0.0", registry: "npm", manifests: ["package.json"],
     guard: {
       v51: true, v52: true, adapter: "Express: requireTouchque(action, { user, details, errorBody }) before the handler; Next.js / Fetch handlers: withTouchque(action, handler, { user, details, errorBody }), user required, the handler gets { touchque } in its second argument", errorBody: "errorBody",
       inHandler: "runGuard(null, input) per request (null: the default client, built from TQ_API_KEY / TQ_API_SECRET on a request and kept; never new Touchque() at module scope, which throws without keys) and, when result.approved is not set, const { status, headers, body } = await guardResponse(result, { errorBody }) sent as it is.",
@@ -27,8 +29,8 @@ const SDKS = {
     },
   },
   php: {
-    label: "PHP", package: "touchque-authenticator/php-sdk", import: "use Touchque\\Touchque;", published: "5.5.0",
-    install: "composer require \"touchque-authenticator/php-sdk:^5.5\"",
+    label: "PHP", package: "touchque-authenticator/php-sdk", import: "use Touchque\\Touchque;", published: "6.0.0",
+    install: "composer require \"touchque-authenticator/php-sdk:^6.0\"",
     registry: "Packagist", manifests: ["composer.json"],
     guard: {
       v51: true, v52: true, adapter: "the Laravel middleware 'touchque:ACTION'", errorBody: "'errorBody' (bind new TouchqueMiddleware(null, ['errorBody' => fn (array $r) => ...]))",
@@ -37,7 +39,7 @@ const SDKS = {
     },
   },
   go: {
-    label: "Go", package: "github.com/Touchque/touchque-go/v5", import: "import \"github.com/Touchque/touchque-go/v5/touchque\"", published: "5.5.0", install: "go get github.com/Touchque/touchque-go/v5@v5.5.0 (needs go 1.26: in a project below that it raises the go directive in go.mod; tell the person)", registry: "Go modules", manifests: ["go.mod"],
+    label: "Go", package: "github.com/Touchque/touchque-go/v6", import: "import \"github.com/Touchque/touchque-go/v6/touchque\"", published: "6.0.0", install: "go get github.com/Touchque/touchque-go/v6@v6.0.0 (needs go 1.26: in a project below that it raises the go directive in go.mod; tell the person)", registry: "Go modules", manifests: ["go.mod"],
     guard: {
       v51: true, v52: true, adapter: "Require (with a nil client it uses the default client from the environment)", errorBody: "RequireOptions.ErrorBody",
       inHandler: "touchque.RunGuard(ctx, nil, in) (nil: the default client, shared with Require(nil, ...), built from TQ_API_KEY / TQ_API_SECRET on the first request) and, when res.Approved is nil, touchque.WriteGuardResult(w, res, errorBody) (nil for the default body).",
@@ -45,7 +47,7 @@ const SDKS = {
     },
   },
   python: {
-    label: "Python", package: "touchque-authenticator", import: "from touchque import Touchque  # Flask/Django: from touchque.contrib.flask import require_touchque; FastAPI: RequireTouchque", published: "5.5.0", install: "<the project's python, e.g. .venv/bin/python> -m pip install \"touchque-authenticator>=5.5.0\" (into the project's own environment; record the same floor in its requirements)", extras: "pip install \"touchque-authenticator[flask]>=5.5.0\" (or [django], [fastapi]) for a framework adapter", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"],
+    label: "Python", package: "touchque-authenticator", import: "from touchque import Touchque  # Flask/Django: from touchque.contrib.flask import require_touchque; FastAPI: RequireTouchque", published: "6.0.0", install: "<the project's python, e.g. .venv/bin/python> -m pip install \"touchque-authenticator>=6.0.0\" (into the project's own environment; record the same floor in its requirements)", extras: "pip install \"touchque-authenticator[flask]>=6.0.0\" (or [django], [fastapi]) for a framework adapter", registry: "PyPI", manifests: ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"],
     guard: {
       v51: true, v52: true, adapter: "require_touchque / RequireTouchque", errorBody: "error_body=",
       inHandler: "run_guard(None, ...) (None: the default client, built from TQ_API_KEY / TQ_API_SECRET on the first request) and, when 'approved' is not in the result, status, headers, body = guard_response(result, error_body) from the framework's module (touchque.contrib.flask / .django; FastAPI: run run_guard in a worker thread and await touchque.contrib.fastapi.guard_response).",
@@ -54,7 +56,7 @@ const SDKS = {
     },
   },
   dotnet: {
-    label: ".NET", package: "Touchque.AspNetCore", import: "using Touchque; using Touchque.AspNetCore;", published: "5.5.0", install: "dotnet add package Touchque.AspNetCore (ASP.NET Core; workers and consoles: dotnet add package Touchque)", registry: "NuGet", url: "https://www.nuget.org/packages/Touchque.AspNetCore", manifests: [".csproj", ".sln", "Program.cs"],
+    label: ".NET", package: "Touchque.AspNetCore", import: "using Touchque; using Touchque.AspNetCore;", published: "6.0.0", install: "dotnet add package Touchque.AspNetCore (ASP.NET Core; workers and consoles: dotnet add package Touchque)", registry: "NuGet", url: "https://www.nuget.org/packages/Touchque.AspNetCore", manifests: [".csproj", ".sln", "Program.cs"],
     guard: {
       v51: true, v52: true, adapter: "RequireTouchque / [RequireTouchque]", errorBody: "ErrorBody",
       inHandler: "resolve the client per request in a try/catch: try { r = await Guard.RunAsync(http.RequestServices.GetRequiredService<TouchqueClient>(), input, http.RequestAborted); } catch (TouchqueConfigException) { r = Guard.WithoutClient(input); } (declare GuardResult r; before the try; never take TouchqueClient as a handler parameter or a constructor parameter of a controller or service: it is resolved before your code runs and throws TouchqueConfigException without keys, and in a controller constructor it breaks every action of that controller; with keys only in the environment, Guard.RunAsync(null, input)). When r.Approved is null: return r.ToResult(errorBody) from a minimal API handler (or a controller action returning IResult); in a controller action returning IActionResult, await r.WriteAsync(HttpContext, errorBody); return new EmptyResult();.",
@@ -62,7 +64,7 @@ const SDKS = {
     },
   },
   ruby: {
-    label: "Ruby", package: "touchque", import: "require \"touchque\"  # Rails: require_touchque \"ACTION\"", published: "5.5.0", install: "bundle add touchque --version \"~> 5.5\" (Gemfile: gem \"touchque\", \"~> 5.5\")", registry: "RubyGems", manifests: ["Gemfile"],
+    label: "Ruby", package: "touchque", import: "require \"touchque\"  # Rails: require_touchque \"ACTION\"", published: "5.5.0", next: "6.0.0 (Device risk moved out into touchque-device-risk) is released but not on RubyGems yet", install: "bundle add touchque --version \"~> 5.5\" (Gemfile: gem \"touchque\", \"~> 5.5\")", registry: "RubyGems", manifests: ["Gemfile"],
     guard: {
       v51: true, v52: true, adapter: "require_touchque (Rails)", errorBody: "error_body:",
       inHandler: "Touchque::Guard.run(nil, ...) (nil: Touchque::Guard.default_client, built on a request; never pass Touchque.client, which raises without keys) and, when result[:approved] is not set, status, headers, body = Touchque::Guard.response(result, error_body: ...) (Rails: response.headers.merge!(headers); render json: body, status: status; Rack: [status, headers, [body]]).",
@@ -72,7 +74,7 @@ const SDKS = {
   java: {
     label: "Java", package: "com.touchque:touchque-spring-boot-starter", import: "import com.touchque.TouchqueClient;  // Spring Boot: @RequireTouchque", published: "5.5.0",
     install: "Gradle: implementation(\"com.touchque:touchque-spring-boot-starter:5.5.0\") (without Spring: com.touchque:touchque-java:5.5.0); Maven: the same coordinates in a <dependency>. Needs Java 17+; the starter needs Spring Boot 3 (jakarta.servlet)",
-    registry: "Maven Central", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"],
+    next: "6.0.0 (Device risk moved out into com.touchque:touchque-device-risk) is released but not on Maven Central yet", registry: "Maven Central", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"],
     guard: {
       v51: true, v52: true, adapter: "@RequireTouchque (Spring Boot starter)", errorBody: "TouchqueErrorBody bean (or errorBody on one action's TouchqueGuardOptions)",
       inHandler: "with the starter, inject ObjectProvider<TouchqueClient> and per request try { r = Guard.run(touchque.getObject(), input); } catch (BeansException e) { r = Guard.withoutClient(input); } (never a plain TouchqueClient field or constructor parameter: built at startup, the app does not start without keys; never @Lazy TouchqueClient: a final class, no proxy, no startup); without the starter Guard.run(null, input). When r.approved() is null send Guard.response(r, errorBody, objectMapper, logger): its status(), headers() and body().",
@@ -83,9 +85,31 @@ const SDKS = {
 };
 
 const FRONTEND = [
-  { package: "@touchque/web", published: "2.2.0", install: "npm install @touchque/web", what: "Drives the step-up loop (the matching number, the first-time QR) and passkey ceremonies in the browser." },
-  { package: "@touchque/react", published: "2.1.0", install: "npm install @touchque/react@^2.1.0 @touchque/web@^2.2.0", what: "Hooks and components on top of @touchque/web." },
+  { package: "@touchque/web", published: "3.0.0", install: "npm install @touchque/web@^3.0.0", what: "Drives the step-up loop (the matching number, the first-time QR) and passkey ceremonies in the browser." },
+  { package: "@touchque/react", published: "2.2.0", install: "npm install @touchque/react@^2.2.0 @touchque/web@^3.0.0", what: "Hooks and components on top of @touchque/web." },
 ];
+
+// Touchque Device Risk: its own product and SDK family since 2026-11-24 (the 2FA SDKs 6.0.0 no longer have it). A
+// paid add-on, off until the workspace turns it on (dashboard → Device risk). The browser tag gives every visitor a
+// visitor ID and a request ID; the server package checks it (deviceRisk.check(requestId, { event, externalUsername })
+// → stepUp). Each server package has its own client and does not need the 2FA SDK. published: what the registry serves
+// (checked 2026-11-24), null while it is not there yet.
+const DEVICE_RISK = {
+  browser: {
+    package: "@touchque/device-risk", published: "3.0.0",
+    tag: '<script src="https://cdn.touchque.com/device/v3.0.0/script.js" data-site-key="tqpk_…" data-purpose="sign_in" integrity="sha384-w1C1e4WtBYv45iTHf//fjz6/X0vsAhUvArlvDe/LecDmewsZxD4zOOBByRxvV+aA" crossorigin="anonymous" async></script>',
+    install: "npm install @touchque/device-risk (with a bundler: import { deviceRisk } from '@touchque/device-risk')",
+  },
+  server: {
+    node: { package: "@touchque/device-risk-node", published: "1.0.0", registry: "npm", install: "npm install @touchque/device-risk-node", import: "import { TouchqueDeviceRisk } from '@touchque/device-risk-node';" },
+    python: { package: "touchque-device-risk", published: "1.0.0", registry: "PyPI", install: "<the project's python> -m pip install touchque-device-risk" },
+    go: { package: "github.com/Touchque/touchque-device-risk-go", published: "1.0.0", registry: "Go modules", install: "go get github.com/Touchque/touchque-device-risk-go@v1.0.0 (Go 1.26 or newer)" },
+    php: { package: "touchque/device-risk", published: "1.0.0", registry: "Packagist", install: "composer require touchque/device-risk", import: "use Touchque\\DeviceRisk\\TouchqueDeviceRisk;" },
+    dotnet: { package: "Touchque.DeviceRisk", published: null, registry: "NuGet", install: "dotnet add package Touchque.DeviceRisk" },
+    java: { package: "com.touchque:touchque-device-risk", published: null, registry: "Maven Central", install: "Maven/Gradle: com.touchque:touchque-device-risk:1.0.0" },
+    ruby: { package: "touchque-device-risk", published: null, registry: "RubyGems", install: "bundle add touchque-device-risk" },
+  },
+};
 
 /** The language a project's manifest files point at, or null. */
 function languageFromFiles(files = []) {
@@ -203,4 +227,4 @@ function sectionsFor(language, feature, maxChars = 24000, framework = null) {
 // it fails the tests at sync time instead of losing its handler section quietly.
 const MATERIAL_BUDGET = { plain: 17500, withFrontend: 16000 };
 
-module.exports = { MATERIAL_BUDGET, SDKS, FRONTEND, FEATURE_SECTIONS, languageFromFiles, sectionsFor, sections, readme };
+module.exports = { DEVICE_RISK, MATERIAL_BUDGET, SDKS, FRONTEND, FEATURE_SECTIONS, languageFromFiles, sectionsFor, sections, readme };

@@ -86,7 +86,7 @@ const LANGUAGES = {
     frameworks: ["laravel", "other"],
   },
   go: {
-    label: "Go", package: "github.com/Touchque/touchque-go/v5", typesFile: "types.go", typesMime: "text/x-go",
+    label: "Go", package: "github.com/Touchque/touchque-go/v6", typesFile: "types.go", typesMime: "text/x-go",
     frameworks: ["net-http", "other"],
   },
   dotnet: {
@@ -848,10 +848,10 @@ async function callTool(request) {
         );
       }
       const goModule = language === "go" && code.match(/["']github\.com\/Touchque\/touchque-go(\/v\d+)?\/touchque["']/);
-      if (goModule && goModule[1] !== "/v5") {
+      if (goModule && goModule[1] !== "/v6") {
         // id: go_module_not_v4
         advisories.push(
-          `ℹ️ This imports ${goModule[0]}; the current SDK is github.com/Touchque/touchque-go/v5/touchque (go get github.com/Touchque/touchque-go/v5). 5.0 renamed every TouchQue name to Touchque; 4.0 moved action types to client.ActionTypes and added case codes, OnChallenge and Touchque Actions.`
+          `ℹ️ This imports ${goModule[0]}; the current SDK is github.com/Touchque/touchque-go/v6/touchque (go get github.com/Touchque/touchque-go/v6). 6.0 moved Device risk into github.com/Touchque/touchque-device-risk-go and bound outage codes to a scope; 5.0 renamed every TouchQue name to Touchque; 4.0 moved action types to client.ActionTypes and added case codes, OnChallenge and Touchque Actions.`
         );
       }
       const advisoryText = advisories.length ? `\n\n${advisories.join("\n")}` : "";

@@ -144,7 +144,6 @@ public sealed class TouchqueClient
         Identity = new IdentityResource(_http);
         Mobile = new MobileResource(_http);
         QrPairings = new QrPairingsResource(_http);
-        DeviceRisk = new DeviceRiskResource(_http);
         SafeGuard = new SafeGuardResource(_http);
     }
 
@@ -189,9 +188,6 @@ public sealed class TouchqueClient
 
     /// <summary>Pairing a browser by QR code: the phone that scans it is the one asked to approve.</summary>
     public QrPairingsResource QrPairings { get; }
-
-    /// <summary>Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on).</summary>
-    public DeviceRiskResource DeviceRisk { get; }
 
     /// <summary>Safe Guard: Safe transactions approved on the approver's phone, for TouchqueSafeGuard.</summary>
     public SafeGuardResource SafeGuard { get; }
@@ -1443,12 +1439,14 @@ public sealed record LoginRequestOptions
     public string? ClientSignals { get; init; }
 
     /// <summary>
-    /// The page's device report from <c>@touchque/web</c> (<c>deviceRisk.collect({ purpose })</c>), passed through untouched.
-    /// Used only when your workspace turned Device risk on: its signals only ever ask for more, and a device your
-    /// admin marked "step up always" asks at once.
+    /// The Touchque Device Risk report (from the Device Risk SDK's <c>collect</c> call), passed through untouched; optional.
+    /// Used only when your workspace turned Device risk on: its signals only ever ask for more.
     /// </summary>
     public string? DeviceRisk { get; init; }
-    /// <summary>The page's identification (<c>deviceRisk.identify()</c>), preferred over DeviceRisk; for this account only.</summary>
+    /// <summary>
+    /// The Touchque Device Risk identification (from the Device Risk SDK's tag or identify call); optional.
+    /// Preferred over <see cref="DeviceRisk"/>; for this account only.
+    /// </summary>
     public string? DeviceRiskRequestId { get; init; }
 
     /// <summary>

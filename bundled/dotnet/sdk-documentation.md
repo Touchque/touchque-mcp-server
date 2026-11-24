@@ -343,11 +343,59 @@ lists a user's known browsers, `ForgetBrowsersAsync()` forgets them (after a pas
 ## Passkeys, offline codes, recovery, help desk
 
 - `tq.WebAuthn`: registration, second factor and passwordless sign-in options/verify, list and delete passkeys.
-- `tq.Offline`: QR challenge and typed codes with the phone offline; `TotpVerifiersAsync` +
-  `OfflineResource.MatchTotpVerifier` check time-based codes while Touchque is unreachable.
+- `tq.Offline`: QR challenge and typed codes with the phone offline; `TotpVerifiersAsync(usernames, scope, ...)` +
+  `OfflineResource.MatchTotpVerifier` check the scope's outage codes while Touchque is unreachable
+  (`scope` is an `OfflineOutageScope { Id, Name }`: an organization or your own outage server; the
+  phone shows its code under the normal one, and the normal time-based code is never in the list).
+  For a terminal or a small screen, `ChallengeAsync(new OfflineChallengeOptions { ..., QrFormat = "compact",
+  IncludeQrTerminal = true })` returns a smaller QR (`Qr` starts with `TQ3:`, same challenge and same 7-character
+  code) and `QrTerminal`, the QR drawn with Unicode half blocks, ready to print; the answer's `QrFormat` says
+  which format `Qr` is. The compact QR carries no location block, so put what the phone should show in `Details`.
 - `tq.Recovery` (Never Locked Out): vouchers, `StartAsync` (show `BindUri` as a QR), `StatusAsync`, `VetoAsync`.
 - `tq.Assist` (help desk): `OpenAsync`, `VerifyAsync` (a 2-digit code the agent reads to the person), `SpendAsync`, `UnfreezeAsync`, `EndAsync`.
 - `ApprovalProof.Verify(proof, options)`: the phone's own signature over what it showed ("what you see is what you sign").
+
+## Offline sign-in packs (a device with no network)
+
+For your own device that must sign a person in for days without reaching Touchque (a laptop, a kiosk, a
+field tablet): your server asks for "the next N offline sign-ins" of that person on that device, and the
+device keeps them. Per slot it gets only a salt, a slow digest (PBKDF2-SHA256) and a QR sealed for the
+person's phone: nothing on the device can produce a code. Requires the workspace policies
+`offlineSignEnabled` and `offlineDevicePacksEnabled`.
+
+```csharp
+// Your server, right after a sign-in the person approved on the phone at that device itself:
+var pack = await tq.Offline.IssueDevicePackAsync(new OfflineDevicePackOptions
+{
+    ExternalUsername = "jane@acme.com",
+    Scope = new OfflineDeviceScope { Id = "pc-0f1e2d3c4b5a6978", Name = "LAPTOP-JANE" }, // one id per device install
+    Account = @"ACME\jane",                                                              // shown on the phone
+    Count = 10, ValidDays = 14,                                                          // the defaults
+});
+// Send the pack to the device. Offline, it shows the lowest unused slot's QR (slot.Qr, or
+// slot.QrTerminal in a terminal); the person scans it with the Touchque app, approves and types
+// the 10-character code (XXXXX-XXXXX):
+if (OfflineResource.VerifyDeviceCode(pack.Kdf, slot, typed))
+{
+    // signed in: drop this slot and every lower one, keep new OfflineDeviceUse(slot.Index, now) to report
+}
+
+// Back online:
+await tq.Offline.ReportDevicePackUseAsync(pack.Scope.Id, "jane@acme.com", used);
+// A lost, stolen or reinstalled device:
+await tq.Offline.RevokeDeviceScopeAsync(pack.Scope.Id, reason: "lost");
+```
+
+- Issue a pack only after a sign-in the person approved on the phone **at that device itself**, never for a
+  remote session.
+- Show the QR of the **lowest unused slot** and accept a code only for that slot; then drop it and every
+  lower one.
+- Lock after **5 wrong codes in 15 minutes**, refuse when the device's **clock went back** (keep the latest
+  time you have seen), and drop a pack's slots at its own `ValidUntil` (their QRs carry it: a newer pack does not
+  extend older slots).
+- Report the slots used when the device is back online, and **revoke a lost device**; a reinstalled device
+  gets a new scope id. `OfflineResource.NormalizeDeviceCode` and `FormatDeviceCode` ignore case, spaces and
+  dashes.
 
 ## Touchque Actions
 

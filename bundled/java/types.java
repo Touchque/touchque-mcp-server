@@ -186,7 +186,6 @@ public final class TouchqueClient {
     private final Identity identity;
     private final Mobile mobile;
     private final QrPairings qrPairings;
-    private final DeviceRisk deviceRisk;
     private final SafeGuard safeGuard;
 
     /** A client from the environment ({@code TQ_API_KEY}, {@code TQ_API_SECRET}, {@code TQ_API_URL}). */
@@ -212,7 +211,6 @@ public final class TouchqueClient {
         this.identity = new Identity(http);
         this.mobile = new Mobile(http);
         this.qrPairings = new QrPairings(http);
-        this.deviceRisk = new DeviceRisk(http);
         this.safeGuard = new SafeGuard(http);
     }
 
@@ -284,11 +282,6 @@ public final class TouchqueClient {
     /** Pairing a browser by QR code: the phone that scans it is the one asked to approve. */
     public QrPairings qrPairings() {
         return qrPairings;
-    }
-
-    /** Device risk: the device on your sign-up, reset, sign-in or approval page (a paid add-on). */
-    public DeviceRisk deviceRisk() {
-        return deviceRisk;
     }
 
     /** Safe Guard: Safe transactions approved on the approver's phone, for TouchqueSafeGuard. */
@@ -1254,16 +1247,19 @@ public final class LoginRequestOptions {
     }
 
     /**
-     * The page's device report from {@code @touchque/web} ({@code deviceRisk.collect({ purpose })}), passed
-     * through untouched. Used only when your workspace turned Device risk on: its signals only ever ask
-     * for more, and a device your admin marked "step up always" asks at once.
+     * The Touchque Device Risk report (from the Device Risk SDK's {@code collect} call), passed through
+     * untouched; optional. Used only when your workspace turned Device risk on: its signals only ever ask
+     * for more.
      */
     public LoginRequestOptions deviceRisk(String v) {
         this.deviceRisk = v;
         return this;
     }
 
-    /** The page's identification ({@code deviceRisk.identify()}), preferred over deviceRisk; for this account only. */
+    /**
+     * The Touchque Device Risk identification (from the Device Risk SDK's tag or identify call); optional.
+     * Preferred over {@link #deviceRisk(String)}; for this account only.
+     */
     public LoginRequestOptions deviceRiskRequestId(String v) {
         this.deviceRiskRequestId = v;
         return this;

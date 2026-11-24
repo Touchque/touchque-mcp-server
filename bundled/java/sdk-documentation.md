@@ -20,15 +20,15 @@ Maven:
 <dependency>
   <groupId>com.touchque</groupId>
   <artifactId>touchque-spring-boot-starter</artifactId>   <!-- Spring Boot (brings touchque-java) -->
-  <version>5.5.0</version>
+  <version>6.0.0</version>
 </dependency>
 ```
 
 Gradle:
 
 ```kotlin
-implementation("com.touchque:touchque-spring-boot-starter:5.5.0")   // Spring Boot
-implementation("com.touchque:touchque-java:5.5.0")                  // anything else
+implementation("com.touchque:touchque-spring-boot-starter:6.0.0")   // Spring Boot
+implementation("com.touchque:touchque-java:6.0.0")                  // anything else
 ```
 
 ## Setup
@@ -374,10 +374,55 @@ them, for example after a password reset.
 
 - `tq.webauthn()`: options and verify for registration, second-factor and passwordless sign-in; list and delete passkeys.
 - `tq.offline()`: QR challenges and typed codes while the phone is offline. While Touchque itself
-  is unreachable, `totpVerifiers` and `Offline.matchTotpVerifier` check time-based codes.
+  is unreachable, `totpVerifiers(usernames, scopeId, scopeName, fromStep, steps)` and
+  `Offline.matchTotpVerifier` check the scope's outage codes: digests for one scope (an organization
+  or your own outage server) that the user's phone shows under the normal code, never the normal
+  time-based code itself. For a terminal or a small screen,
+  `challenge(new Offline.ChallengeOptions(user).qrFormat("compact").includeQrTerminal(true))` returns a
+  smaller QR (`qr` starts with `TQ3:`, same challenge and same 7-character code) and `qrTerminal`, the QR
+  drawn with Unicode half blocks, ready to print; the answer's `qrFormat` says which format `qr` is. The
+  compact QR carries no location block, so put what the phone should show in `details`.
 - `tq.recovery()` (Never Locked Out): vouchers, `start` (show `bindUri` as a QR), `status`, `veto`.
 - `tq.assist()` (help desk): `open`, `verify` (a 2-digit code the agent reads to the person), `spend`, `unfreeze`, `end`.
 - `ApprovalProof.verify(proof, options)`: checks the phone's own signature over what it showed ("what you see is what you sign").
+
+## Offline sign-in packs (a device with no network)
+
+For your own device that must sign a person in for days without reaching Touchque (a laptop, a kiosk, a
+field tablet): your server asks for "the next N offline sign-ins" of that person on that device, and the
+device keeps them. Per slot it gets only a salt, a slow digest (PBKDF2-SHA256) and a QR sealed for the
+person's phone: nothing on the device can produce a code. Requires the workspace policies
+`offlineSignEnabled` and `offlineDevicePacksEnabled`.
+
+```java
+// Your server, right after a sign-in the person approved on the phone at that device itself:
+JsonNode pack = tq.offline().issueDevicePack("jane@acme.com",
+        "pc-0f1e2d3c4b5a6978", "LAPTOP-JANE", // the device: one id per install, and its name
+        "ACME\\jane",                         // the account, shown on the phone
+        10, 14);                              // count and validDays (null: 10 and 14)
+// Send the pack to the device. Offline, it shows the lowest unused slot's QR (slot "qr", or
+// "qrTerminal" in a terminal); the person scans it with the Touchque app, approves and types
+// the 10-character code (XXXXX-XXXXX):
+if (Offline.verifyDeviceCode(pack.get("kdf"), slot, typed)) {
+    // signed in: drop this slot and every lower one, keep new Offline.DeviceUse(index, Instant.now()) to report
+}
+
+// Back online:
+tq.offline().reportDevicePackUse(scopeId, "jane@acme.com", used);
+// A lost, stolen or reinstalled device:
+tq.offline().revokeDeviceScope(scopeId, null, "lost");
+```
+
+- Issue a pack only after a sign-in the person approved on the phone **at that device itself**, never for a
+  remote session.
+- Show the QR of the **lowest unused slot** and accept a code only for that slot; then drop it and every
+  lower one.
+- Lock after **5 wrong codes in 15 minutes**, refuse when the device's **clock went back** (keep the latest
+  time you have seen), and drop a pack's slots at its own `validUntil` (their QRs carry it: a newer pack does not
+  extend older slots).
+- Report the slots used when the device is back online, and **revoke a lost device**; a reinstalled device
+  gets a new scope id. `Offline.normalizeDeviceCode` and `Offline.formatDeviceCode` ignore case, spaces and
+  dashes.
 
 ## Touchque Actions
 

@@ -570,7 +570,7 @@ test("5.5: get_sdk_types answers the Touchque Login admin API (passkey domain, u
   }
 });
 
-test("6.0: Device risk is its own SDK family in pick_sdk; Ruby and Java say 6.0 is not on their registry yet", async () => {
+test("6.0: Device risk is its own SDK family in pick_sdk; Ruby says 6.0 is not on RubyGems yet", async () => {
   const ws = fakeWorkspace();
   const pick = async (args) => JSON.parse((await callTool("touchque_pick_sdk", args, ws, {}, loadConfig({}))).content[0].text);
   const go = await pick({ language: "go" });
@@ -586,9 +586,14 @@ test("6.0: Device risk is its own SDK family in pick_sdk; Ruby and Java say 6.0 
   assert.equal(dr.server.published, true);
   assert.match(dr.browser.tag, /cdn\.touchque\.com\/device\/v3\.0\.0\/script\.js/);
   assert.match(dr.browser.tag, /integrity="sha384-w1C1e4WtBYv45iTHf\/\/fjz6\/X0vsAhUvArlvDe\/LecDmewsZxD4zOOBByRxvV\+aA"/);
-  const drNet = await pick({ language: "dotnet", product: "device_risk" });
-  assert.equal(drNet.server.published, false);
-  assert.match(drNet.server.install, /^Not on NuGet yet/);
+  const java = await pick({ language: "java" });
+  assert.equal(java.version, "6.0.0");
+  assert.equal(java.next, undefined);
+  assert.match(java.install, /touchque-spring-boot-starter:6\.0\.0/);
+  for (const lang of ["dotnet", "java"]) assert.equal((await pick({ language: lang, product: "device_risk" })).server.published, true, lang);
+  const drRuby = await pick({ language: "ruby", product: "device_risk" });
+  assert.equal(drRuby.server.published, false);
+  assert.match(drRuby.server.install, /^Not on RubyGems yet/);
   const all = await pick({ product: "device_risk" });
   assert.equal(all.server.length, 7);
 });

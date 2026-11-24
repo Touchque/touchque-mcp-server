@@ -8,10 +8,10 @@ const path = require("path");
 
 const BUNDLED = path.join(__dirname, "..", "bundled");
 
-// What is on the registries, 2026-11-24: 6.0.0 for Node, Python, Go (module /v6), PHP and .NET (sdks fc7a8c8: Device
-// risk moved out into the Touchque Device Risk packages below, outage codes bound to a scope, offline sign-in packs);
-// Ruby and Java still 5.5.0 (6.0.0 waits on RubyGems and Maven Central; their bundles stay on sdks 9ef1b95 until then:
-// after `node scripts/sync-bundled.js` run `git checkout -- bundled/ruby bundled/java`). @touchque/web 3.0.0,
+// What is on the registries, 2026-11-24: 6.0.0 for Node, Python, Go (module /v6), PHP, .NET and Java (sdks fc7a8c8:
+// Device risk moved out into the Touchque Device Risk packages below, outage codes bound to a scope, offline sign-in
+// packs); Ruby still 5.5.0 (6.0.0 waits on RubyGems; its bundle stays on sdks 9ef1b95 until then: after
+// `node scripts/sync-bundled.js` run `git checkout -- bundled/ruby`). @touchque/web 3.0.0,
 // @touchque/react 2.2.0.
 // guard: what the integration material says about the step-up guard, per SDK. v51: the 5.1+ guard (its adapter never
 // throws without keys and answers 500 misconfigured; an option for the app's own error shape; one QR per
@@ -72,9 +72,9 @@ const SDKS = {
     },
   },
   java: {
-    label: "Java", package: "com.touchque:touchque-spring-boot-starter", import: "import com.touchque.TouchqueClient;  // Spring Boot: @RequireTouchque", published: "5.5.0",
-    install: "Gradle: implementation(\"com.touchque:touchque-spring-boot-starter:5.5.0\") (without Spring: com.touchque:touchque-java:5.5.0); Maven: the same coordinates in a <dependency>. Needs Java 17+; the starter needs Spring Boot 3 (jakarta.servlet)",
-    next: "6.0.0 (Device risk moved out into com.touchque:touchque-device-risk) is released but not on Maven Central yet", registry: "Maven Central", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"],
+    label: "Java", package: "com.touchque:touchque-spring-boot-starter", import: "import com.touchque.TouchqueClient;  // Spring Boot: @RequireTouchque", published: "6.0.0",
+    install: "Gradle: implementation(\"com.touchque:touchque-spring-boot-starter:6.0.0\") (without Spring: com.touchque:touchque-java:6.0.0); Maven: the same coordinates in a <dependency>. Needs Java 17+; the starter needs Spring Boot 3 (jakarta.servlet)",
+    registry: "Maven Central", manifests: ["pom.xml", "build.gradle", "build.gradle.kts"],
     guard: {
       v51: true, v52: true, adapter: "@RequireTouchque (Spring Boot starter)", errorBody: "TouchqueErrorBody bean (or errorBody on one action's TouchqueGuardOptions)",
       inHandler: "with the starter, inject ObjectProvider<TouchqueClient> and per request try { r = Guard.run(touchque.getObject(), input); } catch (BeansException e) { r = Guard.withoutClient(input); } (never a plain TouchqueClient field or constructor parameter: built at startup, the app does not start without keys; never @Lazy TouchqueClient: a final class, no proxy, no startup); without the starter Guard.run(null, input). When r.approved() is null send Guard.response(r, errorBody, objectMapper, logger): its status(), headers() and body().",
@@ -93,7 +93,7 @@ const FRONTEND = [
 // paid add-on, off until the workspace turns it on (dashboard → Device risk). The browser tag gives every visitor a
 // visitor ID and a request ID; the server package checks it (deviceRisk.check(requestId, { event, externalUsername })
 // → stepUp). Each server package has its own client and does not need the 2FA SDK. published: what the registry serves
-// (checked 2026-11-24), null while it is not there yet.
+// (checked 2026-11-24; Maven and NuGet re-checked the same day), null while it is not there yet.
 const DEVICE_RISK = {
   browser: {
     package: "@touchque/device-risk", published: "3.0.0",
@@ -105,8 +105,8 @@ const DEVICE_RISK = {
     python: { package: "touchque-device-risk", published: "1.0.0", registry: "PyPI", install: "<the project's python> -m pip install touchque-device-risk" },
     go: { package: "github.com/Touchque/touchque-device-risk-go", published: "1.0.0", registry: "Go modules", install: "go get github.com/Touchque/touchque-device-risk-go@v1.0.0 (Go 1.26 or newer)" },
     php: { package: "touchque/device-risk", published: "1.0.0", registry: "Packagist", install: "composer require touchque/device-risk", import: "use Touchque\\DeviceRisk\\TouchqueDeviceRisk;" },
-    dotnet: { package: "Touchque.DeviceRisk", published: null, registry: "NuGet", install: "dotnet add package Touchque.DeviceRisk" },
-    java: { package: "com.touchque:touchque-device-risk", published: null, registry: "Maven Central", install: "Maven/Gradle: com.touchque:touchque-device-risk:1.0.0" },
+    dotnet: { package: "Touchque.DeviceRisk", published: "1.0.0", registry: "NuGet", install: "dotnet add package Touchque.DeviceRisk" },
+    java: { package: "com.touchque:touchque-device-risk", published: "1.0.0", registry: "Maven Central", install: "Gradle: implementation(\"com.touchque:touchque-device-risk:1.0.0\"); Maven: the same coordinates in a <dependency>" },
     ruby: { package: "touchque-device-risk", published: null, registry: "RubyGems", install: "bundle add touchque-device-risk" },
   },
 };
